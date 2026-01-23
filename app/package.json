@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "tauri": "export PATH=\"/Users/cameronamer/.cargo/bin:$PATH\"; tauri"
+    "tauri": "tauri"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.90.17",
