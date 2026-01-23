@@ -34,8 +34,8 @@ Telegram Drive leverages the Telegram API to allow you to upload, organize, and 
 
 1.  **Clone the repository**
     ```bash
-    git clone https://github.com/caamer20/TelegramDrive_Backup.git
-    cd TelegramDrive_Backup
+    git clone https://github.com/caamer20/Telegram-Drive.git
+    cd Telegram-Drive
     ```
 
 2.  **Install Dependencies**
