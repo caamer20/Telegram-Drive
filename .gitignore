@@ -1,0 +1,18 @@
+# Node
+node_modules/
+dist/
+.DS_Store
+.env
+
+# Rust
+/app/src-tauri/target/
+/app/src-tauri/gen/
+**/*.rs.bk
+
+# Editors
+.vscode/
+.idea/
+
+# Misc
+CompiledApps/
+*.log

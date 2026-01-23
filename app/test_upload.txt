@@ -1,0 +1,2 @@
+This is a test file for Telegram Drive upload functionality.
+It contains some simple text to verify that the file content is preserved.

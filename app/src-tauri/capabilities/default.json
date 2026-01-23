@@ -1,0 +1,12 @@
+{
+  "identifier": "default",
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "core:default",
+    "shell:allow-open",
+    "store:default",
+    "dialog:default"
+  ]
+}

@@ -1,0 +1,30 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Base/Shadow -->
+  <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+    <feGaussianBlur stdDeviation="20" result="blur" />
+    <feComposite in="SourceGraphic" in2="blur" operator="over" />
+  </filter>
+  
+  <!-- Left Face: Dark Navy -->
+  <path d="M256 480 L32 352 V160 L256 288 V480 Z" fill="#17212b" />
+  
+  <!-- Right Face: Telegram Blue -->
+  <path d="M256 480 L480 352 V160 L256 288 V480 Z" fill="#2481cc" />
+  
+  <!-- Top/Inside: Amber Gradient (The "Gold" inside) -->
+  <defs>
+    <linearGradient id="amberGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#ffae00" />
+      <stop offset="100%" stop-color="#ffdd00" />
+    </linearGradient>
+  </defs>
+  <path d="M256 288 L32 160 L256 32 L480 160 L256 288 Z" fill="url(#amberGrad)" />
+  
+  <!-- Flaps (Simple overlay to look like open box flaps) -->
+  <path d="M32 160 L120 40 L256 32 L32 160" fill="#2481cc" fill-opacity="0.4" />
+  <path d="M480 160 L392 40 L256 32 L480 160" fill="#17212b" fill-opacity="0.4" />
+
+  <!-- Rust Gear / Lock Symbol (Subtle) -->
+  <circle cx="256" cy="384" r="40" stroke="white" stroke-width="8" stroke-opacity="0.2" fill="none" />
+  <rect x="236" y="364" width="40" height="40" rx="4" fill="white" fill-opacity="0.2" />
+</svg>

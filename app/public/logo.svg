@@ -1,0 +1,20 @@
+<svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="blueGrad" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#3b82f6" />
+      <stop offset="100%" stop-color="#1d4ed8" />
+    </linearGradient>
+  </defs>
+  
+  <!-- Background Rounded Rect -->
+  <rect x="0" y="0" width="64" height="64" rx="16" fill="url(#blueGrad)" />
+  
+  <!-- Border to match border-white/10 -->
+  <rect x="0.5" y="0.5" width="63" height="63" rx="15.5" stroke="white" stroke-opacity="0.1" stroke-width="1" />
+
+  <!-- ShieldCheck Icon provided by user -->
+  <g transform="translate(16, 16) scale(1.333)"> <!-- 24 * 1.333 = ~32px icon in center -->
+    <path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="m9 12 2 2 4-4" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</svg>

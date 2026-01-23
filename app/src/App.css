@@ -1,0 +1,58 @@
+@import "tailwindcss";
+
+@theme {
+  --color-telegram-bg: #0e1621;
+  --color-telegram-surface: #17212b;
+  --color-telegram-primary: #ffae00;
+  --color-telegram-secondary: #2481cc;
+  --color-telegram-text: #ffffff;
+  --color-telegram-subtext: #8e9fb3;
+}
+
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  background: radial-gradient(circle at top left, #4facfe, #00f2fe);
+  /* Fallback / Alternative Premium Blue */
+  background: radial-gradient(120% 120% at 0% 0%, #3ca5ff 0%, #007aff 100%);
+  color: white;
+}
+
+/* Glassmorphism Utilities */
+.glass {
+  background: rgba(23, 33, 43, 0.7);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.glass-input {
+  background: rgba(14, 22, 33, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(10px);
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 99px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(36, 129, 204, 0.6);
+}

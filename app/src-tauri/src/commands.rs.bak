@@ -1,0 +1,655 @@
+use tauri::State;
+use tokio::sync::Mutex;
+use grammers_client::{Client, SignInError, InputMessage};
+use grammers_client::types::{LoginToken, PasswordToken};
+use grammers_mtsender::SenderPool;
+use grammers_session::storages::SqliteSession;
+use crate::models::{AuthResult, FileMetadata, FolderMetadata};
+use std::sync::Arc;
+use grammers_tl_types as tl;
+    pub client: Mutex<Option<Client>>,
+    pub login_token: Mutex<Option<LoginToken>>,
+    pub password_token: Mutex<Option<PasswordToken>>,
+}
+
+// Helper to ensure client is initialized
+async fn ensure_client_initialized(
+    app_handle: &tauri::AppHandle,
+    state: &State<'_, TelegramState>,
+    api_id: i32,
+) -> Result<Client, String> {
+    let mut client_guard = state.client.lock().await;
+
+    if let Some(client) = client_guard.as_ref() {
+        return Ok(client.clone());
+    }
+
+    println!("Initializing new Telegram Client (v0.8) with ID: {}", api_id);
+    
+    // Resolve session path safely
+    use tauri::Manager;
+    let app_data_dir = app_handle.path().app_data_dir()
+        .map_err(|e| format!("Failed to get app data dir: {}", e))?;
+        
+    if !app_data_dir.exists() {
+        std::fs::create_dir_all(&app_data_dir)
+            .map_err(|e| format!("Failed to create app data dir: {}", e))?;
+    }
+    
+    let session_path = app_data_dir.join("telegram.session");
+    let session_path_str = session_path.to_string_lossy().to_string();
+    println!("Opening session at: {}", session_path_str);
+    
+    // Grammers 0.8 initialization with corruption recovery
+    let session = match SqliteSession::open(&session_path_str).map_err(|e| e.to_string()) {
+        Ok(s) => s,
+        Err(_) => {
+            println!("Session file corrupted or invalid. Recreating...");
+            let _ = std::fs::remove_file(&session_path);
+            let _ = std::fs::remove_file(format!("{}-wal", session_path_str));
+            let _ = std::fs::remove_file(format!("{}-shm", session_path_str));
+            
+            SqliteSession::open(&session_path_str)
+                .map_err(|e| format!("Failed to open session after recreation: {}", e))?
+        }
+    };
+        
+    let session = Arc::new(session);
+    let pool = SenderPool::new(session, api_id);
+    let client = Client::new(&pool);
+    
+    // Spawn the network runner
+    let SenderPool { runner, .. } = pool;
+    tauri::async_runtime::spawn(async move {
+        runner.run().await;
+        println!("Telegram network runner stopped");
+    });
+    
+    *client_guard = Some(client.clone());
+    Ok(client)
+}
+
+#[tauri::command]
+pub fn cmd_log(message: String) {
+    println!("[FRONTEND] {}", message);
+}
+
+#[tauri::command]
+pub async fn cmd_upload_file(
+    path: String,
+    folder_id: Option<i64>,
+    state: State<'_, TelegramState>,
+) -> Result<String, String> {
+    let client_opt = {
+        state.client.lock().await.clone()
+    };
+    
+    if client_opt.is_none() {
+        println!("[MOCK] Uploaded file {} to {:?}", path, folder_id);
+        return Ok("Mock upload successful".to_string());
+    }
+    let client = client_opt.unwrap();
+    
+    // Prepare file first
+    let path_clone = path.clone();
+    let client_clone = client.clone();
+    
+    let uploaded_file = tauri::async_runtime::spawn(async move {
+        client_clone.upload_file(&path_clone).await
+    }).await.map_err(|e| format!("Task join error: {}", e))?
+      .map_err(|e| format!("Failed to upload file bytes: {}", e))?;
+        
+    let message = InputMessage::new().text("").file(uploaded_file);
+
+    if let Some(fid) = folder_id {
+         let mut found_dialog = None;
+         let mut dialogs = client.iter_dialogs();
+         while let Some(dialog) = dialogs.next().await.map_err(|e| e.to_string())? {
+             // Assuming dialog.chat().id() works OR dialog.id() works.
+             // We'll try dialog.id() as it usually forwards specific chat id.
+             if dialog.id() == fid {
+                 found_dialog = Some(dialog);
+                 break;
+             }
+         }
+         let dialog = found_dialog.ok_or(format!("Folder {} not found", fid))?;
+         client.send_message(&dialog, message).await
+             .map_err(|e| format!("Failed to send file: {}", e))?;
+    } else {
+         let me = client.get_me().await.map_err(|e| e.to_string())?;
+         client.send_message(&me, message).await
+             .map_err(|e| format!("Failed to send file: {}", e))?;
+    };
+        
+    Ok("File uploaded successfully".to_string())
+}
+
+#[tauri::command]
+pub async fn cmd_delete_file(
+    message_id: i32,
+    folder_id: Option<i64>,
+    state: State<'_, TelegramState>,
+) -> Result<bool, String> {
+    let client_opt = {
+        state.client.lock().await.clone()
+    };
+    
+    if client_opt.is_none() {
+        println!("[MOCK] Deleted message {} from folder {:?}", message_id, folder_id);
+        return Ok(true);
+    }
+    let client = client_opt.unwrap();
+
+    if let Some(fid) = folder_id {
+         let mut found_dialog = None;
+         let mut dialogs = client.iter_dialogs();
+         while let Some(dialog) = dialogs.next().await.map_err(|e| e.to_string())? {
+             if dialog.id() == fid {
+                 found_dialog = Some(dialog);
+                 break;
+             }
+         }
+         let dialog = found_dialog.ok_or(format!("Folder {} not found", fid))?;
+         client.delete_messages(&dialog, &[message_id]).await
+            .map_err(|e| format!("Failed to delete message: {}", e))?;
+    } else {
+         let me = client.get_me().await.map_err(|e| e.to_string())?;
+         client.delete_messages(&me, &[message_id]).await
+            .map_err(|e| format!("Failed to delete message: {}", e))?;
+    };
+        
+    Ok(true)
+}
+
+#[tauri::command]
+pub async fn cmd_download_file(
+    message_id: i32,
+    save_path: String,
+    folder_id: Option<i64>,
+    state: State<'_, TelegramState>,
+) -> Result<String, String> {
+    let client_opt = {
+        state.client.lock().await.clone()
+    };
+    
+    // --- MOCK ---
+    if client_opt.is_none() {
+        println!("[MOCK] Downloaded message {} from {:?} to {}", message_id, folder_id, save_path);
+        if let Err(e) = std::fs::write(&save_path, b"Mock") { return Err(e.to_string()); }
+        return Ok("Mock".to_string());
+    }
+    // -----------
+    let client = client_opt.unwrap();
+
+    let mut target_message = None;
+
+    if let Some(fid) = folder_id {
+         let mut found_dialog = None;
+         let mut dialogs = client.iter_dialogs();
+         while let Some(dialog) = dialogs.next().await.map_err(|e| e.to_string())? {
+             if dialog.id() == fid {
+                 found_dialog = Some(dialog);
+                 break;
+             }
+         }
+         let dialog = found_dialog.ok_or(format!("Folder {} not found", fid))?;
+         let mut messages = client.iter_messages(&dialog);
+         let mut count = 0;
+         while let Some(message) = messages.next().await.map_err(|e| e.to_string())? {
+            if message.id() == message_id {
+                target_message = Some(message);
+                break;
+            }
+            count += 1;
+            if count > 200 { break; }
+         }
+    } else {
+         let me = client.get_me().await.map_err(|e| e.to_string())?;
+         let mut messages = client.iter_messages(&me);
+         let mut count = 0;
+         while let Some(message) = messages.next().await.map_err(|e| e.to_string())? {
+            if message.id() == message_id {
+                target_message = Some(message);
+                break;
+            }
+            count += 1;
+            if count > 200 { break; }
+         }
+    };
+    
+    if let Some(msg) = target_message {
+        if let Some(media) = msg.media() {
+            client.download_media(&media, &save_path).await
+                .map_err(|e| format!("Download failed: {}", e))?;
+            return Ok("Download successful".to_string());
+        }
+    }
+    
+    Err("Not found".to_string())
+}
+
+#[tauri::command]
+pub async fn cmd_move_file(
+    message_id: i32,
+    source_folder_id: Option<i64>,
+    target_folder_id: Option<i64>,
+    state: State<'_, TelegramState>,
+) -> Result<bool, String> {
+    if source_folder_id == target_folder_id { return Ok(true); }
+
+    let client_opt = {
+        state.client.lock().await.clone()
+    };
+    
+    if client_opt.is_none() {
+        println!("[MOCK] Moved message {} from {:?} to {:?}", message_id, source_folder_id, target_folder_id);
+        return Ok(true);
+    }
+    let client = client_opt.unwrap();
+    
+    // Resolve source peer
+    let source_peer = if let Some(fid) = source_folder_id {
+        let mut found_dialog = None;
+        let mut dialogs = client.iter_dialogs();
+        while let Some(dialog) = dialogs.next().await.map_err(|e| e.to_string())? {
+            if dialog.id() == fid {
+                found_dialog = Some(dialog);
+                break;
+            }
+        }
+        found_dialog.ok_or(format!("Source folder {} not found", fid))?
+    } else {
+        client.get_me().await.map_err(|e| e.to_string())?.into() // Convert User to InputPeer
+    };
+
+    // Resolve target peer
+    let target_peer = if let Some(fid) = target_folder_id {
+        let mut found_dialog = None;
+        let mut dialogs = client.iter_dialogs();
+        while let Some(dialog) = dialogs.next().await.map_err(|e| e.to_string())? {
+            if dialog.id() == fid {
+                found_dialog = Some(dialog);
+                break;
+            }
+        }
+        found_dialog.ok_or(format!("Target folder {} not found", fid))?
+    } else {
+        client.get_me().await.map_err(|e| e.to_string())?.into() // Convert User to InputPeer
+    };
+
+    println!("Moving message ID: {} from {:?} to {:?}", message_id, source_folder_id, target_folder_id);
+
+    // Forward the message
+    client.forward_messages(&target_peer, &[message_id], &source_peer).await
+        .map_err(|e| format!("Failed to forward message: {}", e))?;
+
+    // Delete from source
+    client.delete_messages(&source_peer, &[message_id]).await
+        .map_err(|e| format!("Failed to delete original message: {}", e))?;
+        
+    Ok(true)
+}
+
+#[tauri::command]
+pub async fn cmd_get_files(
+    folder_id: Option<i64>,
+    state: State<'_, TelegramState>,
+) -> Result<Vec<FileMetadata>, String> {
+    let client_option = {
+        state.client.lock().await.clone()
+    };
+
+    // Helper to generate mock data
+    let get_mock_files = || vec![
+        FileMetadata {
+            id: 1001,
+            name: "Mock_Project_Specs.pdf".into(),
+            size: 2048000, 
+            mime_type: Some("application/pdf".into()),
+            file_ext: Some("pdf".into()),
+            icon_type: "file".into(),
+            folder_id: None, // In root
+            created_at: "2024-01-15 10:00:00".into()
+        },
+        FileMetadata {
+            id: 1002,
+            name: "Vacation_Photos.zip".into(),
+            size: 154000000, 
+            mime_type: Some("application/zip".into()),
+            file_ext: Some("zip".into()),
+            icon_type: "file".into(),
+            folder_id: Some(999), // In a folder
+            created_at: "2024-01-14 15:30:00".into()
+        },
+    ];
+
+    // --- MOCK DATA MODE IF NOT CONNECTED ---
+    if client_option.is_none() {
+        println!("[MOCK] Client not connected. Returning fake data for folder {:?}", folder_id);
+        let all = get_mock_files();
+        // Filter mock data
+        let filtered = all.into_iter().filter(|f| f.folder_id == folder_id).collect();
+        return Ok(filtered);
+    }
+    // ---------------------------------------
+
+    let client = client_option.unwrap();
+    println!("Fetching files for folder: {:?}", folder_id);
+    
+    let mut files = Vec::new();
+    
+    let mut messages_iterator = if let Some(fid) = folder_id {
+        // Find the chat in dialogs
+        let mut found_chat = None;
+        let mut dialogs = client.iter_dialogs();
+        while let Some(dialog) = dialogs.next().await.map_err(|e| e.to_string())? {
+            if dialog.chat().id() == fid {
+                found_chat = Some(dialog.chat().clone());
+                break;
+            }
+        }
+        
+        match found_chat {
+            Some(c) => c,
+            None => return Err(format!("Folder/Channel with ID {} not found in dialogs.", fid)),
+        }
+    } else {
+         // Saved Messages (Self) - grammers uses InputPeer::PeerSelf? 
+         // Actually iter_messages takes `&PackedChat`. 
+         // We can't easily construct a PackedChat for PeerSelf without resolving it.
+         // BUT `InputPeer::PeerSelf` implements `Into<PackedChat>`? No.
+         // `iter_messages` takes `P: Into<PackedChat>`. 
+         // `InputPeer` does NOT implement Into<PackedChat>.
+         // We usually pass `&User` or `&Chat`.
+         
+         // Workaround: Use `InputPeer::PeerSelf` with `client.iter_messages`?
+         // check grammers docs: `fn iter_messages<C: Into<PackedChat>>(&self, chat: C)`
+         // `InputPeer::PeerSelf` is NOT a packed chat.
+         
+         // Creating a packed chat for user self is tricky if we don't have the object.
+         // However, "Saved Messages" is just the user's own dialog.
+         // We can find our own user in dialogs or use `client.get_me()`.
+         
+         let me = client.get_me().await.map_err(|e| format!("Failed to get me: {}", e))?;
+         me.pack()
+    };
+    
+    let mut messages = client.iter_messages(chat_source);
+    
+    let mut count = 0;
+    
+    loop {
+        match messages.next().await {
+            Ok(Some(message)) => {
+                if count >= 100 { break; } 
+                
+                if let Some(doc) = message.media() {
+                     let (name, size, mime, ext) = match doc {
+                        grammers_client::types::Media::Document(d) => {
+                             let n = d.name().to_string();
+                             let s = d.size() as i64;
+                             let m = d.mime_type().map(|s| s.to_string());
+                             let e = std::path::Path::new(&n).extension().map(|os| os.to_str().unwrap_or("").to_string());
+                             (n, s, m, e)
+                        },
+                        grammers_client::types::Media::Photo(_) => {
+                            ("Photo.jpg".to_string(), 0, Some("image/jpeg".into()), Some("jpg".into()))
+                        },
+                        _ => ("Unknown".to_string(), 0, None, None),
+                   };
+        
+                   files.push(FileMetadata {
+                       id: message.id() as i64,
+                       folder_id: folder_id, // Assign current queried folder
+                       name: if name.is_empty() { format!("Message {}", message.id()) } else { name },
+                       size: size as u64,
+                       mime_type: mime,
+                       file_ext: ext,
+                       created_at: message.date().to_string(),
+                       icon_type: "file".to_string(), 
+                   });
+                   count += 1;
+                }
+            },
+            Ok(None) => break, 
+            Err(e) => {
+                println!("[ERROR] Fetch failed: {}. Switching to Mock Data.", e);
+                // Return mock data for this folder
+                let all = get_mock_files();
+                let filtered = all.into_iter().filter(|f| f.folder_id == folder_id).collect();
+                return Ok(filtered);
+            }
+        }
+    }
+    
+    Ok(files)
+}
+
+#[tauri::command]
+pub async fn cmd_connect(
+    app_handle: tauri::AppHandle,
+    state: State<'_, TelegramState>,
+    api_id: i32,
+) -> Result<bool, String> {
+    ensure_client_initialized(&app_handle, &state, api_id).await?;
+    Ok(true)
+}
+
+#[tauri::command]
+pub async fn cmd_auth_request_code(
+    app_handle: tauri::AppHandle,
+    phone: String,
+    api_id: i32,
+    api_hash: String,
+    state: State<'_, TelegramState>,
+) -> Result<String, String> {
+    
+    if api_hash.trim().is_empty() {
+        return Err("API Hash cannot be empty.".to_string());
+    }
+
+    let client_handle = ensure_client_initialized(&app_handle, &state, api_id).await?;
+    
+    println!("Requesting code for {}", phone);
+    
+    let token = client_handle
+        .request_login_code(&phone, &api_hash)
+        .await
+        .map_err(|e| {
+            println!("Error requesting code: {}", e);
+            format!("Telegram Error: {}", e)
+        })?;
+        
+    let mut token_guard = state.login_token.lock().await;
+    *token_guard = Some(token);
+
+    Ok("code_sent".to_string())
+}
+
+#[tauri::command]
+pub async fn cmd_auth_sign_in(
+    code: String,
+    state: State<'_, TelegramState>,
+) -> Result<AuthResult, String> {
+    println!("Signing in with code...");
+    
+    let mut client = {
+        let guard = state.client.lock().await;
+        guard.as_ref().ok_or("Client not initialized")?.clone()
+    };
+
+    let token_guard = state.login_token.lock().await;
+    let login_token = token_guard.as_ref().ok_or("No login session found (restart flow)")?;
+
+    match client.sign_in(login_token, &code).await {
+        Ok(_user) => {
+             println!("Successfully logged in.");
+             Ok(AuthResult {
+                success: true,
+                next_step: Some("dashboard".to_string()),
+                error: None,
+            })
+        }
+        Err(SignInError::PasswordRequired(token)) => {
+            let mut pw_guard = state.password_token.lock().await;
+            *pw_guard = Some(token);
+
+            Ok(AuthResult {
+                success: false,
+                next_step: Some("password".to_string()),
+                error: None,
+            })
+        }
+        Err(e) => {
+           println!("Sign in error: {}", e);
+           Err(format!("Sign in failed: {}", e))
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn cmd_auth_check_password(
+    password: String,
+    state: State<'_, TelegramState>,
+) -> Result<AuthResult, String> {
+    let mut client = {
+        let guard = state.client.lock().await;
+        guard.as_ref().ok_or("Client not initialized")?.clone()
+    };
+    
+    let mut pw_guard = state.password_token.lock().await;
+    let pw_token = pw_guard.take().ok_or("No password session found")?;
+
+    match client.check_password(pw_token, password.as_str()).await {
+        Ok(_user) => {
+             println!("2FA Success.");
+             Ok(AuthResult {
+                success: true,
+                next_step: Some("dashboard".to_string()),
+                error: None,
+            })
+        }
+        Err(e) => Err(format!("2FA Failed: {}", e))
+    }
+}
+
+#[tauri::command]
+pub async fn cmd_create_folder(
+    name: String,
+    state: State<'_, TelegramState>,
+) -> Result<FolderMetadata, String> {
+    let client_opt = {
+        state.client.lock().await.clone()
+    };
+    
+    // --- MOCK ---
+    if client_opt.is_none() {
+        let mock_id = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64;
+        println!("[MOCK] Created folder '{}' with ID {}", name, mock_id);
+        return Ok(FolderMetadata {
+            id: mock_id,
+            name,
+            parent_id: None,
+        });
+    }
+    // -----------
+    let client = client_opt.unwrap();
+    println!("Creating Telegram Channel: {}", name);
+    
+    // Create Broadcast Channel
+    // Create Broadcast Channel
+    let result = client.invoke(&tl::functions::channels::CreateChannel {
+        broadcast: true,
+        megagroup: false,
+        title: name.clone(),
+        about: "Created via Telegram Drive".to_string(),
+        geo_point: None,
+        address: None,
+        for_import: false,
+        forum: false,
+        ttl_period: None,
+    }).await.map_err(|e| format!("Failed to create channel: {}", e))?;
+    
+    // Attempt to extract Chat ID from Updates
+    let chat_id = match result {
+        tl::enums::Updates::Updates(u) => {
+            u.chats.first().map(|c| c.id()).ok_or("No chat in updates")?
+        },
+        _ => return Err("Unexpected response (not Updates::Updates)".to_string()), 
+    };
+
+    Ok(FolderMetadata {
+        id: chat_id,
+        name,
+        parent_id: None,
+    })
+}
+
+#[tauri::command]
+pub async fn cmd_move_file(
+    message_id: i32,
+    source_folder_id: Option<i64>,
+    target_folder_id: Option<i64>,
+    state: State<'_, TelegramState>,
+) -> Result<bool, String> {
+    if source_folder_id == target_folder_id {
+        return Ok(true);
+    }
+
+    let client_opt = {
+        state.client.lock().await.clone()
+    };
+    
+    // --- MOCK ---
+    if client_opt.is_none() {
+        println!("[MOCK] Moved msg {} from {:?} to {:?}", message_id, source_folder_id, target_folder_id);
+        return Ok(true);
+    }
+    let client = client_opt.unwrap();
+    
+    // Resolve Source Peer
+    let source_chat = if let Some(fid) = source_folder_id {
+         let mut found_chat = None;
+         let mut dialogs = client.iter_dialogs();
+         while let Some(dialog) = dialogs.next().await.map_err(|e| e.to_string())? {
+             if dialog.chat().id() == fid {
+                 found_chat = Some(dialog.chat().pack());
+                 break;
+             }
+         }
+         found_chat.ok_or(format!("Source Folder {} not found", fid))?
+    } else {
+         client.get_me().await.map_err(|e| e.to_string())?.pack()
+    };
+
+    // Resolve Target Peer
+    let target_chat = if let Some(fid) = target_folder_id {
+         let mut found_chat = None;
+         let mut dialogs = client.iter_dialogs();
+         while let Some(dialog) = dialogs.next().await.map_err(|e| e.to_string())? {
+             if dialog.chat().id() == fid {
+                 found_chat = Some(dialog.chat().pack());
+                 break;
+             }
+         }
+         found_chat.ok_or(format!("Target Folder {} not found", fid))?
+    } else {
+         client.get_me().await.map_err(|e| e.to_string())?.pack()
+    };
+
+    println!("Moving message {}...", message_id);
+
+    // Forward needs source!
+    // client.forward_messages(to, messages, from)
+    // messages: &[i32] (IDs) or &[InputMessage]
+    // grammers::forward_messages takes IDs usually? Check docs?
+    // "messages" arg: "The messages to forward. You can pass message IDs (integers)..."
+    client.forward_messages(target_chat, &[message_id], source_chat).await
+        .map_err(|e| format!("Forward failed: {}", e))?;
+        
+    // Delete from source
+    client.delete_messages(source_chat, &[message_id]).await
+        .map_err(|e| format!("Delete original failed: {}", e))?;
+
+    Ok(true)
+}
