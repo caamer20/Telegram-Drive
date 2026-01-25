@@ -62,3 +62,8 @@ Licensed under the **MIT License**.
 
 ---
 *Disclaimer: This application is not affiliated with Telegram FZ-LLC. Use responsibly and in accordance with Telegram's Terms of Service.*
+
+
+<a href="https://www.paypal.me/Caamer20">
+  <img src="https://raw.githubusercontent.com/stefan-niedermann/paypal-donate-button/master/paypal-donate-button.png" alt="Donate with PayPal" width="200" />
+</a>
