@@ -13,7 +13,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform: [macos-latest, ubuntu-22.04, windows-latest]
+        platform: [macos-latest, macos-13, ubuntu-22.04, windows-latest]
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "10.13"
 
     runs-on: ${{ matrix.platform }}
     steps:
