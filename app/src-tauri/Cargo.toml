@@ -1,6 +1,6 @@
 [package]
 name = "app"
-version = "0.1.0"
+version = "0.2.0"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
@@ -31,4 +31,6 @@ tokio = { version = "1", features = ["full"] }
 tauri-plugin-store = "2"
 tauri-plugin-shell = "2"
 tauri-plugin-dialog = "2.6.0"
+chrono = "0.4"
+base64 = "0.21"
 

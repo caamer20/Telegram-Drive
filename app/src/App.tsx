@@ -13,7 +13,7 @@ function App() {
     <QueryClientProvider client={queryClient}>
       <main className="h-screen w-screen text-telegram-text overflow-hidden selection:bg-telegram-primary/30 relative">
         {isAuthenticated ? (
-          <Dashboard />
+          <Dashboard onLogout={() => setIsAuthenticated(false)} />
         ) : (
           <AuthWizard onLogin={() => setIsAuthenticated(true)} />
         )}

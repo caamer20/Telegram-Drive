@@ -1,6 +1,7 @@
 pub mod models;
 
 pub mod commands;
+pub mod bandwidth;
 
 use tauri::Manager;
 use tokio::sync::Mutex;
@@ -21,6 +22,7 @@ pub fn run() {
                 login_token: Mutex::new(None),
                 password_token: Mutex::new(None),
             });
+            app.manage(bandwidth::BandwidthManager::new(app.handle()));
             
             Ok(())
         })
@@ -37,6 +39,11 @@ pub fn run() {
             commands::cmd_move_file,
             commands::cmd_create_folder,
             commands::cmd_delete_folder,
+            commands::cmd_get_bandwidth,
+            commands::cmd_get_preview,
+            commands::cmd_logout,
+            commands::cmd_scan_folders,
+            commands::cmd_clean_cache,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
