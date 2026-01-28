@@ -7,6 +7,10 @@
     "core:default",
     "shell:allow-open",
     "store:default",
-    "dialog:default"
+    "dialog:default",
+    "fs:default",
+    "fs:allow-appdata-read-recursive",
+    "fs:allow-appdata-write-recursive",
+    "fs:allow-appdata-meta-recursive"
   ]
 }

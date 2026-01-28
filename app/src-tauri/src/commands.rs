@@ -320,7 +320,7 @@ pub async fn cmd_create_folder(
     let result = client.invoke(&tl::functions::channels::CreateChannel {
         broadcast: true,
         megagroup: false,
-        title: name.clone(),
+        title: format!("{} [TD]", name),
         about: "Telegram Drive Storage Folder\n[telegram-drive-folder]".to_string(),
         geo_point: None,
         address: None,
@@ -512,12 +512,13 @@ pub async fn cmd_get_preview(
     bw_state: State<'_, BandwidthManager>,
 ) -> Result<String, String> {
     
-    use base64::{Engine as _, engine::general_purpose};
+
     
     // Check cache
     // Note: We use the creation logic as before...
-    let cache_dir = app_handle.path().app_cache_dir().map_err(|e: tauri::Error| e.to_string())?.join("previews");
+    let cache_dir = app_handle.path().app_data_dir().map_err(|e: tauri::Error| e.to_string())?.join("previews");
     if !cache_dir.exists() { let _ = std::fs::create_dir_all(&cache_dir); }
+    println!("Using preview cache dir: {:?}", cache_dir);
     
     println!("Preview Request: msg_id={}", message_id);
 
@@ -559,10 +560,9 @@ pub async fn cmd_get_preview(
              let save_path = cache_dir.join(format!("{}.{}", message_id, ext));
              let save_path_str = save_path.to_string_lossy().to_string();
              
-             let mut file_ready = false;
-             if save_path.exists() {
+             let file_ready = if save_path.exists() {
                  println!("File exists in cache.");
-                 file_ready = true;
+                 true
              } else {
                  // Download
                  let size = match &media {
@@ -572,35 +572,33 @@ pub async fn cmd_get_preview(
                 };
                 
                 println!("Downloading... Size: {}", size);
-                bw_state.can_transfer(size).map_err(|e| e)?;
-                 
-                match client.download_media(&media, &save_path_str).await {
-                    Ok(_) => {
-                        println!("Download complete.");
-                        bw_state.add_down(size);
-                        file_ready = true;
-                    },
-                    Err(e) => {
-                        println!("Download Error: {}", e);
-                        return Err(format!("Download failed: {}", e));
+                if let Err(e) = bw_state.can_transfer(size) {
+                    println!("Bandwidth limit: {}", e);
+                    false
+                } else {
+                    match client.download_media(&media, &save_path_str).await {
+                        Ok(_) => {
+                            println!("Download complete.");
+                            bw_state.add_down(size);
+                            true
+                        },
+                        Err(e) => {
+                            println!("Download Error: {}", e);
+                            false
+                        }
                     }
                 }
-             }
+             };
 
              if file_ready {
-                 // Hybrid Return: Base64 for images, Path for others
                  let lower_ext = ext.to_lowercase();
                  if ["jpg", "jpeg", "png", "gif", "webp", "bmp", "svg"].contains(&lower_ext.as_str()) {
+                     use base64::{Engine as _, engine::general_purpose};
                      println!("Converting image to Base64...");
                      match std::fs::read(&save_path) {
                          Ok(bytes) => {
                              let b64 = general_purpose::STANDARD.encode(&bytes);
                              let mime = match lower_ext.as_str() {
-                                 "svg" => "image/svg+xml",
-                                 _ => "image/jpeg", // approximate default, browser handles most
-                             }; 
-                             // Better mime mapping
-                             let real_mime = match lower_ext.as_str() {
                                  "png" => "image/png",
                                  "gif" => "image/gif",
                                  "webp" => "image/webp",
@@ -608,18 +606,21 @@ pub async fn cmd_get_preview(
                                  "svg" => "image/svg+xml",
                                  _ => "image/jpeg",
                              };
-                             return Ok(format!("data:{};base64,{}", real_mime, b64));
+                             return Ok(format!("data:{};base64,{}", mime, b64));
                          },
-                         Err(e) => return Err(format!("Failed to read file for base64: {}", e)),
+                         Err(e) => {
+                             println!("Failed to read file for base64: {}", e);
+                             return Ok(save_path_str);
+                         }
                      }
-                 } else {
-                     return Ok(save_path_str);
                  }
+                 println!("Returning path: {}", save_path_str);
+                 return Ok(save_path_str);
              }
         }
     }
 
-    Err("File not found anywhere".to_string())
+    Err("File not found or failed to download".to_string())
 }
 
 #[tauri::command]
@@ -627,6 +628,9 @@ pub async fn cmd_clean_cache(
     app_handle: tauri::AppHandle,
 ) -> Result<(), String> {
     let cache_dir = app_handle.path().app_cache_dir().map_err(|e| e.to_string())?.join("previews");
+    if !cache_dir.exists() {
+        std::fs::create_dir_all(&cache_dir).map_err(|e| format!("Failed to create cache dir: {}", e))?;
+    }
     if cache_dir.exists() {
          let _ = std::fs::remove_dir_all(cache_dir);
     }
@@ -634,8 +638,8 @@ pub async fn cmd_clean_cache(
 }
 
 #[tauri::command]
-pub async fn cmd_move_file(
-    message_id: i32,
+pub async fn cmd_move_files(
+    message_ids: Vec<i32>,
     source_folder_id: Option<i64>,
     target_folder_id: Option<i64>,
     state: State<'_, TelegramState>,
@@ -643,7 +647,7 @@ pub async fn cmd_move_file(
     if source_folder_id == target_folder_id { return Ok(true); }
     let client_opt = { state.client.lock().await.clone() };
     if client_opt.is_none() { 
-        println!("[MOCK] Moved msg {} from {:?} to {:?}", message_id, source_folder_id, target_folder_id);
+        println!("[MOCK] Moved msgs {:?} from {:?} to {:?}", message_ids, source_folder_id, target_folder_id);
         return Ok(true); 
     }
     let client = client_opt.unwrap();
@@ -651,13 +655,13 @@ pub async fn cmd_move_file(
     let source_peer = resolve_peer(&client, source_folder_id).await?;
     let target_peer = resolve_peer(&client, target_folder_id).await?;
 
-    // Now call forward logic
-    match client.forward_messages(&target_peer, &[message_id], &source_peer).await {
+    // Now call forward logic (bulk)
+    match client.forward_messages(&target_peer, &message_ids, &source_peer).await {
         Ok(_) => {},
         Err(e) => return Err(format!("Forward failed: {}", e)),
     }
     
-    match client.delete_messages(&source_peer, &[message_id]).await {
+    match client.delete_messages(&source_peer, &message_ids).await {
         Ok(_) => {},
         Err(e) => return Err(format!("Delete original failed: {}", e)),
     }
@@ -719,43 +723,61 @@ pub async fn cmd_scan_folders(
     let mut folders = Vec::new();
     let mut dialogs = client.iter_dialogs();
     
+    println!("Starting Folder Scan...");
+
     // Iterate dialogs
     while let Some(dialog) = dialogs.next().await.map_err(|e| e.to_string())? {
-        // Check if it's a channel by matching the peer type directly
+        // Log every dialog seen
         match &dialog.peer {
             Peer::Channel(c) => {
                 let id = c.raw.id;
                 let name = c.raw.title.clone();
+                let access_hash = c.raw.access_hash.unwrap_or(0);
+                
+                println!("[SCAN] Processing Channel: '{}' (ID: {})", name, id);
 
+                // Strategy 1: Title (Case Insensitive)
+                if name.to_lowercase().contains("td") || name.to_lowercase().contains("[td]") {
+                     // Check for common variations like "Name [TD]" or "[TD] Name"
+                    println!(" -> MATCH via Title: {}", name);
+                    // Remove tag case-insensitively
+                    let display_name = name.replace(" [TD]", "").replace(" [td]", "").replace("[TD]", "").replace("[td]", "").trim().to_string();
+                    folders.push(FolderMetadata { id, name: display_name, parent_id: None });
+                    continue; 
+                }
+
+                // Strategy 2: About (Only if title didn't match)
                 let input_chan = tl::enums::InputChannel::Channel(tl::types::InputChannel {
                     channel_id: c.raw.id,
-                    access_hash: c.raw.access_hash.unwrap_or(0),
+                    access_hash,
                 });
                 
-                // Get full channel info to check "about"
-                // This might be slow if many channels, but standard practice
-                let full = client.invoke(&tl::functions::channels::GetFullChannel {
+                match client.invoke(&tl::functions::channels::GetFullChannel {
                     channel: input_chan,
-                }).await;
-
-                if let Ok(tl::enums::messages::ChatFull::Full(f)) = full {
-                    match f.full_chat {
-                        tl::enums::ChatFull::Full(cf) => {
-                             if cf.about.contains("[telegram-drive-folder]") {
-                                 folders.push(FolderMetadata {
-                                     id,
-                                     name,
-                                     parent_id: None,
-                                 });
-                             }
+                }).await {
+                    Ok(tl::enums::messages::ChatFull::Full(f)) => {
+                        match f.full_chat {
+                            tl::enums::ChatFull::Full(cf) => {
+                                 if cf.about.contains("[telegram-drive-folder]") {
+                                     println!(" -> MATCH via About: {}", name);
+                                     folders.push(FolderMetadata { id, name: name.clone(), parent_id: None });
+                                 }
+                            }
+                            _ => {}
                         }
-                        _ => {}
-                    }
+                    },
+                    Err(e) => println!(" -> Failed to get full info: {}", e),
                 }
             },
-            _ => {}
+            _ => {
+                match &dialog.peer {
+                     Peer::User(_) => println!("[SCAN] Skipped User Peer"),
+                     _ => println!("[SCAN] Skipped Other Peer: {:?}", dialog.peer),
+                }
+            }
         }
     }
     
+    println!("Scan complete. Found {} folders.", folders.len());
     Ok(folders)
 }

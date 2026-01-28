@@ -14,6 +14,7 @@ pub fn run() {
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_fs::init())
         .setup(|app| {
             let _handle = app.handle().clone(); // Prefix with _ if meant to be kept or used later, or remove. I'll remove it? No, keeping with _ is safer if future needs it. Actually I'll remove it.
             
@@ -36,7 +37,7 @@ pub fn run() {
             commands::cmd_log,
             commands::cmd_delete_file,
             commands::cmd_download_file,
-            commands::cmd_move_file,
+            commands::cmd_move_files,
             commands::cmd_create_folder,
             commands::cmd_delete_folder,
             commands::cmd_get_bandwidth,

@@ -134,8 +134,8 @@ export function AuthWizard({ onLogin }: { onLogin: () => void }) {
                 className="glass p-8 rounded-3xl shadow-2xl w-full"
             >
                 <div className="text-center mb-8">
-                    <div className="w-16 h-16 bg-gradient-to-br from-blue-500 to-blue-700 rounded-2xl mx-auto mb-4 flex items-center justify-center shadow-lg transform rotate-[-8deg] border border-white/10">
-                        <ShieldCheck className="w-8 h-8 text-white" />
+                    <div className="w-20 h-20 mb-6 mx-auto flex items-center justify-center filter drop-shadow-lg">
+                        <img src="/logo.svg" alt="Logo" className="w-full h-full" />
                     </div>
                     <h1 className="text-2xl font-bold text-white mb-1 tracking-tight">Telegram Drive</h1>
                     <p className="text-sm text-gray-400 font-medium">Self-Hosted Secure Storage</p>

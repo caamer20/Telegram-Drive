@@ -390,25 +390,20 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
     const handleBulkMove = async (targetFolderId: number | null) => {
         if (selectedIds.length === 0) return;
 
-        let successCount = 0;
-        for (const id of selectedIds) {
-            try {
-                await invoke('cmd_move_file', {
-                    messageId: id,
-                    sourceFolderId: activeFolderId,
-                    targetFolderId: targetFolderId
-                });
-                successCount++;
-            } catch (e) {
-                console.error(`Failed to move ${id}`, e);
-            }
+        try {
+            await invoke('cmd_move_files', {
+                messageIds: selectedIds,
+                sourceFolderId: activeFolderId,
+                targetFolderId: targetFolderId
+            });
+            alert(`Moved ${selectedIds.length} files.`);
+            queryClient.invalidateQueries({ queryKey: ['files', activeFolderId] });
+            setShowMoveModal(false);
+            setSelectedIds([]);
+        } catch (e) {
+            console.error(`Failed to move files`, e);
+            alert(`Failed to move files: ${e}`);
         }
-
-        // Refresh and close
-        queryClient.invalidateQueries({ queryKey: ['files', activeFolderId] });
-        setShowMoveModal(false);
-        setSelectedIds([]);
-        alert(`Moved ${successCount} files.`);
     };
 
     const handleDownloadFolder = async () => {
@@ -451,6 +446,13 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
                 setSelectedIds([...selectedIds, id]);
             }
         } else {
+            // Toggle selection logic or preview? 
+            // If selecting multiple, click clears?
+            // User requested "i select 3 files". Click usually selects. Double click previews.
+            // Let's make single click select ONLY if selection mode is active or just select one.
+            // Current standard: Click selects/deselects if checkboxes exist.
+            // If we just set [id], we lose multi. 
+            // Let's simple toggle if ctrl pressed, else select ONE.
             setSelectedIds([id]);
         }
     }
@@ -466,14 +468,21 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
         if (fileIdStr) {
             const fileId = parseInt(fileIdStr);
             try {
-                await invoke('cmd_move_file', {
-                    messageId: fileId,
+                // Determine if we are dragging a selection or a single file
+                // If dragged file is in selectedIds, move all selected.
+                // Else move just this one.
+                const idsToMove = selectedIds.includes(fileId) ? selectedIds : [fileId];
+
+                await invoke('cmd_move_files', {
+                    messageIds: idsToMove,
                     sourceFolderId: activeFolderId,
                     targetFolderId: targetFolderId
                 });
                 queryClient.invalidateQueries({ queryKey: ['files', activeFolderId] });
+                // If we moved selection, clear it
+                if (selectedIds.includes(fileId)) setSelectedIds([]);
             } catch (e) {
-                alert(`Failed to move file: ${e}`);
+                alert(`Failed to move file(s): ${e}`);
             }
         }
     }
@@ -1026,8 +1035,8 @@ function PreviewModal({ file, onClose, activeFolderId }: any) {
 
                 {!loading && !error && src && (
                     <div className="flex flex-col items-center">
-                        {['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'svg'].some(ext => file.name.toLowerCase().endsWith(ext)) ? (
-                            <img src={src} className="max-w-full max-h-[85vh] object-contain rounded-lg shadow-2xl bg-black" alt="Preview" />
+                        {['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'svg', 'heic', 'heif'].some(ext => file.name.toLowerCase().endsWith(ext)) ? (
+                            <img src={src.startsWith('data:') ? src : `${src}?t=${Date.now()}`} className="max-w-full max-h-[85vh] object-contain rounded-lg shadow-2xl bg-black" alt="Preview" />
                         ) : ['mp4', 'webm', 'ogg', 'mov'].some(ext => file.name.toLowerCase().endsWith(ext)) ? (
                             <video src={src} controls className="max-w-full max-h-[85vh] rounded-lg shadow-2xl bg-black" />
                         ) : (
