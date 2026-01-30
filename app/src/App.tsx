@@ -2,23 +2,42 @@ import { useState } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { AuthWizard } from "./components/AuthWizard";
 import { Dashboard } from "./components/Dashboard";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import "./App.css";
+
+import { Toaster } from "sonner";
+import { ConfirmProvider } from "./context/ConfirmContext";
+import { ThemeProvider, useTheme } from "./context/ThemeContext";
 
 const queryClient = new QueryClient();
 
-function App() {
+function AppContent() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const { theme } = useTheme();
 
   return (
-    <QueryClientProvider client={queryClient}>
-      <main className="h-screen w-screen text-telegram-text overflow-hidden selection:bg-telegram-primary/30 relative">
-        {isAuthenticated ? (
-          <Dashboard onLogout={() => setIsAuthenticated(false)} />
-        ) : (
-          <AuthWizard onLogin={() => setIsAuthenticated(true)} />
-        )}
-      </main>
-    </QueryClientProvider>
+    <main className="h-screen w-screen text-telegram-text overflow-hidden selection:bg-telegram-primary/30 relative">
+      <Toaster theme={theme} position="bottom-center" />
+      {isAuthenticated ? (
+        <Dashboard onLogout={() => setIsAuthenticated(false)} />
+      ) : (
+        <AuthWizard onLogin={() => setIsAuthenticated(true)} />
+      )}
+    </main>
+  );
+}
+
+function App() {
+  return (
+    <ErrorBoundary>
+      <ThemeProvider>
+        <QueryClientProvider client={queryClient}>
+          <ConfirmProvider>
+            <AppContent />
+          </ConfirmProvider>
+        </QueryClientProvider>
+      </ThemeProvider>
+    </ErrorBoundary>
   );
 }
 

@@ -1,5 +1,7 @@
 @import "tailwindcss";
 
+/* stylelint-disable at-rule-no-unknown */
+/* Dark Theme (Default) - Using Tailwind v4 @theme directive */
 @theme {
   --color-telegram-bg: #0e1621;
   --color-telegram-surface: #17212b;
@@ -7,6 +9,20 @@
   --color-telegram-secondary: #2481cc;
   --color-telegram-text: #ffffff;
   --color-telegram-subtext: #8e9fb3;
+  --color-telegram-border: rgba(255, 255, 255, 0.1);
+  --color-telegram-hover: rgba(255, 255, 255, 0.05);
+}
+
+/* Light Theme Overrides */
+:root.light {
+  --color-telegram-bg: #f0f2f5;
+  --color-telegram-surface: #ffffff;
+  --color-telegram-primary: #e69500;
+  --color-telegram-secondary: #2481cc;
+  --color-telegram-text: #1a1a1a;
+  --color-telegram-subtext: #65676b;
+  --color-telegram-border: rgba(0, 0, 0, 0.1);
+  --color-telegram-hover: rgba(0, 0, 0, 0.03);
 }
 
 body,
@@ -18,18 +34,87 @@ body,
   overflow: hidden;
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
-  background: radial-gradient(circle at top left, #4facfe, #00f2fe);
-  /* Fallback / Alternative Premium Blue */
-  background: radial-gradient(120% 120% at 0% 0%, #3ca5ff 0%, #007aff 100%);
-  color: white;
+  background: var(--color-telegram-bg);
+  color: var(--color-telegram-text);
+  transition: background-color 0.3s ease, color 0.3s ease;
 }
 
-/* Glassmorphism Utilities */
+/* Auth screen gradient background */
+.auth-gradient {
+  background: radial-gradient(120% 120% at 0% 0%, #3ca5ff 0%, #007aff 100%);
+}
+
+:root.light .auth-gradient {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+}
+
+/* Glassmorphism Utilities - Dark */
 .glass {
   background: rgba(23, 33, 43, 0.7);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
   border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+:root.light .glass {
+  background: rgba(255, 255, 255, 0.85);
+  border: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+/* Auth-specific glass - works on gradient backgrounds in both themes */
+.auth-glass {
+  background: rgba(23, 33, 43, 0.85);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+:root.light .auth-glass {
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  color: #1a1a1a;
+}
+
+/* Force dark text inside auth-glass in light mode */
+:root.light .auth-glass .text-white {
+  color: #1a1a1a;
+}
+
+:root.light .auth-glass .text-white\/60 {
+  color: rgba(26, 26, 26, 0.7);
+}
+
+:root.light .auth-glass .text-gray-400 {
+  color: #555;
+}
+
+:root.light .auth-glass .text-blue-200 {
+  color: #1e40af;
+}
+
+:root.light .auth-glass .placeholder-gray-600::placeholder {
+  color: #9ca3af;
+}
+
+:root.light .auth-glass input {
+  background: rgba(0, 0, 0, 0.05);
+  border-color: rgba(0, 0, 0, 0.15);
+  color: #1a1a1a;
+}
+
+/* Auth form icons - Direct overrides for maximum visibility */
+.auth-form-icon {
+  color: #ffffff !important;
+  /* Default (Dark Mode): Pure White */
+  opacity: 1 !important;
+  z-index: 20;
+}
+
+/* Light Mode Override */
+:root.light .auth-form-icon {
+  color: #000000 !important;
+  /* Light Mode: Pure Black */
+  opacity: 0.8 !important;
 }
 
 .glass-input {
@@ -38,7 +123,12 @@ body,
   backdrop-filter: blur(10px);
 }
 
-/* Custom Scrollbar */
+:root.light .glass-input {
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(0, 0, 0, 0.15);
+}
+
+/* Custom Scrollbar - Dark */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
@@ -55,4 +145,94 @@ body,
 
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(36, 129, 204, 0.6);
+}
+
+/* Custom Scrollbar - Light */
+:root.light ::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.15);
+}
+
+:root.light ::-webkit-scrollbar-thumb:hover {
+  background: rgba(36, 129, 204, 0.5);
+}
+
+/* Progress Animation */
+@keyframes progress-indeterminate {
+  0% {
+    transform: translateX(-100%);
+  }
+
+  50% {
+    transform: translateX(50%);
+  }
+
+  100% {
+    transform: translateX(200%);
+  }
+}
+
+.animate-progress-indeterminate {
+  animation: progress-indeterminate 1.5s infinite linear;
+}
+
+/* Light mode specific overrides for common patterns */
+:root.light .bg-telegram-bg {
+  background-color: var(--color-telegram-bg);
+}
+
+:root.light .bg-telegram-surface {
+  background-color: var(--color-telegram-surface);
+}
+
+:root.light .border-white\/5,
+:root.light .border-white\/10 {
+  border-color: var(--color-telegram-border);
+}
+
+:root.light .bg-white\/5,
+:root.light .hover\:bg-white\/5:hover {
+  background-color: var(--color-telegram-hover);
+}
+
+:root.light .bg-white\/10,
+:root.light .hover\:bg-white\/10:hover {
+  background-color: rgba(0, 0, 0, 0.05);
+}
+
+:root.light .bg-black\/20,
+:root.light .bg-black\/30,
+:root.light .bg-black\/50 {
+  background-color: rgba(0, 0, 0, 0.05);
+}
+
+/* Invert text colors for light mode where needed */
+:root.light .text-telegram-text {
+  color: var(--color-telegram-text);
+}
+
+:root.light .text-telegram-subtext {
+  color: var(--color-telegram-subtext);
+}
+
+/* Card shadows for light mode */
+:root.light .shadow-2xl {
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.15);
+}
+
+/* Input styling for light mode */
+:root.light input,
+:root.light textarea {
+  background-color: #ffffff;
+  border-color: rgba(0, 0, 0, 0.15);
+  color: #1a1a1a;
+}
+
+:root.light input::placeholder,
+:root.light textarea::placeholder {
+  color: #9ca3af;
+}
+
+:root.light input:focus,
+:root.light textarea:focus {
+  border-color: var(--color-telegram-primary);
 }
