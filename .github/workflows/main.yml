@@ -13,9 +13,19 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform: [macos-latest, macos-13, ubuntu-22.04, windows-latest]
-    env:
-      MACOSX_DEPLOYMENT_TARGET: "10.13"
+        include:
+          # Windows (Standard x64)
+          - platform: windows-latest
+            args: ''
+          
+          # Linux (Ubuntu x64)
+          - platform: ubuntu-22.04
+            args: ''
+            
+          # macOS (Apple Silicon / ARM64)
+          # We use a custom argument to force the ARM build target
+          - platform: macos-latest
+            args: '--target aarch64-apple-darwin'
 
     runs-on: ${{ matrix.platform }}
     steps:
@@ -28,6 +38,9 @@ jobs:
 
       - name: install Rust stable
         uses: dtolnay/rust-toolchain@stable
+        with:
+          # Targets: Linux, Windows, and Mac ARM
+          targets: aarch64-apple-darwin, x86_64-unknown-linux-gnu, x86_64-pc-windows-msvc
 
       - name: install dependencies (ubuntu only)
         if: matrix.platform == 'ubuntu-22.04'
@@ -51,10 +64,16 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # These secrets are only needed if you are signing the Mac app
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         with:
-          tagName: app-v__VERSION__ # the action automatically replaces \_\_VERSION\_\_ with the app version
+          tagName: app-v__VERSION__ 
           releaseName: 'App v__VERSION__'
           releaseBody: 'See the assets to download this version and install.'
           releaseDraft: true
           prerelease: false
           projectPath: ./app
+          # This pulls the 'args' from the matrix above (e.g., forcing ARM on Mac)
+          args: ${{ matrix.args }}
