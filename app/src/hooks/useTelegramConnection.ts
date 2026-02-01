@@ -61,6 +61,35 @@ export function useTelegramConnection(onLogoutParent: () => void) {
         initStore();
     }, [queryClient, onLogoutParent]);
 
+    // Polling / Wake Detection
+    useEffect(() => {
+        const checkConnection = async () => {
+            try {
+                // Returns true if connected/reconnected, false if dead
+                const alive = await invoke<boolean>('cmd_check_connection');
+                if (!alive) {
+                    console.warn("Connection lost. Please restart or logout.");
+                    // Optional: could force logout or show modal.
+                    // For now, let the backend try its best. logic in backend handles auto-reconnect.
+                }
+            } catch (e) {
+                console.error("Connection check failed:", e);
+            }
+        };
+
+        // Check on window focus (wake up)
+        const onFocus = () => checkConnection();
+        window.addEventListener('focus', onFocus);
+
+        // Check every 30s
+        const interval = setInterval(checkConnection, 30000);
+
+        return () => {
+            window.removeEventListener('focus', onFocus);
+            clearInterval(interval);
+        };
+    }, []);
+
     const handleLogout = async () => {
         if (!await confirm({ title: "Sign Out", message: "Are you sure you want to sign out? This will disconnect your active session.", confirmText: "Sign Out", variant: 'danger' })) return;
 

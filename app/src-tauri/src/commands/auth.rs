@@ -72,8 +72,54 @@ pub async fn cmd_connect(
     state: State<'_, TelegramState>,
     api_id: i32,
 ) -> Result<bool, String> {
+    // Store API ID for auto-reconnect
+    *state.api_id.lock().await = Some(api_id);
     ensure_client_initialized(&app_handle, &state, api_id).await?;
     Ok(true)
+}
+
+#[tauri::command]
+pub async fn cmd_check_connection(
+    app_handle: tauri::AppHandle,
+    state: State<'_, TelegramState>,
+) -> Result<bool, String> {
+    // 1. Check if client exists and is responsive
+    let client_msg_opt = {
+        let guard = state.client.lock().await;
+        guard.as_ref().cloned()
+    };
+
+    if let Some(client) = client_msg_opt {
+        // Ping (e.g., get_me)
+        if client.get_me().await.is_ok() {
+            return Ok(true);
+        }
+        log::warn!("Connection check failed (get_me). Attempting reconnect...");
+    } else {
+         log::warn!("Connection check: No client found. Checking for saved API ID...");
+    }
+
+    // 2. Reconnect Logic
+    let api_id_opt = *state.api_id.lock().await;
+    if let Some(api_id) = api_id_opt {
+        // Force re-init: Clear old client first to ensure fresh pool
+        *state.client.lock().await = None;
+        
+        match ensure_client_initialized(&app_handle, &state, api_id).await {
+            Ok(c) => {
+                // Double check
+                if c.get_me().await.is_ok() {
+                    log::info!("Auto-reconnect successful.");
+                    return Ok(true);
+                } else {
+                    return Err("Reconnect succeeded but ping failed.".to_string());
+                }
+            },
+            Err(e) => return Err(format!("Auto-reconnect failed: {}", e))
+        }
+    }
+
+    Ok(false) // Not connected and no credentials to reconnect
 }
 
 #[tauri::command]
@@ -94,6 +140,7 @@ pub async fn cmd_logout(
     *state.client.lock().await = None;
     *state.login_token.lock().await = None;
     *state.password_token.lock().await = None;
+    *state.api_id.lock().await = None;
 
     // 3. Remove Session File
     let app_data_dir = app_handle.path().app_data_dir().unwrap();
@@ -117,6 +164,9 @@ pub async fn cmd_auth_request_code(
     if api_hash.trim().is_empty() {
         return Err("API Hash cannot be empty.".to_string());
     }
+
+    // Store API ID
+    *state.api_id.lock().await = Some(api_id);
 
     let client_handle = ensure_client_initialized(&app_handle, &state, api_id).await?;
     

@@ -80,5 +80,5 @@ interface FileTypeIconProps {
 
 export function FileTypeIcon({ filename, className = "w-10 h-10" }: FileTypeIconProps) {
     const { icon: Icon, color } = getFileTypeInfo(filename);
-    return <Icon className={`${className} ${color}`} />;
+    return <Icon className={`${className} ${color} pointer-events-none select-none`} />;
 }

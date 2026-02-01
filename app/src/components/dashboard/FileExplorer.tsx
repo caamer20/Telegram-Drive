@@ -1,9 +1,10 @@
-import { useState, useMemo } from 'react';
-import { Plus, Folder, Eye, HardDrive, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
+import { useState, useMemo, useCallback } from 'react';
+import { Plus, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
 import { FileCard } from './FileCard';
 import { EmptyState } from './EmptyState';
 import { TelegramFile } from '../../types';
-import { FileTypeIcon } from '../FileTypeIcon';
+import { ContextMenu } from './ContextMenu';
+import { FileListItem } from './FileListItem';
 
 type SortField = 'name' | 'size' | 'date';
 type SortDirection = 'asc' | 'desc';
@@ -21,14 +22,24 @@ interface FileExplorerProps {
     onPreview: (file: TelegramFile) => void;
     onManualUpload: () => void;
     onSelectionClear: () => void;
+    onDrop?: (e: React.DragEvent, folderId: number) => void;
+    onDragStart?: (fileId: number) => void;
+    onDragEnd?: () => void;
 }
 
 export function FileExplorer({
     files, loading, error, viewMode, selectedIds, activeFolderId,
-    onFileClick, onDelete, onDownload, onPreview, onManualUpload, onSelectionClear
+    onFileClick, onDelete, onDownload, onPreview, onManualUpload, onSelectionClear, onDrop, onDragStart, onDragEnd
 }: FileExplorerProps) {
     const [sortField, setSortField] = useState<SortField>('name');
     const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
+    const [contextMenu, setContextMenu] = useState<{ x: number; y: number; file: TelegramFile } | null>(null);
+
+    const handleContextMenu = useCallback((e: React.MouseEvent, file: TelegramFile) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setContextMenu({ x: e.clientX, y: e.clientY, file });
+    }, []);
 
     const sortedFiles = useMemo(() => {
         return [...files].sort((a, b) => {
@@ -121,9 +132,13 @@ export function FileExplorer({
                                 file={file}
                                 isSelected={selectedIds.includes(file.id)}
                                 onClick={(e) => onFileClick(e, file.id)}
+                                onContextMenu={(e) => handleContextMenu(e, file)}
                                 onDelete={() => onDelete(file.id)}
                                 onDownload={() => onDownload(file.id, file.name)}
                                 onPreview={() => onPreview(file)}
+                                onDrop={onDrop}
+                                onDragStart={onDragStart}
+                                onDragEnd={onDragEnd}
                             />
                         ))}
 
@@ -154,34 +169,19 @@ export function FileExplorer({
                     </div>
 
                     {sortedFiles.map((file) => (
-                        <div
+                        <FileListItem
                             key={file.id}
-                            onClick={(e) => onFileClick(e, file.id)}
-                            onContextMenu={(e) => {
-                                e.preventDefault();
-                                if (!selectedIds.includes(file.id)) onFileClick(e, file.id);
-                            }}
-                            draggable
-                            onDragStart={(e) => {
-                                e.dataTransfer.setData("application/x-telegram-file-id", file.id.toString());
-                            }}
-                            className={`group grid grid-cols-[2rem_2fr_6rem_8rem] gap-4 items-center px-4 py-3 rounded-lg cursor-pointer border border-transparent transition-all hover:bg-telegram-hover ${selectedIds.includes(file.id) ? 'bg-telegram-primary/10 border-telegram-primary/20' : ''}`}
-                        >
-                            <div className="flex justify-center">
-                                {file.type === 'folder' ? <Folder className="w-5 h-5 text-telegram-primary" /> : <FileTypeIcon filename={file.name} className="w-5 h-5" />}
-                            </div>
-                            <div className="truncate text-sm text-telegram-text font-medium relative pr-8">
-                                {file.name}
-                                {/* List Actions */}
-                                <div className="absolute right-0 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 flex items-center bg-telegram-surface border border-telegram-border shadow-lg rounded px-1">
-                                    <button onClick={(e) => { e.stopPropagation(); onPreview(file) }} className="p-1 hover:text-telegram-text text-telegram-subtext" title="Preview"><Eye className="w-4 h-4" /></button>
-                                    <button onClick={(e) => { e.stopPropagation(); onDownload(file.id, file.name) }} className="p-1 hover:text-telegram-text text-telegram-subtext" title="Download"><HardDrive className="w-4 h-4" /></button>
-                                    <button onClick={(e) => { e.stopPropagation(); onDelete(file.id) }} className="p-1 hover:text-red-400 text-telegram-subtext" title="Delete"><Plus className="w-4 h-4 rotate-45" /></button>
-                                </div>
-                            </div>
-                            <div className="text-right text-xs text-telegram-subtext truncate">{file.sizeStr}</div>
-                            <div className="text-right text-xs text-telegram-subtext font-mono opacity-50 truncate">{file.created_at || '-'}</div>
-                        </div>
+                            file={file}
+                            selectedIds={selectedIds}
+                            onFileClick={onFileClick}
+                            handleContextMenu={handleContextMenu}
+                            onDragStart={onDragStart}
+                            onDragEnd={onDragEnd}
+                            onDrop={onDrop}
+                            onPreview={onPreview}
+                            onDownload={onDownload}
+                            onDelete={onDelete}
+                        />
                     ))}
 
                     {activeFolderId === null && (
@@ -194,6 +194,31 @@ export function FileExplorer({
                         </button>
                     )}
                 </div>
+            )}
+
+            {contextMenu && (
+                <ContextMenu
+                    x={contextMenu.x}
+                    y={contextMenu.y}
+                    file={contextMenu.file}
+                    onClose={() => setContextMenu(null)}
+                    onDownload={() => {
+                        onDownload(contextMenu.file.id, contextMenu.file.name);
+                        setContextMenu(null);
+                    }}
+                    onDelete={() => {
+                        onDelete(contextMenu.file.id);
+                        setContextMenu(null);
+                    }}
+                    onPreview={() => {
+                        if (contextMenu.file.type === 'folder') {
+                            onFileClick({ preventDefault: () => { } } as any, contextMenu.file.id);
+                        } else {
+                            onPreview(contextMenu.file);
+                        }
+                        setContextMenu(null);
+                    }}
+                />
             )}
         </div>
     )

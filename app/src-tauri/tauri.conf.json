@@ -1,7 +1,15 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/caamer20/Telegram-Drive/releases/latest/download/latest.json"
+      ],
+      "pubkey": "YOUR_PUBLIC_KEY_HERE"
+    }
+  },
   "productName": "Telegram Drive",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "identifier": "com.cameronamer.telegramdrive",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -16,7 +24,8 @@
         "width": 1200,
         "height": 800,
         "minWidth": 1000,
-        "minHeight": 700
+        "minHeight": 700,
+        "dragDropEnabled": false
       }
     ],
     "security": {

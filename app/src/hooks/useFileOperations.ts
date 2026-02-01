@@ -133,6 +133,14 @@ export function useFileOperations(
         handleDownload,
         handleBulkDownload,
         handleBulkMove,
-        handleDownloadFolder
+        handleDownloadFolder,
+        handleGlobalSearch: async (query: string) => {
+            try {
+                return await invoke<TelegramFile[]>('cmd_search_global', { query });
+            } catch (e) {
+                console.error("Search failed:", e);
+                return [];
+            }
+        }
     };
 }

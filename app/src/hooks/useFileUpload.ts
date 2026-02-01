@@ -1,10 +1,10 @@
 import { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { getCurrentWindow } from '@tauri-apps/api/window';
 import { open } from '@tauri-apps/plugin-dialog';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { QueueItem } from '../types';
+import { useFileDrop } from './useFileDrop';
 
 export function useFileUpload(activeFolderId: number | null) {
     const queryClient = useQueryClient();
@@ -26,9 +26,7 @@ export function useFileUpload(activeFolderId: number | null) {
         try {
             await invoke('cmd_upload_file', { path: item.path, folderId: item.folderId });
             setUploadQueue(q => q.map(i => i.id === item.id ? { ...i, status: 'success' } : i));
-            if (activeFolderId === item.folderId) {
-                queryClient.invalidateQueries({ queryKey: ['files', activeFolderId] });
-            }
+            queryClient.invalidateQueries({ queryKey: ['files', item.folderId] });
         } catch (e) {
             setUploadQueue(q => q.map(i => i.id === item.id ? { ...i, status: 'error', error: String(e) } : i));
             toast.error(`Upload failed for ${item.path.split('/').pop()}: ${e}`);
@@ -37,6 +35,7 @@ export function useFileUpload(activeFolderId: number | null) {
         }
     };
 
+    // Manual upload via file picker dialog (the primary way to add external files)
     const handleManualUpload = async () => {
         try {
             const selected = await open({ multiple: true, directory: false });
@@ -57,27 +56,12 @@ export function useFileUpload(activeFolderId: number | null) {
         }
     };
 
-    // File Drop
-    useEffect(() => {
-        const unlistenPromise = getCurrentWindow().listen('tauri://file-drop', async (event: any) => {
-            const paths = event.payload as string[];
-            if (paths && paths.length > 0) {
-                const newItems = paths.map(path => ({
-                    id: Math.random().toString(36).substr(2, 9),
-                    path,
-                    folderId: activeFolderId,
-                    status: 'pending' as const
-                }));
-                setUploadQueue(prev => [...prev, ...newItems]);
-                toast.info(`Queued ${paths.length} dropped files`);
-            }
-        });
-        return () => { unlistenPromise.then(unlisten => unlisten()); };
-    }, [queryClient, activeFolderId]);
+    const { isDragging } = useFileDrop();
 
     return {
         uploadQueue,
         setUploadQueue,
-        handleManualUpload
+        handleManualUpload,
+        isDragging
     };
 }

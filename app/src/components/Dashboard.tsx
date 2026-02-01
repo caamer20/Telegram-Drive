@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { AnimatePresence } from 'framer-motion';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { invoke } from '@tauri-apps/api/core';
@@ -15,6 +15,9 @@ import { UploadQueue } from './dashboard/UploadQueue';
 import { DownloadQueue } from './dashboard/DownloadQueue';
 import { MoveToFolderModal } from './dashboard/MoveToFolderModal';
 import { PreviewModal } from './dashboard/PreviewModal';
+import { MediaPlayer } from './dashboard/MediaPlayer';
+import { DragDropOverlay } from './dashboard/DragDropOverlay';
+import { ExternalDropBlocker } from './dashboard/ExternalDropBlocker';
 
 // Hooks
 import { useTelegramConnection } from '../hooks/useTelegramConnection';
@@ -38,6 +41,16 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
     const [selectedIds, setSelectedIds] = useState<number[]>([]);
     const [showMoveModal, setShowMoveModal] = useState(false);
     const [searchTerm, setSearchTerm] = useState("");
+    const [searchResults, setSearchResults] = useState<TelegramFile[]>([]);
+    const [isSearching, setIsSearching] = useState(false);
+    const [internalDragFileId, _setInternalDragFileId] = useState<number | null>(null);
+    const internalDragRef = useRef<number | null>(null);
+
+    const setInternalDragFileId = (id: number | null) => {
+        internalDragRef.current = id;
+        _setInternalDragFileId(id);
+    };
+    const [playingFile, setPlayingFile] = useState<TelegramFile | null>(null);
 
     // 3. Data Fetching
     const { data: allFiles = [], isLoading, error } = useQuery({
@@ -50,9 +63,9 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
         enabled: !!store,
     });
 
-    const displayedFiles = allFiles.filter((f: TelegramFile) =>
-        f.name.toLowerCase().includes(searchTerm.toLowerCase())
-    );
+    const displayedFiles = searchTerm.length > 2
+        ? searchResults
+        : allFiles.filter((f: TelegramFile) => f.name.toLowerCase().includes(searchTerm.toLowerCase()));
 
     const { data: bandwidth } = useQuery({
         queryKey: ['bandwidth'],
@@ -64,10 +77,12 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
     // 4. Operations
     const {
         handleDelete, handleBulkDelete, handleDownload, handleBulkDownload,
-        handleBulkMove, handleDownloadFolder
+        handleBulkMove, handleDownloadFolder, handleGlobalSearch
+
     } = useFileOperations(activeFolderId, selectedIds, setSelectedIds, displayedFiles);
 
-    const { uploadQueue, setUploadQueue, handleManualUpload } = useFileUpload(activeFolderId);
+    // Simple file upload hook (DOM-based, no Tauri events)
+    const { uploadQueue, setUploadQueue, handleManualUpload, isDragging } = useFileUpload(activeFolderId);
     const { downloadQueue, clearFinished: clearDownloads } = useFileDownload();
 
     // 5. Keyboard Shortcuts
@@ -119,11 +134,32 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
     });
 
     // Effects
+    // Effects
     useEffect(() => {
         setSelectedIds([]);
         setShowMoveModal(false);
         setSearchTerm("");
+        setSearchResults([]);
     }, [activeFolderId]);
+
+    // Global Search Effect
+    useEffect(() => {
+        if (searchTerm.length <= 2) {
+            setSearchResults([]);
+            return;
+        }
+
+        const timer = setTimeout(async () => {
+            setIsSearching(true);
+            const results = await handleGlobalSearch(searchTerm);
+            setSearchResults(results);
+            setIsSearching(false);
+        }, 500); // 500ms debounce
+
+        return () => clearTimeout(timer);
+    }, [searchTerm]);
+
+
 
     // UI Handlers
     const handleFileClick = (e: React.MouseEvent, id: number) => {
@@ -135,24 +171,65 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
         }
     }
 
+    const handlePreview = (file: TelegramFile) => {
+        const isMedia = ['mp4', 'webm', 'ogg', 'mov', 'mkv', 'avi', 'mp3', 'wav', 'aac', 'flac', 'm4a', 'opus']
+            .some(ext => file.name.toLowerCase().endsWith(ext));
+
+        if (isMedia) {
+            setPlayingFile(file);
+        } else {
+            setPreviewFile(file);
+        }
+    };
+
     const handleDropOnFolder = async (e: React.DragEvent, targetFolderId: number | null) => {
-        e.preventDefault(); e.stopPropagation();
-        if (activeFolderId === targetFolderId) return;
-        const fileIdStr = e.dataTransfer.getData("application/x-telegram-file-id");
-        if (fileIdStr) {
-            const fileId = parseInt(fileIdStr);
+        e.preventDefault();
+        e.stopPropagation();
+
+        // Debug logging
+        const dataTransferFileId = e.dataTransfer.getData("application/x-telegram-file-id");
+        console.log('=== handleDropOnFolder DEBUG ===');
+        console.log('targetFolderId:', targetFolderId);
+        console.log('activeFolderId:', activeFolderId);
+        console.log('internalDragRef.current:', internalDragRef.current);
+        console.log('dataTransfer.getData:', dataTransferFileId);
+        console.log('================================');
+
+        if (activeFolderId === targetFolderId) {
+            console.log('ABORT: Same folder, no move needed');
+            return;
+        }
+
+        // Use internal ref first (synchronous, more reliable than state or dataTransfer)
+        const fileId = internalDragRef.current || (dataTransferFileId ? parseInt(dataTransferFileId) : null);
+        console.log('Resolved fileId:', fileId);
+
+        if (fileId) {
             try {
+                // If the dragged file is selected, move all selected files.
+                // If not, but we have a single file drag, determine if we move just that one.
                 const idsToMove = selectedIds.includes(fileId) ? selectedIds : [fileId];
+
+                console.log('Moving files:', idsToMove, 'to', targetFolderId);
+
                 await invoke('cmd_move_files', {
                     messageIds: idsToMove,
                     sourceFolderId: activeFolderId,
                     targetFolderId: targetFolderId
                 });
+
                 queryClient.invalidateQueries({ queryKey: ['files', activeFolderId] });
+
+                // Clear selection if we moved the selected items
                 if (selectedIds.includes(fileId)) setSelectedIds([]);
-                toast.success(`Moved ${idsToMove.length} files.`);
-            } catch (e) {
-                toast.error(`Failed to move file(s): ${e}`);
+
+                toast.success(`Moved ${idsToMove.length} file(s).`);
+
+                // Reset state
+                setInternalDragFileId(null);
+            } catch (err) {
+                console.error("Move failed:", err);
+                toast.error(`Failed to move file(s).`);
             }
         }
     }
@@ -161,8 +238,33 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
         ? "Saved Messages"
         : folders.find(f => f.id === activeFolderId)?.name || "Folder";
 
+    // Force 'Move' cursor during internal drags (root handler)
+    const handleRootDragOver = (e: React.DragEvent) => {
+        if (internalDragRef.current) {
+            e.preventDefault();
+            e.stopPropagation();
+            e.dataTransfer.dropEffect = 'move';
+        }
+    };
+
+    const handleRootDragEnter = (e: React.DragEvent) => {
+        if (internalDragRef.current) {
+            e.preventDefault();
+            e.stopPropagation();
+            e.dataTransfer.dropEffect = 'move';
+        }
+    };
+
     return (
-        <div className="flex h-screen w-full overflow-hidden bg-telegram-bg relative" onClick={() => setSelectedIds([])}>
+        <div
+            className="flex h-screen w-full overflow-hidden bg-telegram-bg relative"
+            onClick={() => setSelectedIds([])}
+            onDragOver={handleRootDragOver}
+            onDragEnter={handleRootDragEnter}
+        >
+            {/* Block external file drops and show helpful message */}
+            <ExternalDropBlocker onUploadClick={handleManualUpload} />
+
             <AnimatePresence>
                 {showMoveModal && (
                     <MoveToFolderModal
@@ -170,8 +272,18 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
                         onClose={() => setShowMoveModal(false)}
                         onSelect={handleBulkMove}
                         activeFolderId={activeFolderId}
+                        key="move-modal"
                     />
                 )}
+                {playingFile && (
+                    <MediaPlayer
+                        file={playingFile}
+                        onClose={() => setPlayingFile(null)}
+                        activeFolderId={activeFolderId}
+                        key="media-player"
+                    />
+                )}
+                {isDragging && internalDragFileId === null && <DragDropOverlay key="drag-drop-overlay" />}
             </AnimatePresence>
 
             <Sidebar
@@ -200,10 +312,17 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
                     searchTerm={searchTerm}
                     onSearchChange={setSearchTerm}
                 />
-
+                {searchTerm.length > 2 && (
+                    <div className="px-6 pt-4 pb-0">
+                        <h2 className="text-sm font-medium text-telegram-subtext">
+                            Search Results for <span className="text-telegram-primary">"{searchTerm}"</span>
+                        </h2>
+                    </div>
+                )}
                 <FileExplorer
+
                     files={displayedFiles}
-                    loading={isLoading}
+                    loading={isLoading || isSearching}
                     error={error}
                     viewMode={viewMode}
                     selectedIds={selectedIds}
@@ -211,9 +330,12 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
                     onFileClick={handleFileClick}
                     onDelete={handleDelete}
                     onDownload={handleDownload}
-                    onPreview={setPreviewFile}
+                    onPreview={handlePreview}
                     onManualUpload={handleManualUpload}
                     onSelectionClear={() => setSelectedIds([])}
+                    onDrop={handleDropOnFolder}
+                    onDragStart={(fileId) => setInternalDragFileId(fileId)}
+                    onDragEnd={() => setTimeout(() => setInternalDragFileId(null), 50)}
                 />
             </main>
 

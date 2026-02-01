@@ -5,7 +5,10 @@ pub mod bandwidth;
 
 use tauri::Manager;
 use tokio::sync::Mutex;
+use std::sync::Arc;
 use commands::TelegramState;
+
+pub mod server;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -17,15 +20,28 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let _handle = app.handle().clone(); // Prefix with _ if meant to be kept or used later, or remove. I'll remove it? No, keeping with _ is safer if future needs it. Actually I'll remove it.
             
             app.manage(TelegramState {
-                client: Mutex::new(None),
-                login_token: Mutex::new(None),
-                password_token: Mutex::new(None),
+                client: Arc::new(Mutex::new(None)),
+                login_token: Arc::new(Mutex::new(None)),
+                password_token: Arc::new(Mutex::new(None)),
+                api_id: Arc::new(Mutex::new(None)),
             });
             app.manage(bandwidth::BandwidthManager::new(app.handle()));
+            
+            // Start Streaming Server on dedicated thread (Actix needs its own runtime)
+            let state = Arc::new(app.state::<TelegramState>().inner().clone());
+            std::thread::spawn(move || {
+                let sys = actix_rt::System::new();
+                sys.block_on(async move {
+                    if let Err(e) = server::start_server(state, 14200).await {
+                        log::error!("Streaming server failed: {}", e);
+                    }
+                });
+            });
             
             Ok(())
         })
@@ -46,6 +62,8 @@ pub fn run() {
             commands::cmd_get_preview,
             commands::cmd_logout,
             commands::cmd_scan_folders,
+            commands::cmd_search_global,
+            commands::cmd_check_connection,
             commands::cmd_clean_cache,
         ])
         .run(tauri::generate_context!())

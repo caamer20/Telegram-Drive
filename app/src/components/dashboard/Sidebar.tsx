@@ -1,14 +1,14 @@
 import { useState } from 'react';
 import { HardDrive, Folder, Plus, RefreshCw, LogOut } from 'lucide-react';
 import { SidebarItem } from './SidebarItem';
+import { BandwidthWidget } from './BandwidthWidget';
 import { TelegramFolder, BandwidthStats } from '../../types';
-import { formatBytes } from '../../utils';
 
 interface SidebarProps {
     folders: TelegramFolder[];
     activeFolderId: number | null;
     setActiveFolderId: (id: number | null) => void;
-    onDrop: (e: any, folderId: number | null) => void;
+    onDrop: (e: React.DragEvent, folderId: number | null) => void;
     onDelete: (id: number, name: string) => void;
     onCreate: (name: string) => Promise<void>;
     isSyncing: boolean;
@@ -49,6 +49,7 @@ export function Sidebar({
                     active={activeFolderId === null}
                     onClick={() => setActiveFolderId(null)}
                     onDrop={(e: any) => onDrop(e, null)}
+                    folderId={null}
                 />
                 {folders.map(folder => (
                     <SidebarItem
@@ -59,6 +60,7 @@ export function Sidebar({
                         onClick={() => setActiveFolderId(folder.id)}
                         onDrop={(e: any) => onDrop(e, folder.id)}
                         onDelete={() => onDelete(folder.id, folder.name)}
+                        folderId={folder.id}
                     />
                 ))}
 
@@ -113,20 +115,7 @@ export function Sidebar({
                     </button>
                 </div>
 
-                {bandwidth && (
-                    <div className="mt-3 text-xs text-telegram-subtext space-y-1">
-                        <div className="flex justify-between">
-                            <span>Used Today:</span>
-                        </div>
-                        <div className="w-full bg-telegram-border rounded-full h-1.5 overflow-hidden">
-                            <div className="bg-telegram-primary h-full rounded-full" style={{ width: `${Math.min(((bandwidth.up_bytes + bandwidth.down_bytes) / (250 * 1024 * 1024 * 1024)) * 100, 100)}%` }}></div>
-                        </div>
-                        <div className="flex justify-between text-[10px] opacity-70">
-                            <span>{formatBytes(bandwidth.up_bytes + bandwidth.down_bytes)}</span>
-                            <span>250 GB</span>
-                        </div>
-                    </div>
-                )}
+                {bandwidth && <BandwidthWidget bandwidth={bandwidth} />}
             </div>
 
         </aside>
