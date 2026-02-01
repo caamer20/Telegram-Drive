@@ -64,10 +64,9 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # These secrets are only needed if you are signing the Mac app
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          # Apple signing disabled - produces unsigned app
+          # To enable signing, add APPLE_CERTIFICATE, APPLE_CERTIFICATE_PASSWORD, 
+          # and APPLE_SIGNING_IDENTITY secrets to your repository
         with:
           tagName: app-v__VERSION__ 
           releaseName: 'App v__VERSION__'
