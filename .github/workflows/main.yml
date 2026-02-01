@@ -23,9 +23,9 @@ jobs:
             args: ''
             
           # macOS (Apple Silicon / ARM64)
-          # We use a custom argument to force the ARM build target
+          # macos-latest is already ARM64 - no explicit target needed
           - platform: macos-latest
-            args: '--target aarch64-apple-darwin'
+            args: ''
 
     runs-on: ${{ matrix.platform }}
     steps:
