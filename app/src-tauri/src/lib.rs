@@ -21,6 +21,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_window_state::Builder::default().build())
         .setup(|app| {
             let _handle = app.handle().clone(); // Prefix with _ if meant to be kept or used later, or remove. I'll remove it? No, keeping with _ is safer if future needs it. Actually I'll remove it.
             
@@ -29,6 +30,8 @@ pub fn run() {
                 login_token: Arc::new(Mutex::new(None)),
                 password_token: Arc::new(Mutex::new(None)),
                 api_id: Arc::new(Mutex::new(None)),
+                runner_shutdown: Arc::new(Mutex::new(None)),
+                runner_count: Arc::new(std::sync::atomic::AtomicU32::new(0)),
             });
             app.manage(bandwidth::BandwidthManager::new(app.handle()));
             
@@ -64,6 +67,7 @@ pub fn run() {
             commands::cmd_scan_folders,
             commands::cmd_search_global,
             commands::cmd_check_connection,
+            commands::cmd_is_network_available,
             commands::cmd_clean_cache,
         ])
         .run(tauri::generate_context!())

@@ -3,10 +3,35 @@ import { invoke } from '@tauri-apps/api/core';
 import { save, open } from '@tauri-apps/plugin-dialog';
 import { toast } from 'sonner';
 import { DownloadItem, TelegramFile } from '../types';
+import type { Store } from '@tauri-apps/plugin-store';
 
-export function useFileDownload() {
+export function useFileDownload(store: Store | null) {
     const [downloadQueue, setDownloadQueue] = useState<DownloadItem[]>([]);
     const [processing, setProcessing] = useState(false);
+    const [initialized, setInitialized] = useState(false);
+
+    // Load saved queue on mount
+    useEffect(() => {
+        if (!store || initialized) return;
+        store.get<DownloadItem[]>('downloadQueue').then((saved) => {
+            if (saved && saved.length > 0) {
+                // Only restore pending items
+                const pending = saved.filter(i => i.status === 'pending');
+                if (pending.length > 0) {
+                    setDownloadQueue(pending);
+                    toast.info(`Restored ${pending.length} pending downloads`);
+                }
+            }
+            setInitialized(true);
+        });
+    }, [store, initialized]);
+
+    // Save queue when it changes (only pending items)
+    useEffect(() => {
+        if (!store || !initialized) return;
+        const pending = downloadQueue.filter(i => i.status === 'pending');
+        store.set('downloadQueue', pending).then(() => store.save());
+    }, [store, downloadQueue, initialized]);
 
     // Queue Processor
     useEffect(() => {

@@ -53,7 +53,6 @@ export function FileCard({ file, onDelete, onDownload, onPreview, isSelected, on
                 layout
                 draggable={!isFolder}
                 onDragStart={(e: any) => {
-                    console.log('FileCard: OnDragStart', file.name, file.id);
                     if (onDragStart) onDragStart(file.id);
                     e.dataTransfer.setData("application/x-telegram-file-id", file.id.toString());
                     e.dataTransfer.effectAllowed = 'move';
@@ -71,9 +70,7 @@ export function FileCard({ file, onDelete, onDownload, onPreview, isSelected, on
                     {isSelected && <div className="w-1.5 h-1.5 bg-black rounded-full" />}
                 </div>
 
-                <div className={`absolute top-0 right-0 p-2 opacity-0 group-hover:opacity-100 transition-opacity duration-300`}>
-                    <div className="w-1.5 h-1.5 rounded-full bg-telegram-primary shadow-[0_0_8px_rgba(255,174,0,0.8)]"></div>
-                </div>
+
 
                 <div>
                     {isFolder ? <Folder className="w-10 h-10 text-telegram-primary" /> : <FileTypeIcon filename={file.name} />}
@@ -84,13 +81,13 @@ export function FileCard({ file, onDelete, onDownload, onPreview, isSelected, on
                 </div>
                 {/* Quick actions on hover */}
                 <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity flex gap-1">
-                    <button onClick={(e) => { e.stopPropagation(); if (onPreview) onPreview() }} className="p-1 bg-black/50 rounded-full hover:bg-telegram-primary hover:text-white text-white/70" title="Preview">
+                    <button onClick={(e) => { e.stopPropagation(); if (onPreview) onPreview() }} className="file-action-btn p-1 bg-black/50 rounded-full hover:bg-telegram-primary hover:text-white text-white/70" title="Preview">
                         <Eye className="w-3 h-3" />
                     </button>
-                    <button onClick={(e) => { e.stopPropagation(); onDownload() }} className="p-1 bg-black/50 rounded-full hover:bg-green-500 hover:text-white text-white/70" title="Download">
+                    <button onClick={(e) => { e.stopPropagation(); onDownload() }} className="file-action-btn p-1 bg-black/50 rounded-full hover:bg-green-500 hover:text-white text-white/70" title="Download">
                         <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-3 h-3"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
                     </button>
-                    <button onClick={(e) => { e.stopPropagation(); onDelete() }} className="p-1 bg-black/50 rounded-full hover:bg-red-500 hover:text-white text-white/70" title="Delete">
+                    <button onClick={(e) => { e.stopPropagation(); onDelete() }} className="file-action-btn p-1 bg-black/50 rounded-full hover:bg-red-500 hover:text-white text-white/70" title="Delete">
                         <Trash2 className="w-3 h-3" />
                     </button>
                 </div>

@@ -1,6 +1,6 @@
 use tauri::State;
 use tauri::Manager;
-use grammers_client::types::{Media};
+use grammers_client::types::Media;
 use base64::{Engine as _, engine::general_purpose};
 use crate::TelegramState;
 use crate::bandwidth::BandwidthManager;

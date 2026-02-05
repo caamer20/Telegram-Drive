@@ -5,6 +5,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { useConfirm } from '../context/ConfirmContext';
 import { TelegramFolder } from '../types';
+import { useNetworkStatus } from './useNetworkStatus';
 
 export function useTelegramConnection(onLogoutParent: () => void) {
     const queryClient = useQueryClient();
@@ -14,6 +15,10 @@ export function useTelegramConnection(onLogoutParent: () => void) {
     const [activeFolderId, setActiveFolderId] = useState<number | null>(null);
     const [store, setStore] = useState<Store | null>(null);
     const [isSyncing, setIsSyncing] = useState(false);
+    const [isConnected, setIsConnected] = useState(true);
+
+    // Use OS-level network detection (zero overhead)
+    const networkIsOnline = useNetworkStatus();
 
     // Load store and folders on mount
     useEffect(() => {
@@ -29,12 +34,16 @@ export function useTelegramConnection(onLogoutParent: () => void) {
                 const savedFolders = await _store.get<TelegramFolder[]>('folders');
                 if (savedFolders) setFolders(savedFolders);
 
+                // Load saved active folder
+                const savedActiveFolderId = await _store.get<number | null>('activeFolderId');
+                if (savedActiveFolderId !== undefined) setActiveFolderId(savedActiveFolderId);
+
                 const apiIdStr = await _store.get<string>('api_id');
                 if (apiIdStr) {
                     try {
                         const apiId = parseInt(apiIdStr as string);
-                        console.log("Connecting to Telegram with ID:", apiId);
                         await invoke('cmd_connect', { apiId });
+                        setIsConnected(true);
                         queryClient.invalidateQueries({ queryKey: ['files'] });
                     } catch (e) {
                         console.error("Failed to connect:", e);
@@ -61,34 +70,42 @@ export function useTelegramConnection(onLogoutParent: () => void) {
         initStore();
     }, [queryClient, onLogoutParent]);
 
-    // Polling / Wake Detection
+    // Sync isConnected with network status
     useEffect(() => {
-        const checkConnection = async () => {
-            try {
-                // Returns true if connected/reconnected, false if dead
-                const alive = await invoke<boolean>('cmd_check_connection');
-                if (!alive) {
-                    console.warn("Connection lost. Please restart or logout.");
-                    // Optional: could force logout or show modal.
-                    // For now, let the backend try its best. logic in backend handles auto-reconnect.
-                }
-            } catch (e) {
-                console.error("Connection check failed:", e);
+        setIsConnected(networkIsOnline);
+    }, [networkIsOnline]);
+
+    // Network error detection keywords
+    const isNetworkError = (error: string): boolean => {
+        const keywords = ['timeout', 'connection', 'network', 'socket', 'disconnected', 'EOF', 'ECONNREFUSED', 'overflow'];
+        return keywords.some(k => error.toLowerCase().includes(k.toLowerCase()));
+    };
+
+    // Force logout on network failure (no confirmation needed)
+    // This is exposed so other hooks can call it when they detect network errors
+    const forceLogout = async () => {
+        console.error("Network failure detected. Forcing logout...");
+        setIsConnected(false);
+        try {
+            // Don't call cmd_logout - it may trigger grammers crash
+            // Just clear local state
+            await invoke('cmd_clean_cache').catch(() => { });
+            if (store) {
+                await store.delete('api_id');
+                await store.delete('api_hash');
+                await store.delete('folders');
+                await store.save();
             }
-        };
+        } catch (_) {
+            // Ignore errors during forced logout
+        }
+        toast.error("Connection lost. Please log in again.");
+        onLogoutParent();
+    };
 
-        // Check on window focus (wake up)
-        const onFocus = () => checkConnection();
-        window.addEventListener('focus', onFocus);
-
-        // Check every 30s
-        const interval = setInterval(checkConnection, 30000);
-
-        return () => {
-            window.removeEventListener('focus', onFocus);
-            clearInterval(interval);
-        };
-    }, []);
+    // NOTE: Removed aggressive polling that called cmd_check_connection
+    // The grammers library has a stack overflow bug when network disconnects
+    // Instead, network errors are detected when operations fail (in useFileOperations etc)
 
     const handleLogout = async () => {
         if (!await confirm({ title: "Sign Out", message: "Are you sure you want to sign out? This will disconnect your active session.", confirmText: "Sign Out", variant: 'danger' })) return;
@@ -195,15 +212,28 @@ export function useTelegramConnection(onLogoutParent: () => void) {
         }
     };
 
+    // Wrapper to persist activeFolderId when changed
+    const handleSetActiveFolderId = async (id: number | null) => {
+        setActiveFolderId(id);
+        if (store) {
+            await store.set('activeFolderId', id);
+            await store.save();
+        }
+    };
+
     return {
         store,
         folders,
         activeFolderId,
-        setActiveFolderId,
+        setActiveFolderId: handleSetActiveFolderId,
         isSyncing,
+        isConnected,
         handleLogout,
         handleSyncFolders,
         handleCreateFolder,
-        handleFolderDelete
+        handleFolderDelete,
+        // Network error handling (for use by other hooks/components)
+        isNetworkError,
+        forceLogout
     };
 }

@@ -5,11 +5,36 @@ import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { QueueItem } from '../types';
 import { useFileDrop } from './useFileDrop';
+import type { Store } from '@tauri-apps/plugin-store';
 
-export function useFileUpload(activeFolderId: number | null) {
+export function useFileUpload(activeFolderId: number | null, store: Store | null) {
     const queryClient = useQueryClient();
     const [uploadQueue, setUploadQueue] = useState<QueueItem[]>([]);
     const [processing, setProcessing] = useState(false);
+    const [initialized, setInitialized] = useState(false);
+
+    // Load saved queue on mount
+    useEffect(() => {
+        if (!store || initialized) return;
+        store.get<QueueItem[]>('uploadQueue').then((saved) => {
+            if (saved && saved.length > 0) {
+                // Only restore pending items
+                const pending = saved.filter(i => i.status === 'pending');
+                if (pending.length > 0) {
+                    setUploadQueue(pending);
+                    toast.info(`Restored ${pending.length} pending uploads`);
+                }
+            }
+            setInitialized(true);
+        });
+    }, [store, initialized]);
+
+    // Save queue when it changes (only pending items)
+    useEffect(() => {
+        if (!store || !initialized) return;
+        const pending = uploadQueue.filter(i => i.status === 'pending');
+        store.set('uploadQueue', pending).then(() => store.save());
+    }, [store, uploadQueue, initialized]);
 
     // Queue Processor
     useEffect(() => {

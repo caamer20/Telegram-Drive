@@ -58,7 +58,7 @@ export function ExternalDropBlocker({ onUploadClick }: { onUploadClick: () => vo
 
     return (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center pointer-events-none">
-            <div className="bg-telegram-card border border-telegram-border rounded-2xl p-8 max-w-md mx-4 shadow-2xl pointer-events-auto">
+            <div className="glass bg-telegram-surface border border-telegram-border rounded-2xl p-8 max-w-md mx-4 shadow-2xl pointer-events-auto">
                 <div className="flex flex-col items-center text-center gap-4">
                     <div className="w-16 h-16 rounded-full bg-telegram-primary/20 flex items-center justify-center">
                         <Upload className="w-8 h-8 text-telegram-primary" />

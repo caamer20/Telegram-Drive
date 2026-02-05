@@ -2,15 +2,21 @@ use tauri::State;
 use tauri::Manager;
 use grammers_client::Client;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use grammers_mtsender::SenderPool;
 use grammers_session::storages::SqliteSession;
+use tokio::sync::oneshot;
+use tokio::time::Duration;
 
 use crate::TelegramState;
 use crate::models::{AuthResult};
 use crate::commands::utils::map_error;
 use grammers_client::SignInError;
 
-// Helper to ensure client is initialized
+/// Ensures the Telegram client is initialized.
+/// 
+/// IMPORTANT: This function properly manages runner lifecycle to prevent stack overflow.
+/// Before spawning a new runner, it signals the old runner to shutdown.
 pub async fn ensure_client_initialized(
     app_handle: &tauri::AppHandle,
     state: &State<'_, TelegramState>,
@@ -22,7 +28,21 @@ pub async fn ensure_client_initialized(
         return Ok(client.clone());
     }
 
-    log::info!("Initializing new Telegram Client with ID: {}", api_id);
+    // CRITICAL: Shutdown existing runner before creating a new one
+    // This prevents runner task accumulation which causes stack overflow
+    {
+        let mut shutdown_guard = state.runner_shutdown.lock().await;
+        if let Some(shutdown_tx) = shutdown_guard.take() {
+            log::info!("Signaling old runner to shutdown...");
+            let _ = shutdown_tx.send(());
+            // Brief wait for old runner to cleanup
+            drop(shutdown_guard);
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+
+    let runner_num = state.runner_count.fetch_add(1, Ordering::SeqCst) + 1;
+    log::info!("Initializing Telegram Client #{} with API ID: {}", runner_num, api_id);
     
     // Resolve session path safely
     let app_data_dir = app_handle.path().app_data_dir()
@@ -55,11 +75,23 @@ pub async fn ensure_client_initialized(
     let pool = SenderPool::new(session, api_id);
     let client = Client::new(&pool);
     
-    // Spawn the network runner
+    // Create shutdown channel for this runner
+    let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
+    *state.runner_shutdown.lock().await = Some(shutdown_tx);
+    
+    // Spawn the network runner with shutdown support
     let SenderPool { runner, .. } = pool;
     tauri::async_runtime::spawn(async move {
-        runner.run().await;
-        log::info!("Telegram network runner stopped");
+        tokio::select! {
+            // Normal runner operation
+            _ = runner.run() => {
+                log::info!("Runner #{} exited normally", runner_num);
+            }
+            // Shutdown requested
+            _ = shutdown_rx => {
+                log::info!("Runner #{} shutdown requested, exiting", runner_num);
+            }
+        }
     });
     
     *client_guard = Some(client.clone());
@@ -129,26 +161,36 @@ pub async fn cmd_logout(
 ) -> Result<bool, String> {
     log::info!("Logging out...");
     
-    // 1. Try to sign out from Telegram (if connected)
+    // 1. Shutdown the network runner FIRST to prevent any operations
+    {
+        let mut shutdown_guard = state.runner_shutdown.lock().await;
+        if let Some(shutdown_tx) = shutdown_guard.take() {
+            log::info!("Signaling runner shutdown for logout...");
+            let _ = shutdown_tx.send(());
+        }
+    }
+    
+    // 2. Try to sign out from Telegram (if connected)
     let client_opt = { state.client.lock().await.clone() };
     if let Some(client) = client_opt {
         // We don't strictly care if this fails (e.g. network down), we just want to clear local state.
         let _ = client.sign_out().await; 
     }
 
-    // 2. Clear State
+    // 3. Clear State
     *state.client.lock().await = None;
     *state.login_token.lock().await = None;
     *state.password_token.lock().await = None;
     *state.api_id.lock().await = None;
 
-    // 3. Remove Session File
+    // 4. Remove Session File
     let app_data_dir = app_handle.path().app_data_dir().unwrap();
     let session_path = app_data_dir.join("telegram.session");
     let _ = std::fs::remove_file(session_path);
     let _ = std::fs::remove_file(app_data_dir.join("telegram.session-wal"));
     let _ = std::fs::remove_file(app_data_dir.join("telegram.session-shm"));
 
+    log::info!("Logout complete. Runner count: {}", state.runner_count.load(Ordering::SeqCst));
     Ok(true)
 }
 

@@ -45,7 +45,7 @@ body,
 }
 
 :root.light .auth-gradient {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: linear-gradient(135deg, #3b82f6 0%, #06b6d4 100%);
 }
 
 /* Glassmorphism Utilities - Dark */
@@ -202,7 +202,17 @@ body,
 :root.light .bg-black\/20,
 :root.light .bg-black\/30,
 :root.light .bg-black\/50 {
-  background-color: rgba(0, 0, 0, 0.05);
+  background-color: rgba(0, 0, 0, 0.08);
+}
+
+/* File card action buttons - more visible in light mode */
+:root.light .file-action-btn {
+  background-color: rgba(0, 0, 0, 0.6) !important;
+  color: white !important;
+}
+
+:root.light .file-action-btn:hover {
+  background-color: var(--color-telegram-primary) !important;
 }
 
 /* Invert text colors for light mode where needed */

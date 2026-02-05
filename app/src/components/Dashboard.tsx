@@ -31,7 +31,7 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
 
     // 1. Connection & State
     const {
-        store, folders, activeFolderId, setActiveFolderId, isSyncing,
+        store, folders, activeFolderId, setActiveFolderId, isSyncing, isConnected,
         handleLogout, handleSyncFolders, handleCreateFolder, handleFolderDelete
     } = useTelegramConnection(onLogout);
 
@@ -51,6 +51,22 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
         _setInternalDragFileId(id);
     };
     const [playingFile, setPlayingFile] = useState<TelegramFile | null>(null);
+
+    // Load saved viewMode on mount
+    useEffect(() => {
+        if (store) {
+            store.get<'grid' | 'list'>('viewMode').then((saved) => {
+                if (saved) setViewMode(saved);
+            });
+        }
+    }, [store]);
+
+    // Save viewMode when changed
+    useEffect(() => {
+        if (store) {
+            store.set('viewMode', viewMode).then(() => store.save());
+        }
+    }, [store, viewMode]);
 
     // 3. Data Fetching
     const { data: allFiles = [], isLoading, error } = useQuery({
@@ -82,8 +98,8 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
     } = useFileOperations(activeFolderId, selectedIds, setSelectedIds, displayedFiles);
 
     // Simple file upload hook (DOM-based, no Tauri events)
-    const { uploadQueue, setUploadQueue, handleManualUpload, isDragging } = useFileUpload(activeFolderId);
-    const { downloadQueue, clearFinished: clearDownloads } = useFileDownload();
+    const { uploadQueue, setUploadQueue, handleManualUpload, isDragging } = useFileUpload(activeFolderId, store);
+    const { downloadQueue, clearFinished: clearDownloads } = useFileDownload(store);
 
     // 5. Keyboard Shortcuts
     const handleSelectAll = useCallback(() => {
@@ -186,31 +202,15 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
         e.preventDefault();
         e.stopPropagation();
 
-        // Debug logging
         const dataTransferFileId = e.dataTransfer.getData("application/x-telegram-file-id");
-        console.log('=== handleDropOnFolder DEBUG ===');
-        console.log('targetFolderId:', targetFolderId);
-        console.log('activeFolderId:', activeFolderId);
-        console.log('internalDragRef.current:', internalDragRef.current);
-        console.log('dataTransfer.getData:', dataTransferFileId);
-        console.log('================================');
 
-        if (activeFolderId === targetFolderId) {
-            console.log('ABORT: Same folder, no move needed');
-            return;
-        }
+        if (activeFolderId === targetFolderId) return;
 
-        // Use internal ref first (synchronous, more reliable than state or dataTransfer)
         const fileId = internalDragRef.current || (dataTransferFileId ? parseInt(dataTransferFileId) : null);
-        console.log('Resolved fileId:', fileId);
 
         if (fileId) {
             try {
-                // If the dragged file is selected, move all selected files.
-                // If not, but we have a single file drag, determine if we move just that one.
                 const idsToMove = selectedIds.includes(fileId) ? selectedIds : [fileId];
-
-                console.log('Moving files:', idsToMove, 'to', targetFolderId);
 
                 await invoke('cmd_move_files', {
                     messageIds: idsToMove,
@@ -294,6 +294,7 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
                 onDelete={handleFolderDelete}
                 onCreate={handleCreateFolder}
                 isSyncing={isSyncing}
+                isConnected={isConnected}
                 onSync={handleSyncFolders}
                 onLogout={handleLogout}
                 bandwidth={bandwidth || null}
@@ -350,7 +351,7 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
             {/* Transfer Queues */}
             <UploadQueue
                 items={uploadQueue}
-                onClearFinished={() => setUploadQueue(q => q.filter(i => i.status !== 'success'))}
+                onClearFinished={() => setUploadQueue(q => q.filter(i => i.status !== 'success' && i.status !== 'error'))}
             />
             <DownloadQueue
                 items={downloadQueue}

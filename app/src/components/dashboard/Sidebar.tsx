@@ -12,6 +12,7 @@ interface SidebarProps {
     onDelete: (id: number, name: string) => void;
     onCreate: (name: string) => Promise<void>;
     isSyncing: boolean;
+    isConnected: boolean;
     onSync: () => void;
     onLogout: () => void;
     bandwidth: BandwidthStats | null;
@@ -19,7 +20,7 @@ interface SidebarProps {
 
 export function Sidebar({
     folders, activeFolderId, setActiveFolderId, onDrop, onDelete, onCreate,
-    isSyncing, onSync, onLogout, bandwidth
+    isSyncing, isConnected, onSync, onLogout, bandwidth
 }: SidebarProps) {
     const [showNewFolderInput, setShowNewFolderInput] = useState(false);
     const [newFolderName, setNewFolderName] = useState("");
@@ -91,8 +92,8 @@ export function Sidebar({
 
             <div className="p-4 border-t border-telegram-border">
                 <div className="flex items-center gap-2 text-telegram-subtext text-xs">
-                    <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
-                    <span>Connected to Telegram</span>
+                    <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`}></div>
+                    <span>{isConnected ? 'Connected to Telegram' : 'Disconnected from Telegram'}</span>
                 </div>
 
                 <div className="flex gap-2 mt-4">

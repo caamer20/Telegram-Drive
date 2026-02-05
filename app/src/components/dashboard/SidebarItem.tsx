@@ -48,7 +48,6 @@ export function SidebarItem({ icon: Icon, label, active = false, onClick, onDrop
                 e.preventDefault();
                 e.stopPropagation();
                 setIsOver(false);
-                console.log('=== SidebarItem DROP ===', label);
                 if (onDrop) onDrop(e);
             }}
             onContextMenu={(e) => {
@@ -58,10 +57,10 @@ export function SidebarItem({ icon: Icon, label, active = false, onClick, onDrop
                 }
             }}
             className={`group w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-150 ${active
-                    ? 'bg-telegram-primary/10 text-telegram-primary'
-                    : isOver
-                        ? 'bg-telegram-primary/30 text-telegram-text ring-2 ring-telegram-primary scale-[1.02] shadow-lg'
-                        : 'text-telegram-subtext hover:bg-telegram-hover hover:text-telegram-text'
+                ? 'bg-telegram-primary/10 text-telegram-primary'
+                : isOver
+                    ? 'bg-telegram-primary/30 text-telegram-text ring-2 ring-telegram-primary scale-[1.02] shadow-lg'
+                    : 'text-telegram-subtext hover:bg-telegram-hover hover:text-telegram-text'
                 }`}
         >
             <Icon className={`w-4 h-4 ${isOver ? 'text-telegram-primary' : ''}`} />

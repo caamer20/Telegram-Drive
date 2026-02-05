@@ -309,7 +309,7 @@ checksum = "a23eb6b1614318a8071c9b2521f36b424b2c83db5eb3a0fead4a6c0809af6e61"
 
 [[package]]
 name = "app"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "actix-cors",
  "actix-rt",
@@ -334,6 +334,7 @@ dependencies = [
  "tauri-plugin-shell",
  "tauri-plugin-store",
  "tauri-plugin-updater",
+ "tauri-plugin-window-state",
  "tokio",
 ]
 
@@ -1810,8 +1811,7 @@ dependencies = [
 [[package]]
 name = "grammers-client"
 version = "0.8.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "38cac8001e87679df171268ac03cf3e488f5812788dc45f31402ec29f1d0b4c2"
+source = "git+https://github.com/Lonami/grammers?rev=d07f96f#d07f96f6bee22a3a850a1f3067834686a08b396c"
 dependencies = [
  "chrono",
  "futures-util",
@@ -1829,8 +1829,7 @@ dependencies = [
 [[package]]
 name = "grammers-crypto"
 version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1f468a3f3449206198c1d607c54e36c90aa816da118e22a0f15fd1eb7835b342"
+source = "git+https://github.com/Lonami/grammers?rev=d07f96f#d07f96f6bee22a3a850a1f3067834686a08b396c"
 dependencies = [
  "aes",
  "ctr",
@@ -1847,8 +1846,7 @@ dependencies = [
 [[package]]
 name = "grammers-mtproto"
 version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8a7ca3e1efb54ffe5c574ce95064ad0b79e6a313105123f8ed1fba36d790ce4c"
+source = "git+https://github.com/Lonami/grammers?rev=d07f96f#d07f96f6bee22a3a850a1f3067834686a08b396c"
 dependencies = [
  "bytes",
  "crc32fast",
@@ -1864,8 +1862,7 @@ dependencies = [
 [[package]]
 name = "grammers-mtsender"
 version = "0.8.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9c64ff5c7118f05f001416db0cca3ccac30c4163e2efc0243792fbd779468821"
+source = "git+https://github.com/Lonami/grammers?rev=d07f96f#d07f96f6bee22a3a850a1f3067834686a08b396c"
 dependencies = [
  "bytes",
  "grammers-crypto",
@@ -1881,11 +1878,8 @@ dependencies = [
 [[package]]
 name = "grammers-session"
 version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f7535957942df8762c0c4e295c5f80b8d9b2deac4a8cdecf64e21abcdcac5060"
+source = "git+https://github.com/Lonami/grammers?rev=d07f96f#d07f96f6bee22a3a850a1f3067834686a08b396c"
 dependencies = [
- "grammers-tl-gen",
- "grammers-tl-parser",
  "grammers-tl-types",
  "log",
  "sqlite",
@@ -1894,8 +1888,7 @@ dependencies = [
 [[package]]
 name = "grammers-tl-gen"
 version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f363661005caecc082e40df967cd21d2ed1b9d56c204f062aec5572a4a9c59b6"
+source = "git+https://github.com/Lonami/grammers?rev=d07f96f#d07f96f6bee22a3a850a1f3067834686a08b396c"
 dependencies = [
  "grammers-tl-parser",
 ]
@@ -1903,8 +1896,7 @@ dependencies = [
 [[package]]
 name = "grammers-tl-parser"
 version = "1.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3949756519386578835cf5298befef465009accb0531d884eba6e2fc5ad8766e"
+source = "git+https://github.com/Lonami/grammers?rev=d07f96f#d07f96f6bee22a3a850a1f3067834686a08b396c"
 dependencies = [
  "crc32fast",
 ]
@@ -1912,8 +1904,7 @@ dependencies = [
 [[package]]
 name = "grammers-tl-types"
 version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e430e1834164323635d67f10bd8754eab2d97b16693a1b0532befd373d83d5bb"
+source = "git+https://github.com/Lonami/grammers?rev=d07f96f#d07f96f6bee22a3a850a1f3067834686a08b396c"
 dependencies = [
  "grammers-tl-gen",
  "grammers-tl-parser",
@@ -4945,6 +4936,21 @@ dependencies = [
  "url",
  "windows-sys 0.60.2",
  "zip",
+]
+
+[[package]]
+name = "tauri-plugin-window-state"
+version = "2.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "73736611e14142408d15353e21e3cca2f12a3cfb523ad0ce85999b6d2ef1a704"
+dependencies = [
+ "bitflags 2.10.0",
+ "log",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-plugin",
+ "thiserror 2.0.17",
 ]
 
 [[package]]
