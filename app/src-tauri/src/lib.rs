@@ -69,6 +69,7 @@ pub fn run() {
             commands::cmd_check_connection,
             commands::cmd_is_network_available,
             commands::cmd_clean_cache,
+            commands::cmd_get_thumbnail,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { motion, AnimatePresence } from "framer-motion";
-import { Phone, Key, ArrowRight, Settings, ShieldCheck, Sun, Moon } from "lucide-react";
+import { Phone, Key, ArrowRight, Settings, ShieldCheck, Sun, Moon, HelpCircle, ExternalLink, X } from "lucide-react";
 import { load } from '@tauri-apps/plugin-store';
 import { useTheme } from '../context/ThemeContext';
 
@@ -58,6 +58,7 @@ export function AuthWizard({ onLogin }: { onLogin: () => void }) {
     const [code, setCode] = useState("");
     const [error, setError] = useState<string | null>(null);
     const [floodWait, setFloodWait] = useState<number | null>(null);
+    const [showHelp, setShowHelp] = useState(false);
 
     // Flood Wait Timer
     useEffect(() => {
@@ -224,12 +225,6 @@ export function AuthWizard({ onLogin }: { onLogin: () => void }) {
                                     onSubmit={handleSetupSubmit}
                                     className="space-y-5"
                                 >
-                                    <div className="p-4 bg-blue-500/10 border border-blue-500/20 rounded-xl text-xs text-blue-200 leading-relaxed">
-                                        To ensure privacy, this app uses your own API credentials.
-                                        <br />
-                                        Get them from <a href="https://my.telegram.org" target="_blank" className="underline hover:text-white">my.telegram.org</a>.
-                                    </div>
-
                                     <div className="space-y-4">
                                         <div>
                                             <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">API ID</label>
@@ -268,10 +263,19 @@ export function AuthWizard({ onLogin }: { onLogin: () => void }) {
 
                                     <button
                                         type="button"
-                                        onClick={() => onLogin()}
-                                        className="w-full bg-red-900/20 border border-red-500/20 text-red-200 hover:bg-red-900/30 text-xs font-mono py-2 rounded-lg transition-colors flex items-center justify-center gap-2"
+                                        onClick={() => setShowHelp(true)}
+                                        className="w-full text-xs text-blue-300 hover:text-white transition-colors flex items-center justify-center gap-1.5 py-1"
                                     >
-                                        ⚠️ DEV MODE: SKIP LOGIN (MOCK)
+                                        <HelpCircle className="w-3 h-3" />
+                                        How do I get my API credentials?
+                                    </button>
+
+                                    <button
+                                        type="button"
+                                        onClick={() => onLogin()}
+                                        className="w-full text-xs text-red-400/60 hover:text-red-300 transition-colors py-1"
+                                    >
+                                        Dev Mode
                                     </button>
                                 </motion.form>
                             )}
@@ -368,6 +372,87 @@ export function AuthWizard({ onLogin }: { onLogin: () => void }) {
                     </motion.div>
                 )}
             </motion.div>
+
+            {/* Help Modal */}
+            <AnimatePresence>
+                {showHelp && (
+                    <motion.div
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4"
+                        onClick={() => setShowHelp(false)}
+                    >
+                        <motion.div
+                            initial={{ scale: 0.95, opacity: 0 }}
+                            animate={{ scale: 1, opacity: 1 }}
+                            exit={{ scale: 0.95, opacity: 0 }}
+                            className="glass bg-telegram-surface border border-telegram-border rounded-2xl p-6 max-w-lg w-full max-h-[80vh] overflow-y-auto shadow-2xl"
+                            onClick={(e) => e.stopPropagation()}
+                        >
+                            <div className="flex items-center justify-between mb-6">
+                                <h2 className="text-xl font-bold text-telegram-text">Getting Started</h2>
+                                <button onClick={() => setShowHelp(false)} className="p-2 hover:bg-telegram-hover rounded-lg transition-colors">
+                                    <X className="w-5 h-5 text-telegram-subtext" />
+                                </button>
+                            </div>
+
+                            <div className="space-y-6 text-telegram-text">
+                                <div className="p-4 bg-telegram-primary/10 border border-telegram-primary/20 rounded-xl">
+                                    <p className="text-sm text-telegram-subtext">
+                                        <strong className="text-telegram-primary">Telegram Drive</strong> uses your Telegram account as secure cloud storage. You'll need a Telegram account and API credentials to get started.
+                                    </p>
+                                </div>
+
+                                <div className="space-y-4">
+                                    <h3 className="font-semibold flex items-center gap-2">
+                                        <span className="w-6 h-6 bg-telegram-primary text-white text-xs font-bold rounded-full flex items-center justify-center">1</span>
+                                        Go to Telegram's Developer Portal
+                                    </h3>
+                                    <p className="text-sm text-telegram-subtext ml-8">
+                                        Visit <a href="https://my.telegram.org" target="_blank" className="text-telegram-primary underline hover:text-telegram-text">my.telegram.org</a> and log in with your phone number.
+                                    </p>
+                                </div>
+
+                                <div className="space-y-4">
+                                    <h3 className="font-semibold flex items-center gap-2">
+                                        <span className="w-6 h-6 bg-telegram-primary text-white text-xs font-bold rounded-full flex items-center justify-center">2</span>
+                                        Create a New Application
+                                    </h3>
+                                    <p className="text-sm text-telegram-subtext ml-8">
+                                        Click on <strong>"API development tools"</strong> and create a new application. Use any name and description you like.
+                                    </p>
+                                </div>
+
+                                <div className="space-y-4">
+                                    <h3 className="font-semibold flex items-center gap-2">
+                                        <span className="w-6 h-6 bg-telegram-primary text-white text-xs font-bold rounded-full flex items-center justify-center">3</span>
+                                        Copy Your Credentials
+                                    </h3>
+                                    <p className="text-sm text-telegram-subtext ml-8">
+                                        After creating the app, you'll see your <strong>API ID</strong> (a number) and <strong>API Hash</strong> (a string). Copy both and paste them into the fields on the previous screen.
+                                    </p>
+                                </div>
+
+                                <div className="p-4 bg-telegram-hover rounded-xl border border-telegram-border">
+                                    <p className="text-xs text-telegram-subtext">
+                                        <strong>🔒 Privacy:</strong> Your credentials are stored locally on your device and are never sent to any third-party servers. All data goes directly between you and Telegram.
+                                    </p>
+                                </div>
+
+                                <a
+                                    href="https://my.telegram.org"
+                                    target="_blank"
+                                    className="w-full bg-telegram-primary text-white font-semibold py-3 rounded-xl flex items-center justify-center gap-2 hover:bg-telegram-primary/90 transition-colors"
+                                >
+                                    <ExternalLink className="w-4 h-4" />
+                                    Open my.telegram.org
+                                </a>
+                            </div>
+                        </motion.div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
 
             {/* Background Decor */}
             <div className="fixed top-[-20%] left-[-10%] w-[500px] h-[500px] bg-blue-600/20 rounded-full blur-[120px] pointer-events-none -z-10" />

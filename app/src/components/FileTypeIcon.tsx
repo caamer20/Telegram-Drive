@@ -76,9 +76,17 @@ export function getFileTypeInfo(filename: string): { icon: typeof File; color: s
 interface FileTypeIconProps {
     filename: string;
     className?: string;
+    size?: 'sm' | 'md' | 'lg';
 }
 
-export function FileTypeIcon({ filename, className = "w-10 h-10" }: FileTypeIconProps) {
+const sizeMap = {
+    sm: 'w-5 h-5',
+    md: 'w-10 h-10',
+    lg: 'w-12 h-12',
+};
+
+export function FileTypeIcon({ filename, className, size = 'md' }: FileTypeIconProps) {
     const { icon: Icon, color } = getFileTypeInfo(filename);
-    return <Icon className={`${className} ${color} pointer-events-none select-none`} />;
+    const sizeClass = className ?? sizeMap[size];
+    return <Icon className={`${sizeClass} ${color} pointer-events-none select-none`} />;
 }

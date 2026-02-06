@@ -128,3 +128,99 @@ pub async fn cmd_clean_cache(
     }
     Ok(())
 }
+
+/// Get a small thumbnail for inline display in file cards.
+/// Returns base64 data URL for images, empty string for non-image files.
+/// Uses same cache as cmd_get_preview for consistency.
+#[tauri::command]
+pub async fn cmd_get_thumbnail(
+    message_id: i32,
+    folder_id: Option<i64>,
+    app_handle: tauri::AppHandle,
+    state: State<'_, TelegramState>,
+) -> Result<String, String> {
+    // Check if thumbnail already in cache
+    let cache_dir = app_handle.path().app_data_dir().map_err(|e: tauri::Error| e.to_string())?.join("thumbnails");
+    if !cache_dir.exists() { let _ = std::fs::create_dir_all(&cache_dir); }
+    
+    // Check for any cached thumbnail for this message
+    
+    // Look for existing cached file
+    if let Ok(entries) = std::fs::read_dir(&cache_dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.starts_with(&format!("{}.", message_id)) {
+                // Found cached thumbnail, return as base64
+                if let Ok(bytes) = std::fs::read(entry.path()) {
+                    let ext = name.rsplit('.').next().unwrap_or("jpg");
+                    let mime = match ext {
+                        "png" => "image/png",
+                        "gif" => "image/gif", 
+                        "webp" => "image/webp",
+                        _ => "image/jpeg",
+                    };
+                    let b64 = general_purpose::STANDARD.encode(&bytes);
+                    return Ok(format!("data:{};base64,{}", mime, b64));
+                }
+            }
+        }
+    }
+    
+    // No cache, need to fetch from Telegram
+    let client_opt = { state.client.lock().await.clone() };
+    if client_opt.is_none() { return Ok("".to_string()); }
+    let client = client_opt.unwrap();
+    
+    let peer = resolve_peer(&client, folder_id).await?;
+    let mut msgs = client.iter_messages(&peer);
+    
+    while let Some(m) = msgs.next().await.map_err(|e| e.to_string())? {
+        if m.id() == message_id {
+            if let Some(media) = m.media() {
+                // Only get thumbnails for photos and documents with photo thumbnails
+                let (is_image, ext) = match &media {
+                    Media::Photo(_) => (true, "jpg".to_string()),
+                    Media::Document(d) => {
+                        let mime = d.mime_type().unwrap_or("");
+                        if mime.starts_with("image/") {
+                            let e = match mime {
+                                "image/png" => "png",
+                                "image/gif" => "gif",
+                                "image/webp" => "webp",
+                                _ => "jpg",
+                            };
+                            (true, e.to_string())
+                        } else {
+                            // Not an image, return empty - FileCard will show icon
+                            return Ok("".to_string());
+                        }
+                    },
+                    _ => return Ok("".to_string()),
+                };
+                
+                if is_image {
+                    // Get photo thumbnail (smallest size for speed)
+                    let save_path = cache_dir.join(format!("{}.{}", message_id, ext));
+                    let save_path_str = save_path.to_string_lossy().to_string();
+                    
+                    // Download the thumbnail/photo
+                    if client.download_media(&media, &save_path_str).await.is_ok() {
+                        if let Ok(bytes) = std::fs::read(&save_path) {
+                            let mime = match ext.as_str() {
+                                "png" => "image/png",
+                                "gif" => "image/gif",
+                                "webp" => "image/webp",
+                                _ => "image/jpeg",
+                            };
+                            let b64 = general_purpose::STANDARD.encode(&bytes);
+                            return Ok(format!("data:{};base64,{}", mime, b64));
+                        }
+                    }
+                }
+            }
+            break;
+        }
+    }
+    
+    Ok("".to_string())
+}

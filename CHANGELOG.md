@@ -1,0 +1,63 @@
+# Changelog
+
+## [1.0.0] - 2026-02-06 🎉
+
+### First Stable Release
+
+Telegram Drive is now production-ready! This release focuses on performance, reliability, and user experience polish.
+
+### ✨ New Features
+
+- **Virtual Scrolling** - Smooth performance with folders containing 1000+ files
+- **Inline Thumbnails** - Image files now display thumbnails directly in the file grid
+- **Thumbnail Caching** - Thumbnails are cached locally for instant loading on revisit
+- **API Setup Help Guide** - Step-by-step modal explaining how to get Telegram API credentials
+
+### 🚀 Performance Improvements
+
+- Grid and list views now only render visible items (virtualized)
+- Responsive column layout adapts to window width
+- Lazy loading of thumbnails to reduce initial load time
+
+### 🎨 UI/UX Improvements
+
+- Refined grid spacing (6px gaps between cards)
+- Gradient overlay on thumbnail cards for text readability
+- Improved light mode support across all components
+
+### 🔧 Technical
+
+- Added `@tanstack/react-virtual` for virtualization
+- Separate thumbnail cache directory (`app_data_dir/thumbnails/`)
+- FileTypeIcon now supports multiple sizes
+
+---
+
+## [0.6.0] - 2026-02-05
+
+### Reliability Update
+
+- Session persistence (window state, UI state, active folder)
+- Network resilience with connection status indicator
+- Queue persistence for uploads/downloads
+- Light mode UI fixes
+
+---
+
+## [0.5.0] - 2026-02-04
+
+### Drag & Drop Update
+
+- Stable hybrid drag-drop system
+- External drop blocker
+- GitHub Actions workflow fixes
+
+---
+
+## [0.4.0] - 2026-02-01
+
+### Media & Performance
+
+- Audio/Video streaming player
+- Global search filter
+- Internal drag & drop between folders
