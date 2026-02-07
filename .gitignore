@@ -16,3 +16,5 @@ dist/
 # Misc
 CompiledApps/
 *.log
+Error.html
+**/LatestError.html
