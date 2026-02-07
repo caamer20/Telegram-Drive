@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.0.1] - 2026-02-07
+
+### Auto-Update System
+
+- **Automatic Update Checks** - App checks for updates 5 seconds after startup
+- **Update Banner** - Beautiful animated banner when new version available
+- **One-Click Updates** - Download and install updates with progress indicator
+- **Cross-Platform** - Windows, Mac, and Linux users get platform-specific updates
+
+### 🔧 Technical
+
+- Added Tauri updater plugin with Ed25519 signing
+- Created `useUpdateCheck` hook for update lifecycle management
+- Added `UpdateBanner` component with download progress
+
+---
+
 ## [1.0.0] - 2026-02-06 🎉
 
 ### First Stable Release

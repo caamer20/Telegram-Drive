@@ -1,6 +1,6 @@
 [package]
 name = "app"
-version = "1.0.0"
+version = "1.0.1"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
@@ -43,4 +43,5 @@ actix-cors = "0.7"
 futures = "0.3"
 async-stream = "0.3"
 actix-rt = "2"
+tauri-plugin-process = "2.3.1"
 

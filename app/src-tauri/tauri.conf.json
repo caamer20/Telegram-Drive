@@ -5,11 +5,11 @@
       "endpoints": [
         "https://github.com/caamer20/Telegram-Drive/releases/latest/download/latest.json"
       ],
-      "pubkey": "YOUR_PUBLIC_KEY_HERE"
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDBBRkI4QUZDNjZEMzZCRTIKUldUaWE5Tm0vSXI3Q3JrRDBtY2lZYUtGL3RTR2JuUTNYSCswVjNaVURXa1FSRWRPMzNPZk92YS8K"
     }
   },
   "productName": "Telegram Drive",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "identifier": "com.cameronamer.telegramdrive",
   "build": {
     "beforeDevCommand": "npm run dev",
