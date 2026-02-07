@@ -1,11 +1,11 @@
-# Telegram Drive 🚀
+# Telegram Drive 
 
 **Telegram Drive** is an open-source, cross-platform desktop application that turns your Telegram account into an unlimited, secure cloud storage drive. built with **Tauri**, **Rust**, and **React**.
 
 ![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20MacOS%20%7C%20Linux-blue)
 
-## 🌟 What is Telegram Drive?
+##  What is Telegram Drive?
 
 Telegram Drive leverages the Telegram API to allow you to upload, organize, and manage files directly on Telegram's servers. It treats your "Saved Messages" and created Channels as folders, giving you a familiar file explorer interface for your Telegram cloud.
 
@@ -16,13 +16,13 @@ Telegram Drive leverages the Telegram API to allow you to upload, organize, and 
 *   **Privacy Focused**: Your API keys and data stay on your local machine. Nothing is routed through third-party servers.
 *   **Cross-Platform**: Runs natively on MacOS, Windows, and Linux.
 
-## 🛠️ Tech Stack
+##  Tech Stack
 
 *   **Frontend**: React, TypeScript, TailwindCSS, Framer Motion
 *   **Backend**: Rust (Tauri), Grammers (Telegram Client)
 *   **Build Tool**: Vite
 
-## 🚀 Getting Started
+##  Getting Started
 
 ### Prerequisites
 *   Node.js (v18+)
@@ -54,7 +54,7 @@ Telegram Drive leverages the Telegram API to allow you to upload, organize, and 
     npm run tauri build
     ```
 
-## 🔓 Open Source & License
+##  Open Source & License
 
 This project is **Free and Open Source Software**. You are free to use, modify, and distribute it.
 
