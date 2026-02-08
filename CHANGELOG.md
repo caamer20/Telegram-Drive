@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.0.2] - 2026-02-07
+
+### Automated Release Pipeline
+
+- **GitHub Actions Workflow** - Automatic builds triggered on version tags
+- **Cross-Platform Builds** - Windows, Linux, macOS (Intel + ARM) built in parallel
+- **Signed Updates** - All builds signed with Ed25519 for secure auto-updates
+- **Automatic Publishing** - Releases published to GitHub automatically
+
+---
+
 ## [1.0.1] - 2026-02-07
 
 ### Auto-Update System
