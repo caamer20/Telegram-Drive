@@ -50,9 +50,9 @@ Telegram Drive leverages the Telegram API to allow you to upload, organize, and 
 |----------------------|-------------------|
 | ![Login Screen Variant](screenshots/LoginScreen_01.png) |  ![Empty Folder](screenshots/EmptyFolder.png) |
 
-| Upload Example | Empty Folder |
+| Upload Example | |
 |----------------|--------------|
-| ![Upload Example](screenshots/UploadExample.png) |   |
+| ![Upload Example](screenshots/UploadExample.png) |
 
 ##  Tech Stack
 
