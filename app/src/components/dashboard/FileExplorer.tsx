@@ -31,12 +31,14 @@ interface FileExplorerProps {
 // Calculate grid columns based on container width
 function useGridColumns(containerRef: React.RefObject<HTMLDivElement | null>) {
     const [columns, setColumns] = useState(4);
+    const [containerWidth, setContainerWidth] = useState(800);
 
     useEffect(() => {
         if (!containerRef.current) return;
 
         const updateColumns = () => {
             const width = containerRef.current?.clientWidth || 800;
+            setContainerWidth(width);
             if (width < 640) setColumns(2);
             else if (width < 768) setColumns(3);
             else if (width < 1024) setColumns(4);
@@ -50,7 +52,7 @@ function useGridColumns(containerRef: React.RefObject<HTMLDivElement | null>) {
         return () => observer.disconnect();
     }, [containerRef]);
 
-    return columns;
+    return { columns, containerWidth };
 }
 
 export function FileExplorer({
@@ -62,7 +64,14 @@ export function FileExplorer({
     const [contextMenu, setContextMenu] = useState<{ x: number; y: number; file: TelegramFile } | null>(null);
 
     const parentRef = useRef<HTMLDivElement>(null);
-    const columns = useGridColumns(parentRef);
+    const { columns, containerWidth } = useGridColumns(parentRef);
+
+    // Calculate row height: card width based on container, then aspect ratio 4:3
+    // Add 6px gap between rows
+    const GAP = 6;
+    const cardWidth = (containerWidth - (GAP * (columns - 1))) / columns;
+    const cardHeight = cardWidth * 0.75; // aspect-[4/3]
+    const rowHeight = Math.max(cardHeight + GAP, 150); // Minimum 150px to prevent overlap
 
     const handleContextMenu = useCallback((e: React.MouseEvent, file: TelegramFile) => {
         e.preventDefault();
@@ -107,10 +116,15 @@ export function FileExplorer({
     const gridVirtualizer = useVirtualizer({
         count: gridRows.length,
         getScrollElement: () => parentRef.current,
-        estimateSize: () => 165, // Row height (~160px for aspect-[4/3]) + 3px gap
+        estimateSize: useCallback(() => rowHeight, [rowHeight]), // Dynamic row height
         overscan: 2,
-        gap: 6, // 6px spacing between rows
+        gap: GAP,
     });
+
+    // Force re-measure when row height changes
+    useEffect(() => {
+        gridVirtualizer.measure();
+    }, [rowHeight, gridVirtualizer]);
 
     // List virtualizer (virtualize individual items)
     const listVirtualizer = useVirtualizer({
@@ -204,7 +218,7 @@ export function FileExplorer({
                                     style={{
                                         transform: `translateY(${virtualRow.start}px)`,
                                         gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
-                                        gap: '6px',
+                                        gap: `${GAP}px`,
                                     }}
                                 >
                                     {row.map((item) => {

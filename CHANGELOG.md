@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.0.3] - 2026-02-09
+
+### Bug Fixes
+
+- **Grid Spacing Fix** - Fixed cards overlapping in grid view
+- **Dynamic Row Height** - Grid now properly calculates row height based on window size
+- **Virtualizer Re-measurement** - Grid correctly updates when resizing window
+
+---
+
 ## [1.0.2] - 2026-02-07
 
 ### Automated Release Pipeline
