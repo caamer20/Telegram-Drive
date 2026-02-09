@@ -6,7 +6,7 @@
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20MacOS%20%7C%20Linux-blue)
 
 
-![Telegram Drive Dashboard](screenshots/LoginScreen.png)
+![Login](screenshots/LoginScreen.png)
 
 ##  What is Telegram Drive?
 
@@ -46,9 +46,9 @@ Telegram Drive leverages the Telegram API to allow you to upload, organize, and 
 |-----------------|------------------|
 | ![Folder Creation](screenshots/FolderCreation.png) | ![Folder List View](screenshots/FolderListView.png) |
 
-| Login Screen Variant | Upload Example |
-|----------------------|-------------------|
-| ![Login Screen Variant](screenshots/LoginScreen_01.png) |  ![Upload Example](screenshots/UploadExample.png) |
+| Login Screen Variant |
+|----------------------|
+|  ![Upload Example](screenshots/UploadExample.png) |
 
 ##  Tech Stack
 
