@@ -6,7 +6,7 @@
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20MacOS%20%7C%20Linux-blue)
 
 
-![Telegram Drive Dashboard](screenshots/DashboardWithFiles.png)
+![Telegram Drive Dashboard](screenshots/LoginScreen.png)
 
 ##  What is Telegram Drive?
 
@@ -33,6 +33,26 @@ Telegram Drive leverages the Telegram API to allow you to upload, organize, and 
 | Dark Mode | Authentication |
 |-----------|----------------|
 | ![Dark Mode](screenshots/DarkModeGrid.png) | ![Login](screenshots/LoginScreen.png) |
+
+| Audio Playback | Video Playback |
+|----------------|----------------|
+| ![Audio Playback](screenshots/AudioPlaybacka.p) | ![Video Playback](screenshots/VideoPlaybacka.p) |
+
+| Auth Code Screen | Auth Screen |
+|------------------|-------------|
+| ![Auth Code Screen](screenshots/AuthCodeScreen.png) | ![Auth Screen](screenshots/AuthScreen.png) |
+
+| Folder Creation | Folder List View |
+|-----------------|------------------|
+| ![Folder Creation](screenshots/FolderCreation.png) | ![Folder List View](screenshots/FolderListView.png) |
+
+| Login Screen Variant | Overlapping Cards |
+|----------------------|-------------------|
+| ![Login Screen Variant](screenshots/LoginScreen_01.png) |  ![Empty Folder](screenshots/EmptyFolder.png) |
+
+| Upload Example | Empty Folder |
+|----------------|--------------|
+| ![Upload Example](screenshots/UploadExample.png) |   |
 
 ##  Tech Stack
 
