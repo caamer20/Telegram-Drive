@@ -5,22 +5,41 @@
 ![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20MacOS%20%7C%20Linux-blue)
 
+
+![Telegram Drive Dashboard](screenshots/DashboardWithFiles.png)
+
 ##  What is Telegram Drive?
 
 Telegram Drive leverages the Telegram API to allow you to upload, organize, and manage files directly on Telegram's servers. It treats your "Saved Messages" and created Channels as folders, giving you a familiar file explorer interface for your Telegram cloud.
 
-### Key Features
-*   **Unlimited Storage**: Utilizing Telegram's generous cloud storage limits.
-*   **Drag & Drop Uploads**: Easy drag-and-drop interface for files.
-*   **Folder Management**: Create "Folders" (which are actually private Telegram Channels) to organize your content.
-*   **Privacy Focused**: Your API keys and data stay on your local machine. Nothing is routed through third-party servers.
-*   **Cross-Platform**: Runs natively on MacOS, Windows, and Linux.
+### ✨ Key Features
+
+*   **Unlimited Cloud Storage**: Utilizing Telegram's generous cloud infrastructure.
+*   **High Performance Grid**: Virtual scrolling handles folders with thousands of files instantly.
+*   **Auto-Updates**: Seamless updates for Windows, macOS, and Linux.
+*   **Media Streaming**: Stream video and audio files directly without downloading.
+*   **Drag & Drop**: Intuitive drag-and-drop upload and file management.
+*   **Thumbnail Previews**: Inline thumbnails for images and media files.
+*   **Folder Management**: Create "Folders" (private Telegram Channels) to organize content.
+*   **Privacy Focused**: API keys and data stay local. No third-party servers.
+*   **Cross-Platform**: Native apps for macOS (Intel/ARM), Windows, and Linux.
+
+## 📸 Screenshots
+
+| Dashboard | File Preview |
+|-----------|--------------|
+| ![Dashboard](screenshots/DashboardWithFiles.png) | ![Preview](screenshots/ImagePreview.png) |
+
+| Dark Mode | Authentication |
+|-----------|----------------|
+| ![Dark Mode](screenshots/DarkModeGrid.png) | ![Login](screenshots/LoginScreen.png) |
 
 ##  Tech Stack
 
 *   **Frontend**: React, TypeScript, TailwindCSS, Framer Motion
 *   **Backend**: Rust (Tauri), Grammers (Telegram Client)
 *   **Build Tool**: Vite
+
 
 ##  Getting Started
 
