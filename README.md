@@ -12,7 +12,7 @@
 
 Telegram Drive leverages the Telegram API to allow you to upload, organize, and manage files directly on Telegram's servers. It treats your "Saved Messages" and created Channels as folders, giving you a familiar file explorer interface for your Telegram cloud.
 
-### ✨ Key Features
+###  Key Features
 
 *   **Unlimited Cloud Storage**: Utilizing Telegram's generous cloud infrastructure.
 *   **High Performance Grid**: Virtual scrolling handles folders with thousands of files instantly.
@@ -24,7 +24,7 @@ Telegram Drive leverages the Telegram API to allow you to upload, organize, and 
 *   **Privacy Focused**: API keys and data stay local. No third-party servers.
 *   **Cross-Platform**: Native apps for macOS (Intel/ARM), Windows, and Linux.
 
-## 📸 Screenshots
+##  Screenshots
 
 | Dashboard | File Preview |
 |-----------|--------------|
