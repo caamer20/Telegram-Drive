@@ -29,13 +29,13 @@ import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
 export function Dashboard({ onLogout }: { onLogout: () => void }) {
     const queryClient = useQueryClient();
 
-    // 1. Connection & State
+
     const {
         store, folders, activeFolderId, setActiveFolderId, isSyncing, isConnected,
         handleLogout, handleSyncFolders, handleCreateFolder, handleFolderDelete
     } = useTelegramConnection(onLogout);
 
-    // 2. UI State
+
     const [previewFile, setPreviewFile] = useState<TelegramFile | null>(null);
     const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
     const [selectedIds, setSelectedIds] = useState<number[]>([]);
@@ -52,7 +52,6 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
     };
     const [playingFile, setPlayingFile] = useState<TelegramFile | null>(null);
 
-    // Load saved viewMode on mount
     useEffect(() => {
         if (store) {
             store.get<'grid' | 'list'>('viewMode').then((saved) => {
@@ -61,14 +60,13 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
         }
     }, [store]);
 
-    // Save viewMode when changed
     useEffect(() => {
         if (store) {
             store.set('viewMode', viewMode).then(() => store.save());
         }
     }, [store, viewMode]);
 
-    // 3. Data Fetching
+
     const { data: allFiles = [], isLoading, error } = useQuery({
         queryKey: ['files', activeFolderId],
         queryFn: () => invoke<any[]>('cmd_get_files', { folderId: activeFolderId }).then(res => res.map(f => ({
@@ -90,18 +88,17 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
         enabled: !!store
     });
 
-    // 4. Operations
+
     const {
         handleDelete, handleBulkDelete, handleDownload, handleBulkDownload,
         handleBulkMove, handleDownloadFolder, handleGlobalSearch
 
     } = useFileOperations(activeFolderId, selectedIds, setSelectedIds, displayedFiles);
 
-    // Simple file upload hook (DOM-based, no Tauri events)
     const { uploadQueue, setUploadQueue, handleManualUpload, isDragging } = useFileUpload(activeFolderId, store);
     const { downloadQueue, clearFinished: clearDownloads } = useFileDownload(store);
 
-    // 5. Keyboard Shortcuts
+
     const handleSelectAll = useCallback(() => {
         setSelectedIds(displayedFiles.map(f => f.id));
     }, [displayedFiles]);
@@ -119,7 +116,6 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
     }, []);
 
     const handleFocusSearch = useCallback(() => {
-        // Find and focus the search input
         const searchInput = document.querySelector('input[placeholder="Search files..."]') as HTMLInputElement;
         if (searchInput) {
             searchInput.focus();
@@ -149,8 +145,7 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
         enabled: !previewFile && !showMoveModal // Disable when modals are open
     });
 
-    // Effects
-    // Effects
+
     useEffect(() => {
         setSelectedIds([]);
         setShowMoveModal(false);
@@ -158,7 +153,7 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
         setSearchResults([]);
     }, [activeFolderId]);
 
-    // Global Search Effect
+
     useEffect(() => {
         if (searchTerm.length <= 2) {
             setSearchResults([]);
@@ -170,14 +165,14 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
             const results = await handleGlobalSearch(searchTerm);
             setSearchResults(results);
             setIsSearching(false);
-        }, 500); // 500ms debounce
+        }, 500);
 
         return () => clearTimeout(timer);
     }, [searchTerm]);
 
 
 
-    // UI Handlers
+
     const handleFileClick = (e: React.MouseEvent, id: number) => {
         e.stopPropagation();
         if (e.metaKey || e.ctrlKey) {
@@ -220,15 +215,12 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
 
                 queryClient.invalidateQueries({ queryKey: ['files', activeFolderId] });
 
-                // Clear selection if we moved the selected items
                 if (selectedIds.includes(fileId)) setSelectedIds([]);
 
                 toast.success(`Moved ${idsToMove.length} file(s).`);
 
-                // Reset state
                 setInternalDragFileId(null);
-            } catch (err) {
-                console.error("Move failed:", err);
+            } catch {
                 toast.error(`Failed to move file(s).`);
             }
         }
@@ -238,7 +230,7 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
         ? "Saved Messages"
         : folders.find(f => f.id === activeFolderId)?.name || "Folder";
 
-    // Force 'Move' cursor during internal drags (root handler)
+
     const handleRootDragOver = (e: React.DragEvent) => {
         if (internalDragRef.current) {
             e.preventDefault();
@@ -262,7 +254,7 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
             onDragOver={handleRootDragOver}
             onDragEnter={handleRootDragEnter}
         >
-            {/* Block external file drops and show helpful message */}
+
             <ExternalDropBlocker onUploadClick={handleManualUpload} />
 
             <AnimatePresence>
@@ -348,7 +340,7 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
                 />
             )}
 
-            {/* Transfer Queues */}
+
             <UploadQueue
                 items={uploadQueue}
                 onClearFinished={() => setUploadQueue(q => q.filter(i => i.status !== 'success' && i.status !== 'error'))}

@@ -31,8 +31,8 @@ export function Sidebar({
             await onCreate(newFolderName);
             setNewFolderName("");
             setShowNewFolderInput(false);
-        } catch (e) {
-            console.error(e);
+        } catch {
+            // handled by parent
         }
     }
 
@@ -49,7 +49,7 @@ export function Sidebar({
                     label="Saved Messages"
                     active={activeFolderId === null}
                     onClick={() => setActiveFolderId(null)}
-                    onDrop={(e: any) => onDrop(e, null)}
+                    onDrop={(e: React.DragEvent) => onDrop(e, null)}
                     folderId={null}
                 />
                 {folders.map(folder => (
@@ -59,13 +59,13 @@ export function Sidebar({
                         label={folder.name}
                         active={activeFolderId === folder.id}
                         onClick={() => setActiveFolderId(folder.id)}
-                        onDrop={(e: any) => onDrop(e, folder.id)}
+                        onDrop={(e: React.DragEvent) => onDrop(e, folder.id)}
                         onDelete={() => onDelete(folder.id, folder.name)}
                         folderId={folder.id}
                     />
                 ))}
 
-                {/* Add Folder Button */}
+
                 {showNewFolderInput ? (
                     <div className="px-3 py-2">
                         <input

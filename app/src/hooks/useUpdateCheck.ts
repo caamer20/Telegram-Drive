@@ -37,11 +37,12 @@ export function useUpdateCheck() {
             } else {
                 setState(s => ({ ...s, checking: false, available: false }));
             }
-        } catch (err: any) {
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : 'Failed to check for updates';
             setState(s => ({
                 ...s,
                 checking: false,
-                error: err?.message || 'Failed to check for updates',
+                error: message,
             }));
         }
     }, []);
@@ -56,22 +57,25 @@ export function useUpdateCheck() {
         try {
             await update.downloadAndInstall((event) => {
                 if (event.event === 'Started') {
-                    contentLength = (event.data as any).contentLength || 0;
+                    const data = event.data as { contentLength?: number };
+                    contentLength = data.contentLength || 0;
                 } else if (event.event === 'Progress') {
-                    downloaded += (event.data as any).chunkLength || 0;
+                    const data = event.data as { chunkLength?: number };
+                    downloaded += data.chunkLength || 0;
                     if (contentLength > 0) {
                         const pct = Math.round((downloaded / contentLength) * 100);
                         setState(s => ({ ...s, progress: Math.min(pct, 100) }));
                     }
                 }
             });
-            // Relaunch after install
+
             await relaunch();
-        } catch (err: any) {
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : 'Failed to install update';
             setState(s => ({
                 ...s,
                 downloading: false,
-                error: err?.message || 'Failed to install update',
+                error: message,
             }));
         }
     }, [update]);
@@ -81,11 +85,10 @@ export function useUpdateCheck() {
         setUpdate(null);
     }, []);
 
-    // Check for updates on mount (with a delay to not slow startup)
     useEffect(() => {
         const timer = setTimeout(() => {
             checkForUpdates();
-        }, 5000); // Check 5 seconds after app starts
+        }, 5000);
         return () => clearTimeout(timer);
     }, [checkForUpdates]);
 

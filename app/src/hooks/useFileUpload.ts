@@ -13,12 +13,11 @@ export function useFileUpload(activeFolderId: number | null, store: Store | null
     const [processing, setProcessing] = useState(false);
     const [initialized, setInitialized] = useState(false);
 
-    // Load saved queue on mount
+
     useEffect(() => {
         if (!store || initialized) return;
         store.get<QueueItem[]>('uploadQueue').then((saved) => {
             if (saved && saved.length > 0) {
-                // Only restore pending items
                 const pending = saved.filter(i => i.status === 'pending');
                 if (pending.length > 0) {
                     setUploadQueue(pending);
@@ -29,14 +28,14 @@ export function useFileUpload(activeFolderId: number | null, store: Store | null
         });
     }, [store, initialized]);
 
-    // Save queue when it changes (only pending items)
+
     useEffect(() => {
         if (!store || !initialized) return;
         const pending = uploadQueue.filter(i => i.status === 'pending');
         store.set('uploadQueue', pending).then(() => store.save());
     }, [store, uploadQueue, initialized]);
 
-    // Queue Processor
+
     useEffect(() => {
         if (processing) return;
         const nextItem = uploadQueue.find(i => i.status === 'pending');
@@ -60,7 +59,7 @@ export function useFileUpload(activeFolderId: number | null, store: Store | null
         }
     };
 
-    // Manual upload via file picker dialog (the primary way to add external files)
+    // Opens system file dialog for upload
     const handleManualUpload = async () => {
         try {
             const selected = await open({ multiple: true, directory: false });
@@ -75,8 +74,7 @@ export function useFileUpload(activeFolderId: number | null, store: Store | null
                 setUploadQueue(prev => [...prev, ...newItems]);
                 toast.info(`Queued ${paths.length} files for upload`);
             }
-        } catch (e) {
-            console.error("Manual upload failed:", e);
+        } catch {
             toast.error("Failed to open file dialog");
         }
     };

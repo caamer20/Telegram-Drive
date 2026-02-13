@@ -116,7 +116,7 @@ pub async fn cmd_upload_file(
     bw_state: State<'_, BandwidthManager>,
 ) -> Result<String, String> {
     let size = std::fs::metadata(&path).map_err(|e| e.to_string())?.len();
-    bw_state.can_transfer(size).map_err(|e| e)?;
+    bw_state.can_transfer(size)?;
 
     let client_opt = { state.client.lock().await.clone() };
     if client_opt.is_none() {
@@ -194,7 +194,7 @@ pub async fn cmd_download_file(
                 _ => 0,
             };
             
-            bw_state.can_transfer(size).map_err(|e| e)?;
+            bw_state.can_transfer(size)?;
 
             client.download_media(&media, &save_path).await.map_err(map_error)?;
             bw_state.add_down(size);
@@ -257,7 +257,7 @@ pub async fn cmd_get_files(
                 let (name, size, mime, ext) = match doc {
                     Media::Document(d) => {
                             let n = d.name().to_string();
-                            let s = d.size() as i64;
+                            let s = d.size();
                             let m = d.mime_type().map(|s| s.to_string());
                             let e = std::path::Path::new(&n).extension().map(|os| os.to_str().unwrap_or("").to_string());
                             (n, s, m, e)
@@ -306,71 +306,57 @@ pub async fn cmd_search_global(
     }).await.map_err(map_error)?;
 
     if let tl::enums::messages::Messages::Messages(msgs) = result {
-         for msg in msgs.messages {
-             if let tl::enums::Message::Message(m) = msg {
-                 if let Some(media) = m.media {
-                    if let tl::enums::MessageMedia::Document(d) = media {
-                        if let tl::enums::Document::Document(doc) = d.document.unwrap() {
-                             let name = doc.attributes.iter().find_map(|a| match a {
-                                 tl::enums::DocumentAttribute::Filename(f) => Some(f.file_name.clone()),
-                                 _ => None
-                             }).unwrap_or("Unknown".to_string());
-                             
-                             let size = doc.size as u64;
-                             let mime = doc.mime_type.clone();
-                             let ext = std::path::Path::new(&name).extension().map(|os| os.to_str().unwrap_or("").to_string());
-
-                             // Extract Folder ID from Peer ID (simplistic)
-                             let folder_id = match m.peer_id {
-                                 tl::enums::Peer::Channel(c) => Some(c.channel_id),
-                                 tl::enums::Peer::User(u) => Some(u.user_id), // Treat user storage as folder?
-                                 tl::enums::Peer::Chat(c) => Some(c.chat_id),
-                             };
-                             
-                             files.push(FileMetadata {
-                                 id: m.id as i64, 
-                                 folder_id, // This allows us to know where it came from
-                                 name, 
-                                 size, 
-                                 mime_type: Some(mime), 
-                                 file_ext: ext, 
-                                 created_at: m.date.to_string(), 
-                                 icon_type: "file".into()
-                             });
-                        }
+        for msg in msgs.messages {
+            if let tl::enums::Message::Message(m) = msg {
+                if let Some(tl::enums::MessageMedia::Document(d)) = m.media {
+                    if let tl::enums::Document::Document(doc) = d.document.unwrap() {
+                        let name = doc.attributes.iter().find_map(|a| match a {
+                            tl::enums::DocumentAttribute::Filename(f) => Some(f.file_name.clone()),
+                            _ => None
+                        }).unwrap_or("Unknown".to_string());
+                        let size = doc.size as u64;
+                        let mime = doc.mime_type.clone();
+                        let ext = std::path::Path::new(&name).extension().map(|os| os.to_str().unwrap_or("").to_string());
+                        let folder_id = match m.peer_id {
+                            tl::enums::Peer::Channel(c) => Some(c.channel_id),
+                            tl::enums::Peer::User(u) => Some(u.user_id),
+                            tl::enums::Peer::Chat(c) => Some(c.chat_id),
+                        };
+                        files.push(FileMetadata {
+                            id: m.id as i64, folder_id, name, size,
+                            mime_type: Some(mime), file_ext: ext,
+                            created_at: m.date.to_string(), icon_type: "file".into()
+                        });
                     }
-                 }
-             }
-         }
+                }
+            }
+        }
     } else if let tl::enums::messages::Messages::Slice(msgs) = result {
-        // Handle Slice (incomplete results) similarly if needed, but for now ignoring or implementing same loop
-         for msg in msgs.messages {
-             if let tl::enums::Message::Message(m) = msg {
-                 if let Some(media) = m.media {
-                    if let tl::enums::MessageMedia::Document(d) = media {
-                        if let tl::enums::Document::Document(doc) = d.document.unwrap() {
-                             let name = doc.attributes.iter().find_map(|a| match a {
-                                 tl::enums::DocumentAttribute::Filename(f) => Some(f.file_name.clone()),
-                                 _ => None
-                             }).unwrap_or("Unknown".to_string());
-                             let size = doc.size as u64;
-                             let mime = doc.mime_type.clone();
-                             let ext = std::path::Path::new(&name).extension().map(|os| os.to_str().unwrap_or("").to_string());
-                             
-                             let folder_id = match m.peer_id {
-                                 tl::enums::Peer::Channel(c) => Some(c.channel_id),
-                                 tl::enums::Peer::User(u) => Some(u.user_id),
-                                 tl::enums::Peer::Chat(c) => Some(c.chat_id),
-                             };
-
-                             files.push(FileMetadata {
-                                 id: m.id as i64, folder_id, name, size, mime_type: Some(mime), file_ext: ext, created_at: m.date.to_string(), icon_type: "file".into()
-                             });
-                        }
+        for msg in msgs.messages {
+            if let tl::enums::Message::Message(m) = msg {
+                if let Some(tl::enums::MessageMedia::Document(d)) = m.media {
+                    if let tl::enums::Document::Document(doc) = d.document.unwrap() {
+                        let name = doc.attributes.iter().find_map(|a| match a {
+                            tl::enums::DocumentAttribute::Filename(f) => Some(f.file_name.clone()),
+                            _ => None
+                        }).unwrap_or("Unknown".to_string());
+                        let size = doc.size as u64;
+                        let mime = doc.mime_type.clone();
+                        let ext = std::path::Path::new(&name).extension().map(|os| os.to_str().unwrap_or("").to_string());
+                        let folder_id = match m.peer_id {
+                            tl::enums::Peer::Channel(c) => Some(c.channel_id),
+                            tl::enums::Peer::User(u) => Some(u.user_id),
+                            tl::enums::Peer::Chat(c) => Some(c.chat_id),
+                        };
+                        files.push(FileMetadata {
+                            id: m.id as i64, folder_id, name, size,
+                            mime_type: Some(mime), file_ext: ext,
+                            created_at: m.date.to_string(), icon_type: "file".into()
+                        });
                     }
-                 }
-             }
-         }
+                }
+            }
+        }
     }
 
     Ok(files)
@@ -418,14 +404,11 @@ pub async fn cmd_scan_folders(
                     channel: input_chan,
                 }).await {
                     Ok(tl::enums::messages::ChatFull::Full(f)) => {
-                        match f.full_chat {
-                            tl::enums::ChatFull::Full(cf) => {
-                                 if cf.about.contains("[telegram-drive-folder]") {
-                                     log::info!(" -> MATCH via About: {}", name);
-                                     folders.push(FolderMetadata { id, name: name.clone(), parent_id: None });
-                                 }
-                            }
-                            _ => {}
+                        if let tl::enums::ChatFull::Full(cf) = f.full_chat {
+                             if cf.about.contains("[telegram-drive-folder]") {
+                                 log::info!(" -> MATCH via About: {}", name);
+                                 folders.push(FolderMetadata { id, name: name.clone(), parent_id: None });
+                             }
                         }
                     },
                     Err(e) => log::warn!(" -> Failed to get full info: {}", e),

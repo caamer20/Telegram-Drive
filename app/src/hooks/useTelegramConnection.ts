@@ -17,10 +17,10 @@ export function useTelegramConnection(onLogoutParent: () => void) {
     const [isSyncing, setIsSyncing] = useState(false);
     const [isConnected, setIsConnected] = useState(true);
 
-    // Use OS-level network detection (zero overhead)
+
     const networkIsOnline = useNetworkStatus();
 
-    // Load store and folders on mount
+
     useEffect(() => {
         const initStore = async () => {
             try {
@@ -34,7 +34,7 @@ export function useTelegramConnection(onLogoutParent: () => void) {
                 const savedFolders = await _store.get<TelegramFolder[]>('folders');
                 if (savedFolders) setFolders(savedFolders);
 
-                // Load saved active folder
+
                 const savedActiveFolderId = await _store.get<number | null>('activeFolderId');
                 if (savedActiveFolderId !== undefined) setActiveFolderId(savedActiveFolderId);
 
@@ -45,10 +45,8 @@ export function useTelegramConnection(onLogoutParent: () => void) {
                         await invoke('cmd_connect', { apiId });
                         setIsConnected(true);
                         queryClient.invalidateQueries({ queryKey: ['files'] });
-                    } catch (e) {
-                        console.error("Failed to connect:", e);
-                        // Using native confirm here as hooks might not be ready or reliable during initial mount race
-                        const shouldRetry = window.confirm("Failed to connect to Telegram. Retry?\n\nError: " + e);
+                    } catch {
+                        const shouldRetry = window.confirm("Failed to connect to Telegram. Retry?");
                         if (shouldRetry) {
                             window.location.reload();
                         } else {
@@ -63,32 +61,27 @@ export function useTelegramConnection(onLogoutParent: () => void) {
                     onLogoutParent();
                 }
 
-            } catch (e) {
-                console.error("Failed to load store", e);
+            } catch {
+                // store not available
             }
         };
         initStore();
     }, [queryClient, onLogoutParent]);
 
-    // Sync isConnected with network status
+
     useEffect(() => {
         setIsConnected(networkIsOnline);
     }, [networkIsOnline]);
 
-    // Network error detection keywords
+
     const isNetworkError = (error: string): boolean => {
         const keywords = ['timeout', 'connection', 'network', 'socket', 'disconnected', 'EOF', 'ECONNREFUSED', 'overflow'];
         return keywords.some(k => error.toLowerCase().includes(k.toLowerCase()));
     };
 
-    // Force logout on network failure (no confirmation needed)
-    // This is exposed so other hooks can call it when they detect network errors
     const forceLogout = async () => {
-        console.error("Network failure detected. Forcing logout...");
         setIsConnected(false);
         try {
-            // Don't call cmd_logout - it may trigger grammers crash
-            // Just clear local state
             await invoke('cmd_clean_cache').catch(() => { });
             if (store) {
                 await store.delete('api_id');
@@ -96,16 +89,13 @@ export function useTelegramConnection(onLogoutParent: () => void) {
                 await store.delete('folders');
                 await store.save();
             }
-        } catch (_) {
-            // Ignore errors during forced logout
+        } catch {
+            // best effort cleanup
         }
         toast.error("Connection lost. Please log in again.");
         onLogoutParent();
     };
 
-    // NOTE: Removed aggressive polling that called cmd_check_connection
-    // The grammers library has a stack overflow bug when network disconnects
-    // Instead, network errors are detected when operations fail (in useFileOperations etc)
 
     const handleLogout = async () => {
         if (!await confirm({ title: "Sign Out", message: "Are you sure you want to sign out? This will disconnect your active session.", confirmText: "Sign Out", variant: 'danger' })) return;
@@ -120,9 +110,8 @@ export function useTelegramConnection(onLogoutParent: () => void) {
                 await store.save();
             }
             onLogoutParent();
-        } catch (e) {
-            console.error("Logout failed:", e);
-            toast.error("Error signing out: " + e);
+        } catch {
+            toast.error("Error signing out");
             onLogoutParent();
         }
     };
@@ -148,9 +137,8 @@ export function useTelegramConnection(onLogoutParent: () => void) {
             } else {
                 toast.info("Scan complete. No new folders found.");
             }
-        } catch (e) {
-            console.error("Sync failed:", e);
-            toast.error("Sync failed: " + e);
+        } catch {
+            toast.error("Sync failed");
         } finally {
             setIsSyncing(false);
         }
@@ -189,7 +177,7 @@ export function useTelegramConnection(onLogoutParent: () => void) {
             }
             if (activeFolderId === folderId) setActiveFolderId(null);
             toast.success(`Folder "${folderName}" deleted.`);
-        } catch (e: any) {
+        } catch (e: unknown) {
             const errStr = String(e);
             if (errStr.includes("not found")) {
                 if (await confirm({
@@ -212,7 +200,7 @@ export function useTelegramConnection(onLogoutParent: () => void) {
         }
     };
 
-    // Wrapper to persist activeFolderId when changed
+
     const handleSetActiveFolderId = async (id: number | null) => {
         setActiveFolderId(id);
         if (store) {
@@ -232,7 +220,6 @@ export function useTelegramConnection(onLogoutParent: () => void) {
         handleSyncFolders,
         handleCreateFolder,
         handleFolderDelete,
-        // Network error handling (for use by other hooks/components)
         isNetworkError,
         forceLogout
     };

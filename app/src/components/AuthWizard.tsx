@@ -7,7 +7,6 @@ import { useTheme } from '../context/ThemeContext';
 
 type Step = "setup" | "phone" | "code" | "password";
 
-// Theme toggle for auth page
 function AuthThemeToggle() {
     const { theme, toggleTheme } = useTheme();
     return (
@@ -25,7 +24,6 @@ function AuthThemeToggle() {
     );
 }
 export function AuthWizard({ onLogin }: { onLogin: () => void }) {
-    // Check if running in a non-Tauri environment (Browser)
     const isBrowser = typeof window !== 'undefined' && !('__TAURI_INTERNALS__' in window);
 
     if (isBrowser) {
@@ -49,18 +47,16 @@ export function AuthWizard({ onLogin }: { onLogin: () => void }) {
     const [step, setStep] = useState<Step>("setup");
     const [loading, setLoading] = useState(false);
 
-    // State for keys
     const [apiId, setApiId] = useState("");
     const [apiHash, setApiHash] = useState("");
 
-    // Auth state
     const [phone, setPhone] = useState("");
     const [code, setCode] = useState("");
     const [error, setError] = useState<string | null>(null);
     const [floodWait, setFloodWait] = useState<number | null>(null);
     const [showHelp, setShowHelp] = useState(false);
 
-    // Flood Wait Timer
+
     useEffect(() => {
         if (!floodWait) return;
         const interval = setInterval(() => {
@@ -72,7 +68,6 @@ export function AuthWizard({ onLogin }: { onLogin: () => void }) {
         return () => clearInterval(interval);
     }, [floodWait]);
 
-    // Load saved credentials on mount
     useEffect(() => {
         const initStore = async () => {
             try {
@@ -83,11 +78,9 @@ export function AuthWizard({ onLogin }: { onLogin: () => void }) {
                 if (savedId && savedHash) {
                     setApiId(savedId);
                     setApiHash(savedHash);
-                    // If keys exist, skip setup? Or just prefill. 
-                    // Let's start at setup but prefill, so user knows what's happening.
                 }
-            } catch (e) {
-                console.error("Failed to load config", e);
+            } catch {
+                // config not found, starting fresh
             }
         };
         initStore();
@@ -99,8 +92,8 @@ export function AuthWizard({ onLogin }: { onLogin: () => void }) {
             await store.set('api_id', apiId);
             await store.set('api_hash', apiHash);
             await store.save();
-        } catch (e) {
-            console.error("Failed to save config", e);
+        } catch {
+            // store write failure, non-critical
         }
     };
 
@@ -120,7 +113,6 @@ export function AuthWizard({ onLogin }: { onLogin: () => void }) {
         setLoading(true);
         setError(null);
         try {
-            // Parse ID as integer
             const idInt = parseInt(apiId, 10);
             if (isNaN(idInt)) throw new Error("API ID must be a number");
 
@@ -130,8 +122,7 @@ export function AuthWizard({ onLogin }: { onLogin: () => void }) {
                 apiHash: apiHash
             });
             setStep("code");
-        } catch (err: any) {
-            console.error("Auth Error:", err);
+        } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : JSON.stringify(err);
             if (msg.includes("FLOOD_WAIT_")) {
                 const parts = msg.split("FLOOD_WAIT_");
@@ -139,7 +130,7 @@ export function AuthWizard({ onLogin }: { onLogin: () => void }) {
                     const seconds = parseInt(parts[1]);
                     if (!isNaN(seconds)) {
                         setFloodWait(seconds);
-                        return; // Don't show generic error, show wait screen
+                        return;
                     }
                 }
             }
@@ -153,7 +144,7 @@ export function AuthWizard({ onLogin }: { onLogin: () => void }) {
         e.preventDefault();
         setLoading(true);
         try {
-            const res: any = await invoke("cmd_auth_sign_in", { code });
+            const res = await invoke<{ success: boolean; next_step?: string }>("cmd_auth_sign_in", { code });
             if (res.success) {
                 onLogin();
             } else if (res.next_step === "password") {
@@ -161,9 +152,8 @@ export function AuthWizard({ onLogin }: { onLogin: () => void }) {
             } else {
                 setError("Unknown error");
             }
-        } catch (err: any) {
-            console.error("Code Error:", err);
-            setError(JSON.stringify(err));
+        } catch (err: unknown) {
+            setError(err instanceof Error ? err.message : String(err));
         } finally {
             setLoading(false);
         }
@@ -171,7 +161,6 @@ export function AuthWizard({ onLogin }: { onLogin: () => void }) {
 
     return (
         <div className="h-full w-full auth-gradient flex items-center justify-center p-6 relative">
-            {/* Theme Toggle */}
             <AuthThemeToggle />
 
             <motion.div
@@ -215,7 +204,7 @@ export function AuthWizard({ onLogin }: { onLogin: () => void }) {
                     ) : (
                         <>
 
-                            {/* STEP 1: SETUP API KEYS */}
+
                             {step === "setup" && (
                                 <motion.form
                                     key="setup"
@@ -280,7 +269,7 @@ export function AuthWizard({ onLogin }: { onLogin: () => void }) {
                                 </motion.form>
                             )}
 
-                            {/* STEP 2: PHONE NUMBER */}
+
                             {step === "phone" && (
                                 <motion.form
                                     key="phone"
@@ -319,7 +308,7 @@ export function AuthWizard({ onLogin }: { onLogin: () => void }) {
                                 </motion.form>
                             )}
 
-                            {/* STEP 3: CODE */}
+
                             {step === "code" && (
                                 <motion.form
                                     key="code"
@@ -373,7 +362,7 @@ export function AuthWizard({ onLogin }: { onLogin: () => void }) {
                 )}
             </motion.div>
 
-            {/* Help Modal */}
+
             <AnimatePresence>
                 {showHelp && (
                     <motion.div
@@ -454,7 +443,7 @@ export function AuthWizard({ onLogin }: { onLogin: () => void }) {
                 )}
             </AnimatePresence>
 
-            {/* Background Decor */}
+
             <div className="fixed top-[-20%] left-[-10%] w-[500px] h-[500px] bg-blue-600/20 rounded-full blur-[120px] pointer-events-none -z-10" />
             <div className="fixed bottom-[-10%] right-[-10%] w-[400px] h-[400px] bg-purple-600/10 rounded-full blur-[100px] pointer-events-none -z-10" />
         </div>

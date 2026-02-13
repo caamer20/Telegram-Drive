@@ -3,7 +3,7 @@ use actix_cors::Cors;
 use crate::commands::TelegramState;
 use crate::commands::utils::resolve_peer;
 use grammers_client::types::Media;
-// futures::StreamExt not needed - iter_download handles iteration
+
 use std::sync::Arc;
 
 #[get("/stream/{folder_id}/{message_id}")]
@@ -43,10 +43,8 @@ async fn stream_media(
                                 
                                 let mime = mime_type_from_media(&media);
                                 
-                                // Create stream
+                                // Create chunk-streaming response
                                 let mut download_iter = client.iter_download(&media);
-                                
-                                // Convert to futures::Stream
                                 let stream = async_stream::stream! {
                                     while let Some(chunk) = download_iter.next().await.transpose() {
                                         match chunk {

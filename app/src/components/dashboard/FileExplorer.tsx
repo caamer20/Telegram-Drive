@@ -13,7 +13,7 @@ type SortDirection = 'asc' | 'desc';
 interface FileExplorerProps {
     files: TelegramFile[];
     loading: boolean;
-    error: any;
+    error: Error | null;
     viewMode: 'grid' | 'list';
     selectedIds: number[];
     activeFolderId: number | null;
@@ -28,7 +28,7 @@ interface FileExplorerProps {
     onDragEnd?: () => void;
 }
 
-// Calculate grid columns based on container width
+
 function useGridColumns(containerRef: React.RefObject<HTMLDivElement | null>) {
     const [columns, setColumns] = useState(4);
     const [containerWidth, setContainerWidth] = useState(800);
@@ -66,12 +66,10 @@ export function FileExplorer({
     const parentRef = useRef<HTMLDivElement>(null);
     const { columns, containerWidth } = useGridColumns(parentRef);
 
-    // Calculate row height: card width based on container, then aspect ratio 4:3
-    // Add 6px gap between rows
     const GAP = 6;
     const cardWidth = (containerWidth - (GAP * (columns - 1))) / columns;
     const cardHeight = cardWidth * 0.75; // aspect-[4/3]
-    const rowHeight = Math.max(cardHeight + GAP, 150); // Minimum 150px to prevent overlap
+    const rowHeight = Math.max(cardHeight + GAP, 150);
 
     const handleContextMenu = useCallback((e: React.MouseEvent, file: TelegramFile) => {
         e.preventDefault();
@@ -97,7 +95,7 @@ export function FileExplorer({
         });
     }, [files, sortField, sortDirection]);
 
-    // For grid: group files into rows + add upload button as last item
+
     const gridRows = useMemo(() => {
         const rows: (TelegramFile | 'upload')[][] = [];
         const itemsWithUpload: (TelegramFile | 'upload')[] = [...sortedFiles, 'upload'];
@@ -107,30 +105,29 @@ export function FileExplorer({
         return rows;
     }, [sortedFiles, columns]);
 
-    // For list: items are individual files + upload button
+
     const listItems = useMemo(() => {
         return activeFolderId === null ? [...sortedFiles, 'upload' as const] : sortedFiles;
     }, [sortedFiles, activeFolderId]);
 
-    // Grid virtualizer (virtualize rows)
+
     const gridVirtualizer = useVirtualizer({
         count: gridRows.length,
         getScrollElement: () => parentRef.current,
-        estimateSize: useCallback(() => rowHeight, [rowHeight]), // Dynamic row height
+        estimateSize: useCallback(() => rowHeight, [rowHeight]),
         overscan: 2,
         gap: GAP,
     });
 
-    // Force re-measure when row height changes
+
     useEffect(() => {
         gridVirtualizer.measure();
     }, [rowHeight, gridVirtualizer]);
 
-    // List virtualizer (virtualize individual items)
     const listVirtualizer = useVirtualizer({
         count: listItems.length,
         getScrollElement: () => parentRef.current,
-        estimateSize: () => 48, // List item height
+        estimateSize: () => 48,
         overscan: 5,
     });
 
@@ -181,7 +178,7 @@ export function FileExplorer({
         >
             {viewMode === 'grid' ? (
                 <>
-                    {/* Sort Controls for Grid */}
+
                     <div className="flex items-center gap-2 mb-4 text-xs text-telegram-subtext">
                         <span>Sort by:</span>
                         <button
@@ -204,7 +201,7 @@ export function FileExplorer({
                         </button>
                     </div>
 
-                    {/* Virtualized Grid */}
+
                     <div
                         className="relative w-full"
                         style={{ height: `${gridVirtualizer.getTotalSize()}px` }}
@@ -216,6 +213,7 @@ export function FileExplorer({
                                     key={virtualRow.key}
                                     className="absolute top-0 left-0 w-full grid"
                                     style={{
+                                        height: `${cardHeight}px`,
                                         transform: `translateY(${virtualRow.start}px)`,
                                         gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
                                         gap: `${GAP}px`,
@@ -227,7 +225,8 @@ export function FileExplorer({
                                                 <button
                                                     key="upload"
                                                     onClick={(e) => { e.stopPropagation(); onManualUpload(); }}
-                                                    className="aspect-[4/3] border-2 border-dashed border-telegram-border rounded-xl flex flex-col items-center justify-center text-telegram-subtext hover:border-telegram-primary hover:text-telegram-primary transition-all group"
+                                                    className="border-2 border-dashed border-telegram-border rounded-xl flex flex-col items-center justify-center text-telegram-subtext hover:border-telegram-primary hover:text-telegram-primary transition-all group"
+                                                    style={{ height: `${cardHeight}px` }}
                                                 >
                                                     <Plus className="w-8 h-8 mb-2 group-hover:scale-110 transition-transform" />
                                                     <span className="text-sm font-medium">Upload File</span>
@@ -249,6 +248,7 @@ export function FileExplorer({
                                                 onDragStart={onDragStart}
                                                 onDragEnd={onDragEnd}
                                                 activeFolderId={activeFolderId}
+                                                height={cardHeight}
                                             />
                                         );
                                     })}
@@ -259,7 +259,7 @@ export function FileExplorer({
                 </>
             ) : (
                 <div className="flex flex-col w-full">
-                    {/* List Header with Sortable Columns */}
+                    {/* List Header */}
                     <div className="grid grid-cols-[2rem_2fr_6rem_8rem] gap-4 px-4 py-2 text-xs font-semibold text-telegram-subtext border-b border-telegram-border mb-2 select-none items-center">
                         <div className="text-center">#</div>
                         <button onClick={() => handleSort('name')} className="flex items-center gap-1 hover:text-telegram-text transition-colors">
@@ -273,7 +273,7 @@ export function FileExplorer({
                         </button>
                     </div>
 
-                    {/* Virtualized List */}
+
                     <div
                         className="relative w-full"
                         style={{ height: `${listVirtualizer.getTotalSize()}px` }}
@@ -339,7 +339,7 @@ export function FileExplorer({
                     }}
                     onPreview={() => {
                         if (contextMenu.file.type === 'folder') {
-                            onFileClick({ preventDefault: () => { } } as any, contextMenu.file.id);
+                            onFileClick({ preventDefault: () => { }, stopPropagation: () => { } } as React.MouseEvent, contextMenu.file.id);
                         } else {
                             onPreview(contextMenu.file);
                         }

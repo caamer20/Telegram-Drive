@@ -34,9 +34,8 @@ export function useFileOperations(
             try {
                 await invoke('cmd_delete_file', { messageId: id, folderId: activeFolderId });
                 success++;
-            } catch (e) {
+            } catch {
                 fail++;
-                console.error(`Failed to delete ${id}`, e);
             }
         }
         setSelectedIds([]);
@@ -96,9 +95,8 @@ export function useFileOperations(
             queryClient.invalidateQueries({ queryKey: ['files', activeFolderId] });
             setSelectedIds([]);
             if (onSuccess) onSuccess();
-        } catch (e) {
-            console.error(`Failed to move files`, e);
-            toast.error(`Failed to move files: ${e}`);
+        } catch {
+            toast.error('Failed to move files');
         }
     };
 
@@ -137,8 +135,7 @@ export function useFileOperations(
         handleGlobalSearch: async (query: string) => {
             try {
                 return await invoke<TelegramFile[]>('cmd_search_global', { query });
-            } catch (e) {
-                console.error("Search failed:", e);
+            } catch {
                 return [];
             }
         }

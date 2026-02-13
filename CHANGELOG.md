@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.0.4] - 2026-02-13
+
+### Bug Fixes
+
+- **Grid Card Overlap Fix** - Cards no longer overlap at any window size. Replaced CSS `aspect-[4/3]` with explicit pixel heights synchronized to the virtualizer's row budget.
+
+### Code Quality
+
+- Removed all `console.log/warn/error` statements (16 total, kept 1 in ErrorBoundary)
+- Replaced all `as any` type casts with proper types
+- Fixed all Rust Clippy warnings (7 → 0)
+- Removed 3 unused npm dependencies (`clsx`, `tailwind-merge`, `@tauri-apps/plugin-opener`)
+- Stripped ~40 AI-generated comments across TypeScript and Rust files
+
+---
+
 ## [1.0.3] - 2026-02-09
 
 ### Bug Fixes
