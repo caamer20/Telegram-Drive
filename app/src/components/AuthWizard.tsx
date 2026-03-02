@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { motion, AnimatePresence } from "framer-motion";
-import { Phone, Key, ArrowRight, Settings, ShieldCheck, Sun, Moon, HelpCircle, ExternalLink, X } from "lucide-react";
+import { Phone, Key, Lock, ArrowRight, Settings, ShieldCheck, Sun, Moon, HelpCircle, ExternalLink, X } from "lucide-react";
 import { load } from '@tauri-apps/plugin-store';
 import { useTheme } from '../context/ThemeContext';
 
@@ -52,6 +52,7 @@ export function AuthWizard({ onLogin }: { onLogin: () => void }) {
 
     const [phone, setPhone] = useState("");
     const [code, setCode] = useState("");
+    const [password, setPassword] = useState("");
     const [error, setError] = useState<string | null>(null);
     const [floodWait, setFloodWait] = useState<number | null>(null);
     const [showHelp, setShowHelp] = useState(false);
@@ -143,6 +144,7 @@ export function AuthWizard({ onLogin }: { onLogin: () => void }) {
     const handleCodeSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setLoading(true);
+        setError(null);
         try {
             const res = await invoke<{ success: boolean; next_step?: string }>("cmd_auth_sign_in", { code });
             if (res.success) {
@@ -151,6 +153,24 @@ export function AuthWizard({ onLogin }: { onLogin: () => void }) {
                 setStep("password");
             } else {
                 setError("Unknown error");
+            }
+        } catch (err: unknown) {
+            setError(err instanceof Error ? err.message : String(err));
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handlePasswordSubmit = async (e: React.FormEvent) => {
+        e.preventDefault();
+        setLoading(true);
+        setError(null);
+        try {
+            const res = await invoke<{ success: boolean; next_step?: string }>("cmd_auth_check_password", { password });
+            if (res.success) {
+                onLogin();
+            } else {
+                setError("Password verification failed.");
             }
         } catch (err: unknown) {
             setError(err instanceof Error ? err.message : String(err));
@@ -342,6 +362,52 @@ export function AuthWizard({ onLogin }: { onLogin: () => void }) {
                                         </button>
                                         <button type="button" onClick={() => setStep("phone")} className="text-xs text-gray-500 hover:text-white transition-colors py-2">
                                             Change Phone Number
+                                        </button>
+                                    </div>
+                                </motion.form>
+                            )}
+
+
+                            {step === "password" && (
+                                <motion.form
+                                    key="password"
+                                    initial={{ x: 20, opacity: 0 }}
+                                    animate={{ x: 0, opacity: 1 }}
+                                    exit={{ x: -20, opacity: 0 }}
+                                    onSubmit={handlePasswordSubmit}
+                                    className="space-y-6"
+                                >
+                                    <div className="space-y-2">
+                                        <div className="p-3 bg-blue-500/10 border border-blue-500/20 rounded-xl mb-4">
+                                            <p className="text-xs text-blue-300 text-center">
+                                                Your account has Two-Factor Authentication enabled.
+                                                Please enter your cloud password to continue.
+                                            </p>
+                                        </div>
+                                        <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider">Cloud Password</label>
+                                        <div className="relative">
+                                            <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 auth-form-icon" />
+                                            <input
+                                                type="password"
+                                                value={password}
+                                                onChange={(e) => setPassword(e.target.value)}
+                                                placeholder="Enter your password"
+                                                className="w-full glass-input rounded-xl pl-12 pr-4 py-4 text-white placeholder-gray-600 focus:outline-none focus:border-blue-500 transition-all text-lg"
+                                                autoFocus
+                                            />
+                                        </div>
+                                    </div>
+
+                                    <div className="flex flex-col gap-3">
+                                        <button
+                                            type="submit"
+                                            disabled={loading || !password}
+                                            className="w-full bg-white text-black hover:bg-gray-100 font-bold py-4 rounded-xl flex items-center justify-center gap-2 transition-all shadow-lg active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
+                                        >
+                                            {loading ? "Verifying..." : "Unlock"}
+                                        </button>
+                                        <button type="button" onClick={() => { setStep("code"); setPassword(""); setError(null); }} className="text-xs text-gray-500 hover:text-white transition-colors py-2">
+                                            Back to Code Entry
                                         </button>
                                     </div>
                                 </motion.form>
