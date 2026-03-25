@@ -51,6 +51,8 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
         _setInternalDragFileId(id);
     };
     const [playingFile, setPlayingFile] = useState<TelegramFile | null>(null);
+    const [previewContextFiles, setPreviewContextFiles] = useState<TelegramFile[]>([]);
+    const [previewContextIndex, setPreviewContextIndex] = useState(-1);
 
     useEffect(() => {
         if (store) {
@@ -113,6 +115,7 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
         setSelectedIds([]);
         setSearchTerm("");
         setPreviewFile(null);
+        setPlayingFile(null);
     }, []);
 
     const handleFocusSearch = useCallback(() => {
@@ -130,7 +133,7 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
                 if (selected.type === 'folder') {
                     setActiveFolderId(selected.id);
                 } else {
-                    setPreviewFile(selected);
+                    handlePreview(selected, displayedFiles);
                 }
             }
         }
@@ -142,7 +145,7 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
         onEscape: handleEscape,
         onSearch: handleFocusSearch,
         onEnter: handleEnter,
-        enabled: !previewFile && !showMoveModal // Disable when modals are open
+        enabled: !previewFile && !playingFile && !showMoveModal // Disable when modals are open
     });
 
 
@@ -151,6 +154,10 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
         setShowMoveModal(false);
         setSearchTerm("");
         setSearchResults([]);
+        setPreviewFile(null);
+        setPlayingFile(null);
+        setPreviewContextFiles([]);
+        setPreviewContextIndex(-1);
     }, [activeFolderId]);
 
 
@@ -182,16 +189,83 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
         }
     }
 
-    const handlePreview = (file: TelegramFile) => {
+    const handlePreview = (file: TelegramFile, orderedFiles?: TelegramFile[]) => {
+        const contextFiles = (orderedFiles || displayedFiles).filter((f) => f.type !== 'folder');
+        const contextIndex = contextFiles.findIndex((f) => f.id === file.id);
+
+        setPreviewContextFiles(contextFiles);
+        setPreviewContextIndex(contextIndex);
+
         const isMedia = ['mp4', 'webm', 'ogg', 'mov', 'mkv', 'avi', 'mp3', 'wav', 'aac', 'flac', 'm4a', 'opus']
             .some(ext => file.name.toLowerCase().endsWith(ext));
 
         if (isMedia) {
             setPlayingFile(file);
+            setPreviewFile(null);
         } else {
             setPreviewFile(file);
+            setPlayingFile(null);
         }
     };
+
+    const navigatePreview = useCallback((step: 1 | -1) => {
+        if (previewContextFiles.length === 0) return;
+
+        const currentFileId = previewFile?.id ?? playingFile?.id;
+        if (!currentFileId) return;
+
+        const currentIndex = previewContextFiles.findIndex((f) => f.id === currentFileId);
+        if (currentIndex === -1) return;
+
+        const nextIndex = (currentIndex + step + previewContextFiles.length) % previewContextFiles.length;
+        const nextFile = previewContextFiles[nextIndex];
+        if (!nextFile) return;
+
+        setPreviewContextIndex(nextIndex);
+
+        const isMedia = ['mp4', 'webm', 'ogg', 'mov', 'mkv', 'avi', 'mp3', 'wav', 'aac', 'flac', 'm4a', 'opus']
+            .some(ext => nextFile.name.toLowerCase().endsWith(ext));
+
+        if (isMedia) {
+            setPlayingFile(nextFile);
+            setPreviewFile(null);
+        } else {
+            setPreviewFile(nextFile);
+            setPlayingFile(null);
+        }
+    }, [previewContextFiles, previewFile, playingFile]);
+
+    const handleNextPreview = useCallback(() => {
+        navigatePreview(1);
+    }, [navigatePreview]);
+
+    const handlePrevPreview = useCallback(() => {
+        navigatePreview(-1);
+    }, [navigatePreview]);
+
+    const previewNeighborFiles = useCallback(() => {
+        if (previewContextFiles.length === 0) {
+            return { nextFile: null as TelegramFile | null, prevFile: null as TelegramFile | null };
+        }
+
+        const currentFileId = previewFile?.id ?? playingFile?.id;
+        if (!currentFileId) {
+            return { nextFile: null as TelegramFile | null, prevFile: null as TelegramFile | null };
+        }
+
+        const currentIdx = previewContextFiles.findIndex((f) => f.id === currentFileId);
+        if (currentIdx === -1) {
+            return { nextFile: null as TelegramFile | null, prevFile: null as TelegramFile | null };
+        }
+
+        const nextIdx = (currentIdx + 1) % previewContextFiles.length;
+        const prevIdx = (currentIdx - 1 + previewContextFiles.length) % previewContextFiles.length;
+
+        return {
+            nextFile: previewContextFiles[nextIdx] || null,
+            prevFile: previewContextFiles[prevIdx] || null,
+        };
+    }, [previewContextFiles, previewFile, playingFile]);
 
     const handleDropOnFolder = async (e: React.DragEvent, targetFolderId: number | null) => {
         e.preventDefault();
@@ -247,6 +321,8 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
         }
     };
 
+    const previewNeighbors = previewNeighborFiles();
+
     return (
         <div
             className="flex h-screen w-full overflow-hidden bg-telegram-bg relative"
@@ -271,6 +347,10 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
                     <MediaPlayer
                         file={playingFile}
                         onClose={() => setPlayingFile(null)}
+                        onNext={handleNextPreview}
+                        onPrev={handlePrevPreview}
+                        currentIndex={previewContextIndex}
+                        totalItems={previewContextFiles.length}
                         activeFolderId={activeFolderId}
                         key="media-player"
                     />
@@ -337,6 +417,12 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
                     file={previewFile}
                     activeFolderId={activeFolderId}
                     onClose={() => setPreviewFile(null)}
+                    onNext={handleNextPreview}
+                    onPrev={handlePrevPreview}
+                    currentIndex={previewContextIndex}
+                    totalItems={previewContextFiles.length}
+                    nextFile={previewNeighbors.nextFile}
+                    prevFile={previewNeighbors.prevFile}
                 />
             )}
 

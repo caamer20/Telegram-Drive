@@ -6,6 +6,41 @@ use crate::TelegramState;
 use crate::bandwidth::BandwidthManager;
 use crate::commands::utils::resolve_peer;
 
+const PREVIEW_CACHE_MAX_FILES: usize = 30;
+const PREVIEW_CACHE_MAX_TOTAL_BYTES: u64 = 80 * 1024 * 1024;
+
+fn prune_preview_cache(cache_dir: &std::path::Path) {
+    let read_dir = match std::fs::read_dir(cache_dir) {
+        Ok(entries) => entries,
+        Err(_) => return,
+    };
+
+    let mut files: Vec<(std::path::PathBuf, std::time::SystemTime, u64)> = Vec::new();
+    for entry in read_dir.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        if let Ok(meta) = entry.metadata() {
+            let modified = meta.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+            files.push((path, modified, meta.len()));
+        }
+    }
+
+    files.sort_by_key(|(_, modified, _)| *modified);
+
+    let mut total_bytes: u64 = files.iter().map(|(_, _, len)| *len).sum();
+    while files.len() > PREVIEW_CACHE_MAX_FILES || total_bytes > PREVIEW_CACHE_MAX_TOTAL_BYTES {
+        if let Some((path, _, len)) = files.first().cloned() {
+            let _ = std::fs::remove_file(&path);
+            total_bytes = total_bytes.saturating_sub(len);
+            files.remove(0);
+        } else {
+            break;
+        }
+    }
+}
+
 #[tauri::command]
 pub async fn cmd_get_preview(
     message_id: i32,
@@ -14,9 +49,9 @@ pub async fn cmd_get_preview(
     state: State<'_, TelegramState>,
     bw_state: State<'_, BandwidthManager>,
 ) -> Result<String, String> {
-    
-    let cache_dir = app_handle.path().app_data_dir().map_err(|e: tauri::Error| e.to_string())?.join("previews");
+    let cache_dir = app_handle.path().app_cache_dir().map_err(|e: tauri::Error| e.to_string())?.join("previews");
     if !cache_dir.exists() { let _ = std::fs::create_dir_all(&cache_dir); }
+    prune_preview_cache(&cache_dir);
     log::info!("Using preview cache dir: {:?}", cache_dir);
     log::info!("Preview Request: msg_id={}", message_id);
 
@@ -54,7 +89,10 @@ pub async fn cmd_get_preview(
                  _ => "bin".to_string(),
              };
              
-             let save_path = cache_dir.join(format!("{}.{}", message_id, ext));
+             let folder_key = folder_id
+                 .map(|id| id.to_string())
+                 .unwrap_or_else(|| "home".to_string());
+             let save_path = cache_dir.join(format!("{}_{}.{}", folder_key, message_id, ext));
              let save_path_str = save_path.to_string_lossy().to_string();
              
              let file_ready = if save_path.exists() {
@@ -76,6 +114,7 @@ pub async fn cmd_get_preview(
                         Ok(_) => {
                             log::info!("Preview download complete.");
                             bw_state.add_down(size);
+                            prune_preview_cache(&cache_dir);
                             true
                         },
                         Err(e) => {

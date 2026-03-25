@@ -60,6 +60,7 @@ async fn stream_media(
                                 return HttpResponse::Ok()
                                     .insert_header(("Content-Type", mime)) 
                                     .insert_header(("Content-Length", size.to_string()))
+                                    .insert_header(("Cache-Control", "private, max-age=120"))
                                     .streaming(stream);
                             }
                         }

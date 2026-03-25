@@ -20,7 +20,7 @@ interface FileExplorerProps {
     onFileClick: (e: React.MouseEvent, id: number) => void;
     onDelete: (id: number) => void;
     onDownload: (id: number, name: string) => void;
-    onPreview: (file: TelegramFile) => void;
+    onPreview: (file: TelegramFile, orderedFiles?: TelegramFile[]) => void;
     onManualUpload: () => void;
     onSelectionClear: () => void;
     onDrop?: (e: React.DragEvent, folderId: number) => void;
@@ -94,6 +94,10 @@ export function FileExplorer({
             return sortDirection === 'asc' ? comparison : -comparison;
         });
     }, [files, sortField, sortDirection]);
+
+    const handlePreviewRequest = useCallback((file: TelegramFile) => {
+        onPreview(file, sortedFiles);
+    }, [onPreview, sortedFiles]);
 
 
     const gridRows = useMemo(() => {
@@ -243,7 +247,7 @@ export function FileExplorer({
                                                 onContextMenu={(e) => handleContextMenu(e, file)}
                                                 onDelete={() => onDelete(file.id)}
                                                 onDownload={() => onDownload(file.id, file.name)}
-                                                onPreview={() => onPreview(file)}
+                                                onPreview={() => handlePreviewRequest(file)}
                                                 onDrop={onDrop}
                                                 onDragStart={onDragStart}
                                                 onDragEnd={onDragEnd}
@@ -312,7 +316,7 @@ export function FileExplorer({
                                         onDragStart={onDragStart}
                                         onDragEnd={onDragEnd}
                                         onDrop={onDrop}
-                                        onPreview={onPreview}
+                                        onPreview={handlePreviewRequest}
                                         onDownload={onDownload}
                                         onDelete={onDelete}
                                     />
@@ -341,7 +345,7 @@ export function FileExplorer({
                         if (contextMenu.file.type === 'folder') {
                             onFileClick({ preventDefault: () => { }, stopPropagation: () => { } } as React.MouseEvent, contextMenu.file.id);
                         } else {
-                            onPreview(contextMenu.file);
+                            handlePreviewRequest(contextMenu.file);
                         }
                         setContextMenu(null);
                     }}

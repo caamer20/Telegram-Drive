@@ -1,22 +1,74 @@
-import { X } from 'lucide-react';
+import { useEffect } from 'react';
+import { X, ChevronLeft, ChevronRight } from 'lucide-react';
 import { TelegramFile } from '../../types';
 
 interface MediaPlayerProps {
     file: TelegramFile;
     onClose: () => void;
+    onNext?: () => void;
+    onPrev?: () => void;
+    currentIndex?: number;
+    totalItems?: number;
     activeFolderId: number | null;
 }
 
-export function MediaPlayer({ file, onClose, activeFolderId }: MediaPlayerProps) {
+export function MediaPlayer({ file, onClose, onNext, onPrev, currentIndex, totalItems, activeFolderId }: MediaPlayerProps) {
     const folderIdParam = activeFolderId !== null ? activeFolderId.toString() : 'home';
     const streamUrl = `http://localhost:14200/stream/${folderIdParam}/${file.id}`;
 
     const isVideo = ['mp4', 'webm', 'ogg', 'mov', 'mkv', 'avi'].some(ext => file.name.toLowerCase().endsWith(ext));
     const isAudio = ['mp3', 'wav', 'aac', 'flac', 'm4a', 'opus'].some(ext => file.name.toLowerCase().endsWith(ext));
 
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            const target = e.target as HTMLElement;
+            if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
+                return;
+            }
+
+            const key = e.key.toLowerCase();
+
+            if (e.key === 'ArrowRight' || key === 'l') {
+                e.preventDefault();
+                onNext?.();
+                return;
+            }
+
+            if (e.key === 'ArrowLeft' || key === 'j') {
+                e.preventDefault();
+                onPrev?.();
+                return;
+            }
+
+            if (e.key === 'Escape') {
+                e.preventDefault();
+                onClose();
+            }
+        };
+
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [onClose, onNext, onPrev]);
+
     return (
         <div className="fixed inset-0 z-[200] bg-black/90 flex items-center justify-center p-4 backdrop-blur-md animate-in fade-in duration-200" onClick={onClose}>
             <div className="relative w-full max-w-6xl flex flex-col items-center" onClick={e => e.stopPropagation()}>
+                <button
+                    onClick={onPrev}
+                    className="absolute left-2 top-1/2 -translate-y-1/2 p-2 text-white/50 hover:text-white bg-white/10 hover:bg-white/20 rounded-full transition-all z-10"
+                    title="Previous (ArrowLeft / J)"
+                >
+                    <ChevronLeft className="w-6 h-6" />
+                </button>
+
+                <button
+                    onClick={onNext}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 p-2 text-white/50 hover:text-white bg-white/10 hover:bg-white/20 rounded-full transition-all z-10"
+                    title="Next (ArrowRight / L)"
+                >
+                    <ChevronRight className="w-6 h-6" />
+                </button>
+
                 <button
                     onClick={onClose}
                     className="absolute -top-12 right-0 p-2 text-white/50 hover:text-white bg-white/10 hover:bg-white/20 rounded-full transition-all"
@@ -46,7 +98,12 @@ export function MediaPlayer({ file, onClose, activeFolderId }: MediaPlayerProps)
 
                 <div className="mt-4 text-center">
                     <h3 className="text-lg font-medium text-white">{file.name}</h3>
-                    <p className="text-sm text-white/50">Streaming from Telegram Drive</p>
+                    <p className="text-sm text-white/50">
+                        Streaming from Telegram Drive
+                        {typeof currentIndex === 'number' && typeof totalItems === 'number' && totalItems > 0 && (
+                            <span className="ml-2">• {currentIndex + 1}/{totalItems} • Arrow/J-L</span>
+                        )}
+                    </p>
                 </div>
             </div>
         </div>
