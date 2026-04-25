@@ -74,7 +74,7 @@ export function useFileOperations(
                 try {
                     await invoke('cmd_download_file', { messageId: file.id, savePath: filePath, folderId: activeFolderId });
                     successCount++;
-                } catch (e) { }
+                } catch (e) { console.warn("Bulk download failed for file id", file.id, e) }
             }
             toast.success(`Downloaded ${successCount} files.`);
             setSelectedIds([]);
