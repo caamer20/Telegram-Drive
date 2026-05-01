@@ -1,7 +1,7 @@
+use grammers_client::types::{LoginToken, PasswordToken};
+use grammers_client::Client;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use grammers_client::{Client};
-use grammers_client::types::{LoginToken, PasswordToken};
 
 /// Tracks the lifecycle of the Telegram connection
 /// 
@@ -24,14 +24,14 @@ pub struct TelegramState {
 
 pub mod auth;
 pub mod fs;
-pub mod preview;
-pub mod utils;
 pub mod network;
+pub mod preview;
 pub mod streaming;
+pub mod utils;
 
 pub use auth::*;
 pub use fs::*;
-pub use preview::*;
-pub use utils::*;
 pub use network::*;
+pub use preview::*;
 pub use streaming::*;
+pub use utils::*;

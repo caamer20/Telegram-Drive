@@ -1,14 +1,15 @@
 pub mod models;
 
-pub mod commands;
 pub mod bandwidth;
+pub mod commands;
+pub mod google_drive;
 
+use commands::streaming::StreamToken;
+use commands::TelegramState;
+use rand::Rng;
+use std::sync::Arc;
 use tauri::Manager;
 use tokio::sync::Mutex;
-use std::sync::Arc;
-use commands::TelegramState;
-use commands::streaming::StreamToken;
-use rand::Rng;
 
 pub mod server;
 
@@ -55,7 +56,7 @@ pub fn run() {
             app.manage(bandwidth::BandwidthManager::new(app.handle()));
             app.manage(StreamToken(stream_token.clone()));
             app.manage(ActixServerHandle(server_handle_for_setup.clone()));
-            
+
             // Start Streaming Server on dedicated thread (Actix needs its own runtime)
             let state = Arc::new(app.state::<TelegramState>().inner().clone());
             let token_for_server = stream_token.clone();
@@ -74,7 +75,7 @@ pub fn run() {
                     }
                 });
             });
-            
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -100,6 +101,12 @@ pub fn run() {
             commands::cmd_clean_cache,
             commands::cmd_get_thumbnail,
             commands::cmd_get_stream_token,
+            google_drive::cmd_gd_auth_url,
+            google_drive::cmd_gd_exchange_token,
+            google_drive::cmd_gd_refresh_token,
+            google_drive::cmd_gd_wait_for_auth_code,
+            google_drive::cmd_gd_list_files,
+            google_drive::cmd_gd_import_files,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

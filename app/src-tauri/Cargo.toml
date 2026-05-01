@@ -43,4 +43,8 @@ async-stream = "0.3"
 actix-rt = "2"
 tauri-plugin-process = "2.3.1"
 rand = "0.8"
+reqwest = { version = "0.11", features = ["json", "stream"] }
+tokio-util = { version = "0.7.10", features = ["io"] }
+tempfile = "3.3.0"
+urlencoding = "2.1.3"
 
