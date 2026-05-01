@@ -79,6 +79,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::cmd_auth_request_code,
+            commands::cmd_auth_restore_session,
             commands::cmd_auth_sign_in,
             commands::cmd_auth_check_password,
             commands::cmd_get_files,

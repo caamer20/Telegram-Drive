@@ -38,6 +38,13 @@ export function useTelegramConnection(onLogoutParent: () => void) {
                 const savedActiveFolderId = await _store.get<number | null>('activeFolderId');
                 if (savedActiveFolderId !== undefined) setActiveFolderId(savedActiveFolderId);
 
+                const existingConnection = await invoke<boolean>('cmd_check_connection').catch(() => false);
+                if (existingConnection) {
+                    setIsConnected(true);
+                    queryClient.invalidateQueries({ queryKey: ['files'] });
+                    return;
+                }
+
                 const apiIdStr = await _store.get<string>('api_id');
                 if (apiIdStr) {
                     try {

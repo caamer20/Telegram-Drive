@@ -114,6 +114,36 @@ pub async fn cmd_connect(
 }
 
 #[tauri::command]
+pub async fn cmd_auth_restore_session(
+    app_handle: tauri::AppHandle,
+    state: State<'_, TelegramState>,
+    api_id: i32,
+) -> Result<AuthResult, String> {
+    *state.api_id.lock().await = Some(api_id);
+    let client = ensure_client_initialized(&app_handle, &state, api_id).await?;
+
+    match client.is_authorized().await {
+        Ok(true) => {
+            log::info!("Restored authorized Telegram session.");
+            Ok(AuthResult {
+                success: true,
+                next_step: Some("dashboard".to_string()),
+                error: None,
+            })
+        }
+        Ok(false) => {
+            log::info!("Saved Telegram session is not authorized.");
+            Ok(AuthResult {
+                success: false,
+                next_step: Some("phone".to_string()),
+                error: None,
+            })
+        }
+        Err(e) => Err(format!("Failed to restore Telegram session: {}", e)),
+    }
+}
+
+#[tauri::command]
 pub async fn cmd_check_connection(
     app_handle: tauri::AppHandle,
     state: State<'_, TelegramState>,

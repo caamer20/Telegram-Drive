@@ -6,7 +6,7 @@ import { load } from '@tauri-apps/plugin-store';
 import { useTheme } from '../context/ThemeContext';
 import { open } from '@tauri-apps/plugin-shell';
 
-type Step = "setup" | "phone" | "code" | "password";
+type Step = "checking" | "setup" | "phone" | "code" | "password";
 
 function AuthThemeToggle() {
     const { theme, toggleTheme } = useTheme();
@@ -45,11 +45,12 @@ export function AuthWizard({ onLogin }: { onLogin: () => void }) {
         )
     }
 
-    const [step, setStep] = useState<Step>("setup");
+    const [step, setStep] = useState<Step>("checking");
     const [loading, setLoading] = useState(false);
 
     const [apiId, setApiId] = useState("");
     const [apiHash, setApiHash] = useState("");
+    const [rememberLogin, setRememberLogin] = useState(true);
 
     const [phone, setPhone] = useState("");
     const [code, setCode] = useState("");
@@ -77,23 +78,49 @@ export function AuthWizard({ onLogin }: { onLogin: () => void }) {
                 const store = await load('config.json');
                 const savedId = await store.get<string>('api_id');
                 const savedHash = await store.get<string>('api_hash');
+                const savedRemember = await store.get<boolean>('remember_login');
+                const shouldRemember = savedRemember !== false;
+                setRememberLogin(shouldRemember);
 
-                if (savedId && savedHash) {
+                if (savedId) {
                     setApiId(savedId);
-                    setApiHash(savedHash);
+                    if (savedHash) setApiHash(savedHash);
+                    if (shouldRemember) {
+                        const idInt = parseInt(savedId, 10);
+                        if (!isNaN(idInt)) {
+                            try {
+                                const res = await invoke<{ success: boolean; next_step?: string }>("cmd_auth_restore_session", { apiId: idInt });
+                                if (res.success) {
+                                    onLogin();
+                                    return;
+                                }
+                            } catch (err) {
+                                setError(`Could not restore saved Telegram session: ${String(err)}`);
+                            }
+                        }
+                    }
+                    setStep(savedHash ? "phone" : "setup");
+                    return;
                 }
+
+                setStep("setup");
             } catch {
-                // config not found, starting fresh
+                setStep("setup");
             }
         };
         initStore();
-    }, []);
+    }, [onLogin]);
 
     const saveCredentials = async () => {
         try {
             const store = await load('config.json');
-            await store.set('api_id', apiId);
-            await store.set('api_hash', apiHash);
+            await store.set('remember_login', rememberLogin);
+            if (rememberLogin) {
+                await store.set('api_id', apiId);
+            } else {
+                await store.delete('api_id');
+            }
+            await store.delete('api_hash');
             await store.save();
         } catch {
             // store write failure, non-critical
@@ -122,6 +149,7 @@ export function AuthWizard({ onLogin }: { onLogin: () => void }) {
         setLoading(true);
         setError(null);
         try {
+            await saveCredentials();
             const idInt = parseInt(apiId, 10);
             if (isNaN(idInt)) throw new Error("API ID must be a number");
 
@@ -156,6 +184,7 @@ export function AuthWizard({ onLogin }: { onLogin: () => void }) {
         try {
             const res = await invoke<{ success: boolean; next_step?: string }>("cmd_auth_sign_in", { code });
             if (res.success) {
+                await saveCredentials();
                 onLogin();
             } else if (res.next_step === "password") {
                 setStep("password");
@@ -176,6 +205,7 @@ export function AuthWizard({ onLogin }: { onLogin: () => void }) {
         try {
             const res = await invoke<{ success: boolean; next_step?: string }>("cmd_auth_check_password", { password });
             if (res.success) {
+                await saveCredentials();
                 onLogin();
             } else {
                 setError("Password verification failed.");
@@ -231,6 +261,23 @@ export function AuthWizard({ onLogin }: { onLogin: () => void }) {
                         </motion.div>
                     ) : (
                         <>
+                            {step === "checking" && (
+                                <motion.div
+                                    key="checking"
+                                    initial={{ opacity: 0 }}
+                                    animate={{ opacity: 1 }}
+                                    exit={{ opacity: 0 }}
+                                    className="text-center space-y-6"
+                                >
+                                    <div className="w-16 h-16 bg-blue-500/20 rounded-full flex items-center justify-center mx-auto">
+                                        <div className="w-8 h-8 border-4 border-blue-400 border-t-transparent rounded-full animate-spin" />
+                                    </div>
+                                    <div>
+                                        <h2 className="text-xl font-bold text-white mb-2">Checking Saved Session</h2>
+                                        <p className="text-sm text-gray-400">Looking for an existing Telegram login on this computer.</p>
+                                    </div>
+                                </motion.div>
+                            )}
 
 
                             {step === "setup" && (
@@ -269,6 +316,17 @@ export function AuthWizard({ onLogin }: { onLogin: () => void }) {
                                                 />
                                             </div>
                                         </div>
+                                        <label className="flex items-start gap-3 rounded-xl border border-white/10 bg-white/5 p-3 text-sm text-white/80">
+                                            <input
+                                                type="checkbox"
+                                                checked={rememberLogin}
+                                                onChange={(e) => setRememberLogin(e.target.checked)}
+                                                className="mt-0.5 h-4 w-4 rounded border-white/20 bg-transparent accent-blue-500"
+                                            />
+                                            <span>
+                                                <span className="block font-medium text-white">Keep me logged in on this device</span>
+                                            </span>
+                                        </label>
                                     </div>
 
                                     <button
@@ -321,6 +379,17 @@ export function AuthWizard({ onLogin }: { onLogin: () => void }) {
                                                 className="w-full glass-input rounded-xl pl-12 pr-4 py-4 text-white placeholder-gray-600 focus:outline-none focus:border-blue-500 transition-all text-lg tracking-wide"
                                             />
                                         </div>
+                                        <label className="flex items-start gap-3 rounded-xl border border-white/10 bg-white/5 p-3 text-sm text-white/80">
+                                            <input
+                                                type="checkbox"
+                                                checked={rememberLogin}
+                                                onChange={(e) => setRememberLogin(e.target.checked)}
+                                                className="mt-0.5 h-4 w-4 rounded border-white/20 bg-transparent accent-blue-500"
+                                            />
+                                            <span>
+                                                <span className="block font-medium text-white">Keep me logged in on this device</span>
+                                            </span>
+                                        </label>
                                     </div>
 
                                     <div className="flex flex-col gap-3">
