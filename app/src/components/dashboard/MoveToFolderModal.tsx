@@ -6,9 +6,10 @@ interface MoveToFolderModalProps {
     onClose: () => void;
     onSelect: (id: number | null) => void;
     activeFolderId: number | null;
+    rootLabel?: string;
 }
 
-export function MoveToFolderModal({ folders, onClose, onSelect, activeFolderId }: MoveToFolderModalProps) {
+export function MoveToFolderModal({ folders, onClose, onSelect, activeFolderId, rootLabel = "Saved Messages" }: MoveToFolderModalProps) {
     return (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={onClose}>
             <div className="bg-telegram-surface border border-telegram-border rounded-xl w-80 shadow-2xl overflow-hidden flex flex-col max-h-[80vh]" onClick={e => e.stopPropagation()}>
@@ -25,7 +26,7 @@ export function MoveToFolderModal({ folders, onClose, onSelect, activeFolderId }
                             <div className="w-8 h-8 rounded bg-telegram-primary/20 flex items-center justify-center text-telegram-primary">
                                 <HardDrive className="w-4 h-4" />
                             </div>
-                            <span className="font-medium">Saved Messages</span>
+                            <span className="font-medium">{rootLabel}</span>
                         </button>
                     )}
 

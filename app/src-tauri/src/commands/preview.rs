@@ -162,13 +162,15 @@ pub async fn cmd_get_preview(
 pub async fn cmd_clean_cache(
     app_handle: tauri::AppHandle,
 ) -> Result<(), String> {
-    let cache_dir = app_handle
+    let base_cache_dir = app_handle
         .path()
         .app_cache_dir()
-        .map_err(|e: tauri::Error| e.to_string())?
-        .join("previews");
-    if cache_dir.exists() {
-        let _ = std::fs::remove_dir_all(cache_dir);
+        .map_err(|e: tauri::Error| e.to_string())?;
+    for child in ["previews", "vault"] {
+        let cache_dir = base_cache_dir.join(child);
+        if cache_dir.exists() {
+            let _ = std::fs::remove_dir_all(cache_dir);
+        }
     }
     Ok(())
 }

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { X, ChevronLeft, ChevronRight } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { TelegramFile } from '../../types';
+import { DriveMode } from '../../types';
 import { isVideoFile, isAudioFile } from '../../utils';
 
 interface MediaPlayerProps {
@@ -12,9 +13,10 @@ interface MediaPlayerProps {
     currentIndex?: number;
     totalItems?: number;
     activeFolderId: number | null;
+    driveMode: DriveMode;
 }
 
-export function MediaPlayer({ file, onClose, onNext, onPrev, currentIndex, totalItems, activeFolderId }: MediaPlayerProps) {
+export function MediaPlayer({ file, onClose, onNext, onPrev, currentIndex, totalItems, activeFolderId, driveMode }: MediaPlayerProps) {
     const [streamToken, setStreamToken] = useState<string | null>(null);
 
     useEffect(() => {
@@ -23,7 +25,7 @@ export function MediaPlayer({ file, onClose, onNext, onPrev, currentIndex, total
 
     const folderIdParam = activeFolderId !== null ? activeFolderId.toString() : 'home';
     const streamUrl = streamToken
-        ? `http://localhost:14200/stream/${folderIdParam}/${file.id}?token=${streamToken}`
+        ? `http://localhost:14200/stream/${folderIdParam}/${file.id}?token=${streamToken}${driveMode === 'vault' ? '&mode=vault' : ''}`
         : null;
 
     const isVideo = isVideoFile(file.name);

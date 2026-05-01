@@ -5,6 +5,7 @@ import { invoke } from '@tauri-apps/api/core';
 // which isn't available in Tauri's WebKit WebView
 import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { TelegramFile } from '../../types';
+import { DriveMode } from '../../types';
 
 // Use Vite's ?url suffix to get a properly bundled asset URL for the worker
 import workerUrl from 'pdfjs-dist/legacy/build/pdf.worker.mjs?url';
@@ -18,9 +19,10 @@ interface PdfViewerProps {
     currentIndex?: number;
     totalItems?: number;
     activeFolderId: number | null;
+    driveMode: DriveMode;
 }
 
-export function PdfViewer({ file, onClose, onNext, onPrev, currentIndex, totalItems, activeFolderId }: PdfViewerProps) {
+export function PdfViewer({ file, onClose, onNext, onPrev, currentIndex, totalItems, activeFolderId, driveMode }: PdfViewerProps) {
     const [streamToken, setStreamToken] = useState<string | null>(null);
     const [pdf, setPdf] = useState<pdfjsLib.PDFDocumentProxy | null>(null);
     const [numPages, setNumPages] = useState<number>(0);
@@ -49,7 +51,7 @@ export function PdfViewer({ file, onClose, onNext, onPrev, currentIndex, totalIt
         setNumPages(0);
 
         const folderIdParam = activeFolderId !== null ? activeFolderId.toString() : 'home';
-        const streamUrl = `http://localhost:14200/stream/${folderIdParam}/${file.id}?token=${streamToken}`;
+        const streamUrl = `http://localhost:14200/stream/${folderIdParam}/${file.id}?token=${streamToken}${driveMode === 'vault' ? '&mode=vault' : ''}`;
 
         const loadingTask = pdfjsLib.getDocument(streamUrl);
 
@@ -80,7 +82,7 @@ export function PdfViewer({ file, onClose, onNext, onPrev, currentIndex, totalIt
             cancelled = true;
             loadingTask.destroy();
         };
-    }, [streamToken, activeFolderId, file.id]);
+    }, [streamToken, activeFolderId, file.id, driveMode]);
 
     // Cleanup PDF document on unmount
     useEffect(() => {

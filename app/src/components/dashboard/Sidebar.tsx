@@ -16,11 +16,12 @@ interface SidebarProps {
     onSync: () => void;
     onLogout: () => void;
     bandwidth: BandwidthStats | null;
+    rootLabel?: string;
 }
 
 export function Sidebar({
     folders, activeFolderId, setActiveFolderId, onDrop, onDelete, onCreate,
-    isSyncing, isConnected, onSync, onLogout, bandwidth
+    isSyncing, isConnected, onSync, onLogout, bandwidth, rootLabel = "Saved Messages"
 }: SidebarProps) {
     const [showNewFolderInput, setShowNewFolderInput] = useState(false);
     const [newFolderName, setNewFolderName] = useState("");
@@ -47,7 +48,7 @@ export function Sidebar({
             <nav className="flex-1 px-2 py-4 space-y-1 overflow-y-auto min-h-0">
                 <SidebarItem
                     icon={HardDrive}
-                    label="Saved Messages"
+                    label={rootLabel}
                     active={activeFolderId === null}
                     onClick={() => setActiveFolderId(null)}
                     onDrop={(e: React.DragEvent) => onDrop(e, null)}

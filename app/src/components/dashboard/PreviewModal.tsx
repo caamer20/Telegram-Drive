@@ -3,6 +3,7 @@ import { X, File, ChevronLeft, ChevronRight } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { TelegramFile } from '../../types';
+import { DriveMode } from '../../types';
 import { isImageFile } from '../../utils';
 
 const PREVIEW_CACHE_TTL_MS = 5 * 60 * 1000;
@@ -62,9 +63,10 @@ interface PreviewModalProps {
     nextFile?: TelegramFile | null;
     prevFile?: TelegramFile | null;
     activeFolderId: number | null;
+    driveMode: DriveMode;
 }
 
-export function PreviewModal({ file, onClose, onNext, onPrev, currentIndex, totalItems, nextFile, prevFile, activeFolderId }: PreviewModalProps) {
+export function PreviewModal({ file, onClose, onNext, onPrev, currentIndex, totalItems, nextFile, prevFile, activeFolderId, driveMode }: PreviewModalProps) {
     const [src, setSrc] = useState<string | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
@@ -95,7 +97,7 @@ export function PreviewModal({ file, onClose, onNext, onPrev, currentIndex, tota
             setLoading(true);
             setError(null);
             try {
-                const path = await invoke<string>('cmd_get_preview', {
+                const path = await invoke<string>(driveMode === 'vault' ? 'cmd_vault_get_preview' : 'cmd_get_preview', {
                     messageId: file.id,
                     folderId: activeFolderId
                 });
@@ -122,7 +124,7 @@ export function PreviewModal({ file, onClose, onNext, onPrev, currentIndex, tota
             }
         };
         load();
-    }, [file, activeFolderId, reloadNonce]);
+    }, [file, activeFolderId, reloadNonce, driveMode]);
 
     useEffect(() => {
         const candidates = [nextFile, prevFile].filter((f): f is TelegramFile => !!f && isSafeToPrefetch(f.name));
@@ -132,7 +134,7 @@ export function PreviewModal({ file, onClose, onNext, onPrev, currentIndex, tota
             if (getCachedPreview(key) || pendingPrefetch.has(key)) return;
 
             pendingPrefetch.add(key);
-            invoke<string>('cmd_get_preview', {
+            invoke<string>(driveMode === 'vault' ? 'cmd_vault_get_preview' : 'cmd_get_preview', {
                 messageId: candidate.id,
                 folderId: activeFolderId
             }).then((path) => {
@@ -145,7 +147,7 @@ export function PreviewModal({ file, onClose, onNext, onPrev, currentIndex, tota
                 pendingPrefetch.delete(key);
             });
         });
-    }, [nextFile, prevFile, activeFolderId]);
+    }, [nextFile, prevFile, activeFolderId, driveMode]);
 
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {

@@ -1,14 +1,15 @@
 pub mod models;
 
-pub mod commands;
 pub mod bandwidth;
+pub mod commands;
+pub mod vault;
 
+use commands::streaming::StreamToken;
+use commands::TelegramState;
+use rand::Rng;
+use std::sync::Arc;
 use tauri::Manager;
 use tokio::sync::Mutex;
-use std::sync::Arc;
-use commands::TelegramState;
-use commands::streaming::StreamToken;
-use rand::Rng;
 
 pub mod server;
 
@@ -28,6 +29,7 @@ pub fn run() {
     env_logger::init();
 
     let stream_token = generate_stream_token();
+    let vault_runtime = vault::VaultRuntime::default();
 
     // Shared handle for stopping the Actix server during shutdown
     let server_handle: Arc<std::sync::Mutex<Option<actix_web::dev::ServerHandle>>> =
@@ -53,17 +55,32 @@ pub fn run() {
                 runner_count: Arc::new(std::sync::atomic::AtomicU32::new(0)),
             });
             app.manage(bandwidth::BandwidthManager::new(app.handle()));
+            app.manage(vault_runtime.clone());
             app.manage(StreamToken(stream_token.clone()));
             app.manage(ActixServerHandle(server_handle_for_setup.clone()));
-            
+
             // Start Streaming Server on dedicated thread (Actix needs its own runtime)
             let state = Arc::new(app.state::<TelegramState>().inner().clone());
+            let vault_runtime_for_server = vault_runtime.clone();
+            let cache_dir_for_server = app
+                .path()
+                .app_cache_dir()
+                .map_err(|e| format!("Failed to resolve app cache directory: {}", e))?
+                .join("vault");
             let token_for_server = stream_token.clone();
             let handle_for_thread = server_handle_for_setup.clone();
             std::thread::spawn(move || {
                 let sys = actix_rt::System::new();
                 sys.block_on(async move {
-                    match server::start_server(state, 14200, token_for_server).await {
+                    match server::start_server(
+                        state,
+                        vault_runtime_for_server,
+                        cache_dir_for_server,
+                        14200,
+                        token_for_server,
+                    )
+                    .await
+                    {
                         Ok(server) => {
                             // Store the handle so RunEvent::Exit can stop it
                             *handle_for_thread.lock().unwrap() = Some(server.handle());
@@ -74,7 +91,7 @@ pub fn run() {
                     }
                 });
             });
-            
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -100,6 +117,21 @@ pub fn run() {
             commands::cmd_clean_cache,
             commands::cmd_get_thumbnail,
             commands::cmd_get_stream_token,
+            commands::cmd_vault_status,
+            commands::cmd_vault_create,
+            commands::cmd_vault_unlock,
+            commands::cmd_vault_lock,
+            commands::cmd_vault_get_files,
+            commands::cmd_vault_upload_file,
+            commands::cmd_vault_delete_file,
+            commands::cmd_vault_download_file,
+            commands::cmd_vault_move_files,
+            commands::cmd_vault_create_folder,
+            commands::cmd_vault_delete_folder,
+            commands::cmd_vault_scan_folders,
+            commands::cmd_vault_search_global,
+            commands::cmd_vault_get_preview,
+            commands::cmd_vault_get_thumbnail,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

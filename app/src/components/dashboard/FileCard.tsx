@@ -2,7 +2,7 @@ import { motion } from 'framer-motion';
 import { useState, useEffect } from 'react';
 import { Folder, Eye, Trash2 } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
-import { TelegramFile } from '../../types';
+import { DriveMode, TelegramFile } from '../../types';
 import { FileTypeIcon } from '../FileTypeIcon';
 
 interface FileCardProps {
@@ -17,6 +17,7 @@ interface FileCardProps {
     onDragStart?: (fileId: number) => void;
     onDragEnd?: () => void;
     activeFolderId?: number | null;
+    driveMode: DriveMode;
     height?: number;
 }
 
@@ -26,7 +27,7 @@ function isImageFile(filename: string): boolean {
     return ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'].includes(ext);
 }
 
-export function FileCard({ file, onDelete, onDownload, onPreview, isSelected, onClick, onContextMenu, onDrop, onDragStart, onDragEnd, activeFolderId, height }: FileCardProps) {
+export function FileCard({ file, onDelete, onDownload, onPreview, isSelected, onClick, onContextMenu, onDrop, onDragStart, onDragEnd, activeFolderId, driveMode, height }: FileCardProps) {
     const isFolder = file.type === 'folder';
     const [isDragOver, setIsDragOver] = useState(false);
     const [thumbnail, setThumbnail] = useState<string | null>(null);
@@ -39,7 +40,7 @@ export function FileCard({ file, onDelete, onDownload, onPreview, isSelected, on
         let cancelled = false;
         setThumbnailLoading(true);
 
-        invoke<string>('cmd_get_thumbnail', {
+        invoke<string>(driveMode === 'vault' ? 'cmd_vault_get_thumbnail' : 'cmd_get_thumbnail', {
             messageId: file.id,
             folderId: activeFolderId
         }).then((result) => {
@@ -53,7 +54,7 @@ export function FileCard({ file, onDelete, onDownload, onPreview, isSelected, on
         });
 
         return () => { cancelled = true; };
-    }, [file.id, file.name, activeFolderId, isFolder]);
+    }, [file.id, file.name, activeFolderId, driveMode, isFolder]);
 
     return (
         <div

@@ -4,6 +4,7 @@ import { save, open } from '@tauri-apps/plugin-dialog';
 import { listen, UnlistenFn } from '@tauri-apps/api/event';
 import { toast } from 'sonner';
 import { DownloadItem, TelegramFile } from '../types';
+import { DriveMode } from '../types';
 import type { Store } from '@tauri-apps/plugin-store';
 
 interface ProgressPayload {
@@ -11,7 +12,7 @@ interface ProgressPayload {
     percent: number;
 }
 
-export function useFileDownload(store: Store | null) {
+export function useFileDownload(store: Store | null, driveMode: DriveMode) {
     const [downloadQueue, setDownloadQueue] = useState<DownloadItem[]>([]);
     const [processing, setProcessing] = useState(false);
     const [initialized, setInitialized] = useState(false);
@@ -31,7 +32,8 @@ export function useFileDownload(store: Store | null) {
     // Load saved queue on mount
     useEffect(() => {
         if (!store || initialized) return;
-        store.get<DownloadItem[]>('downloadQueue').then((saved) => {
+        const queueKey = driveMode === 'vault' ? 'vaultDownloadQueue' : 'downloadQueue';
+        store.get<DownloadItem[]>(queueKey).then((saved) => {
             if (saved && saved.length > 0) {
                 const pending = saved.filter(i => i.status === 'pending');
                 if (pending.length > 0) {
@@ -41,14 +43,15 @@ export function useFileDownload(store: Store | null) {
             }
             setInitialized(true);
         });
-    }, [store, initialized]);
+    }, [store, initialized, driveMode]);
 
     // Save queue when it changes (only pending items)
     useEffect(() => {
         if (!store || !initialized) return;
         const pending = downloadQueue.filter(i => i.status === 'pending');
-        store.set('downloadQueue', pending).then(() => store.save());
-    }, [store, downloadQueue, initialized]);
+        const queueKey = driveMode === 'vault' ? 'vaultDownloadQueue' : 'downloadQueue';
+        store.set(queueKey, pending).then(() => store.save());
+    }, [store, downloadQueue, initialized, driveMode]);
 
     // Queue Processor
     useEffect(() => {
@@ -71,7 +74,7 @@ export function useFileDownload(store: Store | null) {
                 return;
             }
 
-            await invoke('cmd_download_file', {
+            await invoke(driveMode === 'vault' ? 'cmd_vault_download_file' : 'cmd_download_file', {
                 messageId: item.messageId,
                 savePath,
                 folderId: item.folderId,

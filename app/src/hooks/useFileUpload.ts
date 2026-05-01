@@ -5,6 +5,7 @@ import { listen, UnlistenFn } from '@tauri-apps/api/event';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { QueueItem } from '../types';
+import { DriveMode } from '../types';
 import { useFileDrop } from './useFileDrop';
 import type { Store } from '@tauri-apps/plugin-store';
 
@@ -13,7 +14,7 @@ interface ProgressPayload {
     percent: number;
 }
 
-export function useFileUpload(activeFolderId: number | null, store: Store | null) {
+export function useFileUpload(activeFolderId: number | null, store: Store | null, driveMode: DriveMode) {
     const queryClient = useQueryClient();
     const [uploadQueue, setUploadQueue] = useState<QueueItem[]>([]);
     const [processing, setProcessing] = useState(false);
@@ -33,7 +34,8 @@ export function useFileUpload(activeFolderId: number | null, store: Store | null
 
     useEffect(() => {
         if (!store || initialized) return;
-        store.get<QueueItem[]>('uploadQueue').then((saved) => {
+        const queueKey = driveMode === 'vault' ? 'vaultUploadQueue' : 'uploadQueue';
+        store.get<QueueItem[]>(queueKey).then((saved) => {
             if (saved && saved.length > 0) {
                 const pending = saved.filter(i => i.status === 'pending');
                 if (pending.length > 0) {
@@ -43,13 +45,14 @@ export function useFileUpload(activeFolderId: number | null, store: Store | null
             }
             setInitialized(true);
         });
-    }, [store, initialized]);
+    }, [store, initialized, driveMode]);
 
     useEffect(() => {
         if (!store || !initialized) return;
         const pending = uploadQueue.filter(i => i.status === 'pending');
-        store.set('uploadQueue', pending).then(() => store.save());
-    }, [store, uploadQueue, initialized]);
+        const queueKey = driveMode === 'vault' ? 'vaultUploadQueue' : 'uploadQueue';
+        store.set(queueKey, pending).then(() => store.save());
+    }, [store, uploadQueue, initialized, driveMode]);
 
     useEffect(() => {
         if (processing) return;
@@ -63,13 +66,17 @@ export function useFileUpload(activeFolderId: number | null, store: Store | null
         setProcessing(true);
         setUploadQueue(q => q.map(i => i.id === item.id ? { ...i, status: 'uploading', progress: 0 } : i));
         try {
-            await invoke('cmd_upload_file', { path: item.path, folderId: item.folderId, transferId: item.id });
+            await invoke(driveMode === 'vault' ? 'cmd_vault_upload_file' : 'cmd_upload_file', {
+                path: item.path,
+                folderId: item.folderId,
+                transferId: item.id
+            });
             // Check if cancelled during upload
             if (cancelledRef.current.has(item.id)) {
                 cancelledRef.current.delete(item.id);
             } else {
                 setUploadQueue(q => q.map(i => i.id === item.id ? { ...i, status: 'success', progress: 100 } : i));
-                queryClient.invalidateQueries({ queryKey: ['files', item.folderId] });
+                queryClient.invalidateQueries({ queryKey: ['files', driveMode, item.folderId] });
             }
         } catch (e) {
             if (!cancelledRef.current.has(item.id)) {

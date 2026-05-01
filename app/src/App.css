@@ -92,6 +92,14 @@ body,
   color: #1e40af;
 }
 
+:root.light .auth-glass .storage-mode-title {
+  color: #111827;
+}
+
+:root.light .auth-glass .storage-mode-copy {
+  color: #374151;
+}
+
 :root.light .auth-glass .placeholder-gray-600::placeholder {
   color: #9ca3af;
 }

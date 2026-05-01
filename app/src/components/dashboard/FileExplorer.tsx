@@ -3,7 +3,7 @@ import { Plus, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { FileCard } from './FileCard';
 import { EmptyState } from './EmptyState';
-import { TelegramFile } from '../../types';
+import { DriveMode, TelegramFile } from '../../types';
 import { ContextMenu } from './ContextMenu';
 import { FileListItem } from './FileListItem';
 
@@ -17,6 +17,7 @@ interface FileExplorerProps {
     viewMode: 'grid' | 'list';
     selectedIds: number[];
     activeFolderId: number | null;
+    driveMode: DriveMode;
     onFileClick: (e: React.MouseEvent, id: number) => void;
     onDelete: (id: number) => void;
     onDownload: (id: number, name: string) => void;
@@ -57,7 +58,7 @@ function useGridColumns(containerRef: React.RefObject<HTMLDivElement | null>) {
 
 export function FileExplorer({
     files, loading, error, viewMode, selectedIds, activeFolderId,
-    onFileClick, onDelete, onDownload, onPreview, onManualUpload, onSelectionClear, onDrop, onDragStart, onDragEnd
+    driveMode, onFileClick, onDelete, onDownload, onPreview, onManualUpload, onSelectionClear, onDrop, onDragStart, onDragEnd
 }: FileExplorerProps) {
     const [sortField, setSortField] = useState<SortField>('name');
     const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
@@ -252,6 +253,7 @@ export function FileExplorer({
                                                 onDragStart={onDragStart}
                                                 onDragEnd={onDragEnd}
                                                 activeFolderId={activeFolderId}
+                                                driveMode={driveMode}
                                                 height={cardHeight}
                                             />
                                         );

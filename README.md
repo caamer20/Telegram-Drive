@@ -22,8 +22,21 @@ Telegram Drive leverages the Telegram API to allow you to upload, organize, and 
 *   **Drag & Drop**: Intuitive drag-and-drop upload and file management.
 *   **Thumbnail Previews**: Inline thumbnails for images and media files.
 *   **Folder Management**: Create "Folders" (private Telegram Channels) to organize content.
+*   **Optional Encrypted Vault**: Store files in an end-to-end encrypted vault backed by a private Telegram channel.
 *   **Privacy Focused**: API keys and data stay local. No third-party servers.
 *   **Cross-Platform**: Native apps for macOS (Intel/ARM), Windows, and Linux.
+
+###  Encrypted Vault Mode
+
+Telegram Drive can also run in **Encrypted Vault** mode. After logging in, you can choose between the normal Saved Messages drive and a local-password-protected vault.
+
+Vault files are encrypted on your device before upload using a key derived from your vault password. Telegram only receives encrypted vault blobs and encrypted manifest snapshots, stored in a private channel named `TelegramVault`. File names, folder records, and file contents are kept inside the encrypted vault manifest instead of being stored as normal Telegram channel folders.
+
+Normal Drive remains the default path and keeps the existing Saved Messages/channel behavior unchanged. The first Vault Mode version stores vault configuration locally on the device where the vault was created, so fresh-device vault restore/import is not yet included. Keep your vault password safe; it is required to unlock encrypted files and cannot be recovered by the app.
+
+| Storage Mode Selection | Vault Unlock |
+|------------------------|--------------|
+| ![Storage Mode Selection](screenshots/ModeSelection.png) | ![Vault Unlock](screenshots/VaultUnlock.png) |
 
 ##  Screenshots
 

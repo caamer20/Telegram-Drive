@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { invoke } from '@tauri-apps/api/core';
 import { toast } from 'sonner';
 
-import { TelegramFile, BandwidthStats } from '../types';
+import { DriveMode, TelegramFile, BandwidthStats } from '../types';
 import { formatBytes, isMediaFile, isPdfFile } from '../utils';
 
 // Components
@@ -27,14 +27,14 @@ import { useFileUpload } from '../hooks/useFileUpload';
 import { useFileDownload } from '../hooks/useFileDownload';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
 
-export function Dashboard({ onLogout }: { onLogout: () => void }) {
+export function Dashboard({ driveMode, onLogout }: { driveMode: DriveMode; onLogout: () => void }) {
     const queryClient = useQueryClient();
 
 
     const {
         store, folders, activeFolderId, setActiveFolderId, isSyncing, isConnected,
         handleLogout, handleSyncFolders, handleCreateFolder, handleFolderDelete
-    } = useTelegramConnection(onLogout);
+    } = useTelegramConnection(driveMode, onLogout);
 
 
     const [previewFile, setPreviewFile] = useState<TelegramFile | null>(null);
@@ -72,8 +72,8 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
 
 
     const { data: allFiles = [], isLoading, error } = useQuery({
-        queryKey: ['files', activeFolderId],
-        queryFn: () => invoke<any[]>('cmd_get_files', { folderId: activeFolderId }).then(res => res.map(f => ({
+        queryKey: ['files', driveMode, activeFolderId],
+        queryFn: () => invoke<any[]>(driveMode === 'vault' ? 'cmd_vault_get_files' : 'cmd_get_files', { folderId: activeFolderId }).then(res => res.map(f => ({
             ...f,
             sizeStr: formatBytes(f.size),
             type: f.icon_type || (f.name.endsWith('/') ? 'folder' : 'file')
@@ -97,10 +97,10 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
         handleDelete, handleBulkDelete, handleBulkDownload,
         handleBulkMove, handleDownloadFolder, handleGlobalSearch
 
-    } = useFileOperations(activeFolderId, selectedIds, setSelectedIds, displayedFiles);
+    } = useFileOperations(driveMode, activeFolderId, selectedIds, setSelectedIds, displayedFiles);
 
-    const { uploadQueue, setUploadQueue, handleManualUpload, cancelAll: cancelUploads, isDragging } = useFileUpload(activeFolderId, store);
-    const { downloadQueue, queueDownload, clearFinished: clearDownloads, cancelAll: cancelDownloads } = useFileDownload(store);
+    const { uploadQueue, setUploadQueue, handleManualUpload, cancelAll: cancelUploads, isDragging } = useFileUpload(activeFolderId, store, driveMode);
+    const { downloadQueue, queueDownload, clearFinished: clearDownloads, cancelAll: cancelDownloads } = useFileDownload(store, driveMode);
 
 
     const handleSelectAll = useCallback(() => {
@@ -194,6 +194,11 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
     }
 
     const handlePreview = (file: TelegramFile, orderedFiles?: TelegramFile[]) => {
+        if (file.type === 'folder') {
+            setActiveFolderId(file.id);
+            return;
+        }
+
         const contextFiles = (orderedFiles || displayedFiles).filter((f) => f.type !== 'folder');
         const contextIndex = contextFiles.findIndex((f) => f.id === file.id);
 
@@ -297,13 +302,13 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
             try {
                 const idsToMove = selectedIds.includes(fileId) ? selectedIds : [fileId];
 
-                await invoke('cmd_move_files', {
+                await invoke(driveMode === 'vault' ? 'cmd_vault_move_files' : 'cmd_move_files', {
                     messageIds: idsToMove,
                     sourceFolderId: activeFolderId,
                     targetFolderId: targetFolderId
                 });
 
-                queryClient.invalidateQueries({ queryKey: ['files', activeFolderId] });
+                queryClient.invalidateQueries({ queryKey: ['files', driveMode, activeFolderId] });
 
                 if (selectedIds.includes(fileId)) setSelectedIds([]);
 
@@ -317,7 +322,7 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
     }
 
     const currentFolderName = activeFolderId === null
-        ? "Saved Messages"
+        ? (driveMode === 'vault' ? "TelegramVault" : "Saved Messages")
         : folders.find(f => f.id === activeFolderId)?.name || "Folder";
 
 
@@ -356,6 +361,7 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
                         onClose={() => setShowMoveModal(false)}
                         onSelect={handleBulkMove}
                         activeFolderId={activeFolderId}
+                        rootLabel={driveMode === 'vault' ? 'TelegramVault' : 'Saved Messages'}
                         key="move-modal"
                     />
                 )}
@@ -368,6 +374,7 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
                         currentIndex={previewContextIndex}
                         totalItems={previewContextFiles.length}
                         activeFolderId={activeFolderId}
+                        driveMode={driveMode}
                         key="media-player"
                     />
                 )}
@@ -380,6 +387,7 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
                         currentIndex={previewContextIndex}
                         totalItems={previewContextFiles.length}
                         activeFolderId={activeFolderId}
+                        driveMode={driveMode}
                         key="pdf-viewer"
                     />
                 )}
@@ -398,6 +406,7 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
                 onSync={handleSyncFolders}
                 onLogout={handleLogout}
                 bandwidth={bandwidth || null}
+                rootLabel={driveMode === 'vault' ? 'TelegramVault' : 'Saved Messages'}
             />
 
             <main className="flex-1 flex flex-col" onClick={(e) => { if (e.target === e.currentTarget) setSelectedIds([]); }}>
@@ -428,8 +437,16 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
                     viewMode={viewMode}
                     selectedIds={selectedIds}
                     activeFolderId={activeFolderId}
+                    driveMode={driveMode}
                     onFileClick={handleFileClick}
-                    onDelete={handleDelete}
+                    onDelete={(id) => {
+                        const item = displayedFiles.find((file) => file.id === id);
+                        if (driveMode === 'vault' && item?.type === 'folder') {
+                            handleFolderDelete(item.id, item.name);
+                        } else {
+                            handleDelete(id);
+                        }
+                    }}
                     onDownload={(id, name) => queueDownload(id, name, activeFolderId)}
                     onPreview={handlePreview}
                     onManualUpload={handleManualUpload}
@@ -451,6 +468,7 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
                     totalItems={previewContextFiles.length}
                     nextFile={previewNeighbors.nextFile}
                     prevFile={previewNeighbors.prevFile}
+                    driveMode={driveMode}
                 />
             )}
 

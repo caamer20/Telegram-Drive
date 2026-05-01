@@ -8,6 +8,8 @@ export interface TelegramFile {
     // Add other fields if backend sends them
 }
 
+export type DriveMode = 'plain' | 'vault';
+
 export interface TelegramFolder {
     id: number;
     name: string;

@@ -4,10 +4,10 @@ import { Store } from '@tauri-apps/plugin-store';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { useConfirm } from '../context/ConfirmContext';
-import { TelegramFolder } from '../types';
+import { DriveMode, TelegramFolder } from '../types';
 import { useNetworkStatus } from './useNetworkStatus';
 
-export function useTelegramConnection(onLogoutParent: () => void) {
+export function useTelegramConnection(driveMode: DriveMode, onLogoutParent: () => void) {
     const queryClient = useQueryClient();
     const { confirm } = useConfirm();
 
@@ -31,11 +31,14 @@ export function useTelegramConnection(onLogoutParent: () => void) {
                 }
                 setStore(_store);
 
-                const savedFolders = await _store.get<TelegramFolder[]>('folders');
-                if (savedFolders) setFolders(savedFolders);
+                if (driveMode === 'plain') {
+                    const savedFolders = await _store.get<TelegramFolder[]>('folders');
+                    if (savedFolders) setFolders(savedFolders);
+                }
 
 
-                const savedActiveFolderId = await _store.get<number | null>('activeFolderId');
+                const activeFolderKey = driveMode === 'vault' ? 'vaultActiveFolderId' : 'activeFolderId';
+                const savedActiveFolderId = await _store.get<number | null>(activeFolderKey);
                 if (savedActiveFolderId !== undefined) setActiveFolderId(savedActiveFolderId);
 
                 const apiIdStr = await _store.get<string>('api_id');
@@ -43,6 +46,10 @@ export function useTelegramConnection(onLogoutParent: () => void) {
                     try {
                         const apiId = parseInt(apiIdStr as string);
                         await invoke('cmd_connect', { apiId });
+                        if (driveMode === 'vault') {
+                            const vaultFolders = await invoke<TelegramFolder[]>('cmd_vault_scan_folders').catch(() => []);
+                            setFolders(vaultFolders);
+                        }
                         setIsConnected(true);
                         queryClient.invalidateQueries({ queryKey: ['files'] });
                     } catch {
@@ -66,7 +73,7 @@ export function useTelegramConnection(onLogoutParent: () => void) {
             }
         };
         initStore();
-    }, [queryClient, onLogoutParent]);
+    }, [queryClient, onLogoutParent, driveMode]);
 
 
     useEffect(() => {
@@ -83,10 +90,13 @@ export function useTelegramConnection(onLogoutParent: () => void) {
         setIsConnected(false);
         try {
             await invoke('cmd_clean_cache').catch(() => { });
+            await invoke('cmd_vault_lock').catch(() => { });
             if (store) {
                 await store.delete('api_id');
                 await store.delete('api_hash');
-                await store.delete('folders');
+                if (driveMode === 'plain') {
+                    await store.delete('folders');
+                }
                 await store.save();
             }
         } catch {
@@ -103,10 +113,13 @@ export function useTelegramConnection(onLogoutParent: () => void) {
         try {
             await invoke('cmd_logout');
             await invoke('cmd_clean_cache');
+            await invoke('cmd_vault_lock').catch(() => { });
             if (store) {
                 await store.delete('api_id');
                 await store.delete('api_hash');
-                await store.delete('folders');
+                if (driveMode === 'plain') {
+                    await store.delete('folders');
+                }
                 await store.save();
             }
             onLogoutParent();
@@ -120,7 +133,9 @@ export function useTelegramConnection(onLogoutParent: () => void) {
         if (!store) return;
         setIsSyncing(true);
         try {
-            const foundFolders = await invoke<TelegramFolder[]>('cmd_scan_folders');
+            const foundFolders = await invoke<TelegramFolder[]>(
+                driveMode === 'vault' ? 'cmd_vault_scan_folders' : 'cmd_scan_folders'
+            );
             const merged = [...folders];
             let added = 0;
             for (const f of foundFolders) {
@@ -131,8 +146,10 @@ export function useTelegramConnection(onLogoutParent: () => void) {
             }
             if (added > 0) {
                 setFolders(merged);
-                await store.set('folders', merged);
-                await store.save();
+                if (driveMode === 'plain') {
+                    await store.set('folders', merged);
+                    await store.save();
+                }
                 toast.success(`Scan complete. Found ${added} new folders.`);
             } else {
                 toast.info("Scan complete. No new folders found.");
@@ -147,11 +164,16 @@ export function useTelegramConnection(onLogoutParent: () => void) {
     const handleCreateFolder = async (name: string) => {
         if (!store) return;
         try {
-            const newFolder = await invoke<TelegramFolder>('cmd_create_folder', { name });
+            const newFolder = await invoke<TelegramFolder>(
+                driveMode === 'vault' ? 'cmd_vault_create_folder' : 'cmd_create_folder',
+                { name }
+            );
             const updated = [...folders, newFolder];
             setFolders(updated);
-            await store.set('folders', updated);
-            await store.save();
+            if (driveMode === 'plain') {
+                await store.set('folders', updated);
+                await store.save();
+            }
             toast.success(`Folder "${name}" created.`);
         } catch (e) {
             toast.error("Failed to create folder: " + e);
@@ -162,16 +184,18 @@ export function useTelegramConnection(onLogoutParent: () => void) {
     const handleFolderDelete = async (folderId: number, folderName: string) => {
         if (!await confirm({
             title: "Delete Folder",
-            message: `Are you sure you want to delete "${folderName}"?\nThis will delete the channel on Telegram.`,
+            message: driveMode === 'vault'
+                ? `Are you sure you want to delete "${folderName}"?\nThe folder must be empty.`
+                : `Are you sure you want to delete "${folderName}"?\nThis will delete the channel on Telegram.`,
             confirmText: "Delete",
             variant: 'danger'
         })) return;
 
         try {
-            await invoke('cmd_delete_folder', { folderId });
+            await invoke(driveMode === 'vault' ? 'cmd_vault_delete_folder' : 'cmd_delete_folder', { folderId });
             const updated = folders.filter(f => f.id !== folderId);
             setFolders(updated);
-            if (store) {
+            if (store && driveMode === 'plain') {
                 await store.set('folders', updated);
                 await store.save();
             }
@@ -188,7 +212,7 @@ export function useTelegramConnection(onLogoutParent: () => void) {
                 })) {
                     const updated = folders.filter(f => f.id !== folderId);
                     setFolders(updated);
-                    if (store) {
+                    if (store && driveMode === 'plain') {
                         await store.set('folders', updated);
                         await store.save();
                     }
@@ -204,7 +228,7 @@ export function useTelegramConnection(onLogoutParent: () => void) {
     const handleSetActiveFolderId = async (id: number | null) => {
         setActiveFolderId(id);
         if (store) {
-            await store.set('activeFolderId', id);
+            await store.set(driveMode === 'vault' ? 'vaultActiveFolderId' : 'activeFolderId', id);
             await store.save();
         }
     };
