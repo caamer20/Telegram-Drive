@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.1.8] - 2026-05-02
+
+### Fix
+
+- **PDF Viewer: Resolved streaming port conflict** — Fixed critical bug where PDF files failed to load with "Failed to load PDF document" error. The Actix-web streaming server was attempting to bind to port 14200, which was already in use by the Vite development server. Reassigned streaming server to port 14201 to eliminate the conflict. Updated PdfViewer.tsx to request streams from the new port. This fix ensures PDFs stream correctly without port binding issues.
+- **Enhanced streaming diagnostics** — Added comprehensive debug logging throughout the streaming pipeline (`stream_media()` function) including token validation, peer resolution, message fetching, and chunk streaming progress. Logs now clearly indicate success/failure at each step, making it much easier to diagnose streaming issues in the future.
+
+---
+
 ## [1.1.7] - 2026-05-01
 
 ### Feature
