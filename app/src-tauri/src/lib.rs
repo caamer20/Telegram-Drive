@@ -63,7 +63,7 @@ pub fn run() {
             std::thread::spawn(move || {
                 let sys = actix_rt::System::new();
                 sys.block_on(async move {
-                    match server::start_server(state, 14200, token_for_server).await {
+                    match server::start_server(state, 14201, token_for_server).await {
                         Ok(server) => {
                             // Store the handle so RunEvent::Exit can stop it
                             *handle_for_thread.lock().unwrap() = Some(server.handle());

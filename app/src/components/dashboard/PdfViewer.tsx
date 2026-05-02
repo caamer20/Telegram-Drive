@@ -49,7 +49,7 @@ export function PdfViewer({ file, onClose, onNext, onPrev, currentIndex, totalIt
         setNumPages(0);
 
         const folderIdParam = activeFolderId !== null ? activeFolderId.toString() : 'home';
-        const streamUrl = `http://localhost:14200/stream/${folderIdParam}/${file.id}?token=${streamToken}`;
+        const streamUrl = `http://localhost:14201/stream/${folderIdParam}/${file.id}?token=${streamToken}`;
 
         const loadingTask = pdfjsLib.getDocument(streamUrl);
 

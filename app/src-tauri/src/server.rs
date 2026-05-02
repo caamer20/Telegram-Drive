@@ -26,18 +26,29 @@ async fn stream_media(
     // Validate session token
     match &query.token {
         Some(t) if t == &token_data.token => {},
-        _ => return HttpResponse::Forbidden().body("Invalid or missing stream token"),
+        _ => {
+            log::warn!("Stream request with invalid/missing token");
+            return HttpResponse::Forbidden().body("Invalid or missing stream token");
+        }
     }
 
     let (folder_id_str, message_id) = path.into_inner();
+    log::debug!("Stream request: folder_id={}, message_id={}", folder_id_str, message_id);
     
     // Parse folder ID
     let folder_id = if folder_id_str == "me" || folder_id_str == "home" || folder_id_str == "null" {
+        log::debug!("Streaming from SavedMessages (home)");
         None
     } else {
         match folder_id_str.parse::<i64>() {
-            Ok(id) => Some(id),
-            Err(_) => return HttpResponse::BadRequest().body("Invalid folder ID"),
+            Ok(id) => {
+                log::debug!("Streaming from folder: {}", id);
+                Some(id)
+            },
+            Err(e) => {
+                log::error!("Failed to parse folder ID '{}': {}", folder_id_str, e);
+                return HttpResponse::BadRequest().body(format!("Invalid folder ID: {}", e));
+            }
         }
     };
 
@@ -46,13 +57,19 @@ async fn stream_media(
     };
 
     if let Some(client) = client_opt {
+        log::info!("Telegram client is initialized, resolving peer for streaming...");
         match resolve_peer(&client, folder_id).await {
             Ok(peer) => {
+                log::info!("Peer resolved successfully: {:?}", peer);
                 // Try to fetch message efficiently
-                 match client.get_messages_by_id(peer, &[message_id]).await {
+                log::debug!("Fetching message {} from peer", message_id);
+                match client.get_messages_by_id(peer.clone(), &[message_id]).await {
                     Ok(messages) => {
+                        log::debug!("Retrieved {} message(s)", messages.len());
                         if let Some(Some(msg)) = messages.first() {
+                            log::debug!("Message found, checking for media...");
                             if let Some(media) = msg.media() {
+                                log::info!("Media found in message, starting download stream");
                                 let size = match &media {
                                     Media::Document(d) => d.size(),
                                     Media::Photo(_) => 0, 
@@ -60,19 +77,28 @@ async fn stream_media(
                                 };
                                 
                                 let mime = mime_type_from_media(&media);
+                                log::debug!("Media MIME type: {}, size: {}", mime, size);
                                 
                                 // Create chunk-streaming response
                                 let mut download_iter = client.iter_download(&media);
                                 let stream = async_stream::stream! {
+                                    let mut chunk_count = 0;
                                     while let Some(chunk) = download_iter.next().await.transpose() {
                                         match chunk {
-                                            Ok(bytes) => yield Ok::<_, actix_web::Error>(web::Bytes::from(bytes)),
+                                            Ok(bytes) => {
+                                                chunk_count += 1;
+                                                if chunk_count % 100 == 0 {
+                                                    log::debug!("Stream chunk {}: {} bytes", chunk_count, bytes.len());
+                                                }
+                                                yield Ok::<_, actix_web::Error>(web::Bytes::from(bytes));
+                                            }
                                             Err(e) => {
-                                                log::error!("Stream error: {}", e);
+                                                log::error!("Stream chunk error on chunk {}: {}", chunk_count, e);
                                                 break;
                                             }
                                         }
                                     }
+                                    log::info!("Stream completed: {} chunks sent", chunk_count);
                                 };
                                 
                                 return HttpResponse::Ok()
@@ -80,16 +106,27 @@ async fn stream_media(
                                     .insert_header(("Content-Length", size.to_string()))
                                     .insert_header(("Cache-Control", "private, max-age=120"))
                                     .streaming(stream);
+                            } else {
+                                log::warn!("Message {} found but has no media", message_id);
                             }
+                        } else {
+                            log::warn!("Message {} not found or is empty", message_id);
                         }
                         HttpResponse::NotFound().body("Message or media not found")
                     },
-                    Err(e) => HttpResponse::InternalServerError().body(format!("Failed to fetch message: {}", e)),
+                    Err(e) => {
+                        log::error!("Failed to fetch message {}: {}", message_id, e);
+                        HttpResponse::InternalServerError().body(format!("Failed to fetch message: {}", e))
+                    }
                  }
             },
-            Err(e) => HttpResponse::BadRequest().body(format!("Peer resolution failed: {}", e)),
+            Err(e) => {
+                log::error!("Peer resolution failed for folder_id {:?}: {}", folder_id, e);
+                HttpResponse::BadRequest().body(format!("Peer resolution failed: {}", e))
+            }
         }
     } else {
+        log::error!("Stream request received but Telegram client is NOT connected/initialized");
         HttpResponse::ServiceUnavailable().body("Telegram client not connected")
     }
 }
@@ -124,5 +161,6 @@ pub async fn start_server(state: Arc<TelegramState>, port: u16, token: String) -
     .bind(("127.0.0.1", port))?
     .run();
 
+    log::info!("Streaming Server started successfully on http://127.0.0.1:{}", port);
     Ok(server)
 }
