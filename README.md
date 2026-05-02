@@ -57,10 +57,50 @@ Telegram Drive leverages the Telegram API to allow you to upload, organize, and 
 ##  Getting Started
 
 ### Prerequisites
-*   Node.js (v18+)
-*   Rust (latest stable)
-*   A Telegram Account
-*   API ID and Hash from [my.telegram.org](https://my.telegram.org)
+
+Before you can run this project, make sure you have **all** of the following installed:
+
+#### 1. Node.js (v18+)
+Download from [nodejs.org](https://nodejs.org). Verify with:
+```bash
+node --version   # v18.x.x or higher
+npm --version
+```
+
+#### 2. Rust (latest stable) + Cargo
+
+Install via [rustup](https://rustup.rs) — the official Rust toolchain manager:
+
+**macOS / Linux:**
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+```
+
+**Windows:**
+Download and run **[rustup-init.exe](https://win.rustup.rs)** from https://rustup.rs
+
+After installation, **restart your terminal**, then verify:
+```bash
+rustc --version   # e.g. rustc 1.78.0 (stable)
+cargo --version   # e.g. cargo 1.78.0
+```
+
+> ⚠️ **Windows users — MSVC Build Tools required:** Rust on Windows uses the MSVC toolchain, which requires the **Visual C++ linker (`link.exe`)**. Without it, the build will fail with `linker 'link.exe' not found`.
+>
+> **Fix:** Install [Build Tools for Visual Studio](https://visualstudio.microsoft.com/visual-cpp-build-tools/) and during setup select the **"Desktop development with C++"** workload. Visual Studio Code is **not** sufficient — you need the Build Tools.
+
+#### 3. WebView2 Runtime (Windows only)
+
+Required for Tauri on Windows. Usually pre-installed on **Windows 10 (1803+)** and **Windows 11**. If missing, download from [Microsoft's WebView2 page](https://developer.microsoft.com/en-us/microsoft-edge/webview2/).
+
+#### 4. Telegram API credentials
+
+- A Telegram account
+- An **API ID** and **API Hash** from [my.telegram.org](https://my.telegram.org)
+
+> 💡 For the full official list of Tauri v2 prerequisites, see: https://v2.tauri.app/start/prerequisites/
+
+---
 
 ### Installation
 
@@ -70,18 +110,20 @@ Telegram Drive leverages the Telegram API to allow you to upload, organize, and 
     cd Telegram-Drive
     ```
 
-2.  **Install Dependencies**
+2.  **Install Node dependencies**
     ```bash
     cd app
     npm install
     ```
+    > If you see vulnerability warnings, run `npm audit fix` to resolve them.
 
 3.  **Run in Development Mode**
     ```bash
     npm run tauri dev
     ```
+    > The first run will compile all Rust crates (~300+ dependencies) and may take **5–15 minutes** depending on your machine. Subsequent runs are much faster.
 
-4.  **Build/Compile**
+4.  **Build / Compile for Production**
     ```bash
     npm run tauri build
     ```
