@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { invoke } from '@tauri-apps/api/core';
 
 /**
  * Polls Telegram connection status every 10 seconds.
@@ -10,34 +11,35 @@ export function useNetworkStatus() {
     const isCheckingRef = useRef(false); // prevents overlapping poll cycles
 
     useEffect(() => {
-        let interval: ReturnType<typeof setInterval>;
+        let isMounted = true;
 
-        import('@tauri-apps/api/core').then(({ invoke }) => {
-            const checkNetwork = async () => {
-                if (isCheckingRef.current) return;
-                isCheckingRef.current = true;
+        const checkNetwork = async () => {
+            if (isCheckingRef.current) return;
+            isCheckingRef.current = true;
 
+            try {
+                const connected = await invoke<boolean>('cmd_check_connection');
+                if (isMounted) setIsOnline(connected);
+            } catch {
+                // fallback: no client yet (auth flow)
                 try {
-                    const connected = await invoke<boolean>('cmd_check_connection');
-                    setIsOnline(connected);
+                    const available = await invoke<boolean>('cmd_is_network_available');
+                    if (isMounted) setIsOnline(available);
                 } catch {
-                    // fallback: no client yet (auth flow)
-                    try {
-                        const available = await invoke<boolean>('cmd_is_network_available');
-                        setIsOnline(available);
-                    } catch {
-                        setIsOnline(false);
-                    }
-                } finally {
-                    isCheckingRef.current = false;
+                    if (isMounted) setIsOnline(false);
                 }
-            };
+            } finally {
+                isCheckingRef.current = false;
+            }
+        };
 
-            checkNetwork();
-            interval = setInterval(checkNetwork, 10000);
-        });
+        checkNetwork();
+        const interval = setInterval(checkNetwork, 10000);
 
-        return () => clearInterval(interval);
+        return () => {
+            isMounted = false;
+            clearInterval(interval);
+        };
     }, []);
 
     return isOnline;

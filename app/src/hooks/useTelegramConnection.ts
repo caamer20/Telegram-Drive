@@ -140,14 +140,10 @@ export function useTelegramConnection(onLogoutParent: () => void) {
         if (!store) return;
         setIsSyncing(true);
         try {
-            // Reconnect first if disconnected; reset isSyncing on early return
-            // (returning inside a try block skips the finally clause).
+            // Reconnect first if disconnected before scanning folders.
             if (!isConnected) {
                 const reconnected = await handleReconnect();
-                if (!reconnected) {
-                    setIsSyncing(false);
-                    return;
-                }
+                if (!reconnected) return;
             }
 
             const foundFolders = await invoke<TelegramFolder[]>('cmd_scan_folders');
