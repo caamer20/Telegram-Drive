@@ -74,6 +74,26 @@ export function useTelegramConnection(onLogoutParent: () => void) {
     }, [networkIsOnline]);
 
 
+    // Pings the Telegram session via get_me() and auto-reconnects if stale.
+    const handleReconnect = async (): Promise<boolean> => {
+        try {
+            const ok = await invoke<boolean>('cmd_check_connection');
+            setIsConnected(ok);
+            if (ok) {
+                queryClient.invalidateQueries({ queryKey: ['files'] });
+                toast.success('Reconnected to Telegram.');
+            } else {
+                toast.error('Still unable to reach Telegram.');
+            }
+            return ok;
+        } catch (e) {
+            setIsConnected(false);
+            toast.error('Reconnect failed: ' + e);
+            return false;
+        }
+    };
+
+
     const isNetworkError = (error: string): boolean => {
         const keywords = ['timeout', 'connection', 'network', 'socket', 'disconnected', 'EOF', 'ECONNREFUSED', 'overflow'];
         return keywords.some(k => error.toLowerCase().includes(k.toLowerCase()));
@@ -120,6 +140,16 @@ export function useTelegramConnection(onLogoutParent: () => void) {
         if (!store) return;
         setIsSyncing(true);
         try {
+            // Reconnect first if disconnected; reset isSyncing on early return
+            // (returning inside a try block skips the finally clause).
+            if (!isConnected) {
+                const reconnected = await handleReconnect();
+                if (!reconnected) {
+                    setIsSyncing(false);
+                    return;
+                }
+            }
+
             const foundFolders = await invoke<TelegramFolder[]>('cmd_scan_folders');
             const merged = [...folders];
             let added = 0;
@@ -218,6 +248,7 @@ export function useTelegramConnection(onLogoutParent: () => void) {
         isConnected,
         handleLogout,
         handleSyncFolders,
+        handleReconnect,
         handleCreateFolder,
         handleFolderDelete,
         isNetworkError,
