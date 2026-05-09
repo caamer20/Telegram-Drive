@@ -9,6 +9,9 @@ import type { Store } from '@tauri-apps/plugin-store';
 interface ProgressPayload {
     id: string;
     percent: number;
+    uploaded_bytes: number;
+    total_bytes: number;
+    speed_bytes_per_sec: number;
 }
 
 export function useFileDownload(store: Store | null) {
@@ -22,7 +25,13 @@ export function useFileDownload(store: Store | null) {
         let unlisten: UnlistenFn | undefined;
         listen<ProgressPayload>('download-progress', (event) => {
             setDownloadQueue(q => q.map(i =>
-                i.id === event.payload.id ? { ...i, progress: event.payload.percent } : i
+                i.id === event.payload.id ? {
+                    ...i,
+                    progress: event.payload.percent,
+                    uploadedBytes: event.payload.uploaded_bytes,
+                    totalBytes: event.payload.total_bytes,
+                    speedBytesPerSec: event.payload.speed_bytes_per_sec,
+                } : i
             ));
         }).then(fn => { unlisten = fn; });
         return () => { unlisten?.(); };
@@ -86,8 +95,13 @@ export function useFileDownload(store: Store | null) {
             }
         } catch (e) {
             if (!cancelledRef.current.has(item.id)) {
-                setDownloadQueue(q => q.map(i => i.id === item.id ? { ...i, status: 'error', error: String(e) } : i));
-                toast.error(`Download failed: ${item.filename}`);
+                const errMsg = String(e);
+                if (errMsg.includes('Transfer cancelled')) {
+                    setDownloadQueue(q => q.map(i => i.id === item.id ? { ...i, status: 'cancelled' } : i));
+                } else {
+                    setDownloadQueue(q => q.map(i => i.id === item.id ? { ...i, status: 'error', error: errMsg } : i));
+                    toast.error(`Download failed: ${item.filename}`);
+                }
             } else {
                 cancelledRef.current.delete(item.id);
             }
@@ -136,7 +150,10 @@ export function useFileDownload(store: Store | null) {
     const cancelAll = () => {
         setDownloadQueue(q => {
             const downloading = q.find(i => i.status === 'downloading');
-            if (downloading) cancelledRef.current.add(downloading.id);
+            if (downloading) {
+                cancelledRef.current.add(downloading.id);
+                invoke('cmd_cancel_transfer', { transferId: downloading.id }).catch(() => {});
+            }
             return q
                 .filter(i => i.status !== 'pending')
                 .map(i => i.status === 'downloading' ? { ...i, status: 'cancelled' as const } : i);
@@ -144,11 +161,36 @@ export function useFileDownload(store: Store | null) {
         toast.info('All downloads cancelled');
     };
 
+    const cancelItem = (id: string) => {
+        setDownloadQueue(q => {
+            const item = q.find(i => i.id === id);
+            if (item?.status === 'downloading') {
+                cancelledRef.current.add(id);
+                invoke('cmd_cancel_transfer', { transferId: id }).catch(() => {});
+                return q.map(i => i.id === id ? { ...i, status: 'cancelled' as const } : i);
+            }
+            if (item?.status === 'pending') {
+                return q.filter(i => i.id !== id);
+            }
+            return q;
+        });
+    };
+
+    const retryItem = (id: string) => {
+        setDownloadQueue(q => q.map(i =>
+            i.id === id && (i.status === 'error' || i.status === 'cancelled')
+                ? { ...i, status: 'pending' as const, error: undefined, progress: undefined, uploadedBytes: undefined, totalBytes: undefined, speedBytesPerSec: undefined }
+                : i
+        ));
+    };
+
     return {
         downloadQueue,
         queueDownload,
         queueBulkDownload,
         clearFinished,
-        cancelAll
+        cancelAll,
+        cancelItem,
+        retryItem,
     };
 }

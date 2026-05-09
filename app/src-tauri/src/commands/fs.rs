@@ -167,6 +167,77 @@ pub async fn cmd_delete_folder(
 struct ProgressPayload {
     id: String,
     percent: u8,
+    uploaded_bytes: u64,
+    total_bytes: u64,
+    speed_bytes_per_sec: u64,
+}
+
+/// Async reader wrapper that tracks bytes read for progress reporting.
+/// Wraps a tokio File and counts how many bytes have been consumed.
+struct ProgressReader {
+    inner: tokio::io::BufReader<tokio::fs::File>,
+    bytes_read: std::sync::Arc<std::sync::atomic::AtomicU64>,
+}
+
+impl ProgressReader {
+    async fn new(path: &str) -> Result<(Self, u64, std::sync::Arc<std::sync::atomic::AtomicU64>), String> {
+        let file = tokio::fs::File::open(path).await.map_err(|e| e.to_string())?;
+        let metadata = file.metadata().await.map_err(|e| e.to_string())?;
+        let size = metadata.len();
+        let counter = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let reader = Self {
+            inner: tokio::io::BufReader::new(file),
+            bytes_read: counter.clone(),
+        };
+        Ok((reader, size, counter))
+    }
+}
+
+impl tokio::io::AsyncRead for ProgressReader {
+    fn poll_read(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        let before = buf.filled().len();
+        let result = std::pin::Pin::new(&mut self.inner).poll_read(cx, buf);
+        if let std::task::Poll::Ready(Ok(())) = &result {
+            let after = buf.filled().len();
+            let delta = (after - before) as u64;
+            self.bytes_read.fetch_add(delta, std::sync::atomic::Ordering::Relaxed);
+        }
+        result
+    }
+}
+
+/// Delete a partial file with retries (best-effort cleanup)
+fn cleanup_partial_file(path: &str) {
+    let path = path.to_string();
+    std::thread::spawn(move || {
+        for attempt in 0..5 {
+            match std::fs::remove_file(&path) {
+                Ok(()) => {
+                    log::info!("Cleaned up partial file: {}", path);
+                    return;
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => return,
+                Err(e) => {
+                    log::warn!("Cleanup attempt {}/5 failed for {}: {}", attempt + 1, path, e);
+                    std::thread::sleep(std::time::Duration::from_secs(1));
+                }
+            }
+        }
+    });
+}
+
+#[tauri::command]
+pub async fn cmd_cancel_transfer(
+    transfer_id: String,
+    state: State<'_, TelegramState>,
+) -> Result<bool, String> {
+    log::info!("Cancelling transfer: {}", transfer_id);
+    state.cancelled_transfers.write().await.insert(transfer_id);
+    Ok(true)
 }
 
 #[tauri::command]
@@ -190,31 +261,89 @@ pub async fn cmd_upload_file(
         return Ok("Mock upload successful".to_string());
     }
     let client = client_opt.unwrap();
-    
+
     // Emit start progress
     if !tid.is_empty() {
-        let _ = app_handle.emit("upload-progress", ProgressPayload { id: tid.clone(), percent: 0 });
+        let _ = app_handle.emit("upload-progress", ProgressPayload {
+            id: tid.clone(), percent: 0, uploaded_bytes: 0, total_bytes: size, speed_bytes_per_sec: 0,
+        });
     }
 
-    let path_clone = path.clone();
+    // Create progress-tracking reader
+    let (mut reader, file_size, bytes_counter) = ProgressReader::new(&path).await?;
+    let file_name = std::path::Path::new(&path)
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "file".to_string());
+
+    // Spawn a progress reporter task that emits events every 250ms
+    let cancelled = state.cancelled_transfers.clone();
+    let progress_tid = tid.clone();
+    let progress_handle = app_handle.clone();
+    let progress_counter = bytes_counter.clone();
+    let progress_task = if !tid.is_empty() {
+        Some(tokio::spawn(async move {
+            let mut last_bytes: u64 = 0;
+            let mut last_time = std::time::Instant::now();
+            loop {
+                tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+                let current = progress_counter.load(std::sync::atomic::Ordering::Relaxed);
+                let now = std::time::Instant::now();
+                let dt = now.duration_since(last_time).as_secs_f64();
+                let speed = if dt > 0.0 { ((current - last_bytes) as f64 / dt) as u64 } else { 0 };
+                let percent = if file_size > 0 { ((current as f64 / file_size as f64) * 100.0).min(99.0) as u8 } else { 0 };
+
+                let _ = progress_handle.emit("upload-progress", ProgressPayload {
+                    id: progress_tid.clone(), percent, uploaded_bytes: current, total_bytes: file_size, speed_bytes_per_sec: speed,
+                });
+
+                last_bytes = current;
+                last_time = now;
+
+                if current >= file_size { break; }
+                // Check cancellation
+                if cancelled.read().await.contains(&progress_tid) { break; }
+            }
+        }))
+    } else {
+        None
+    };
+
+    // Check cancellation before starting
+    if state.cancelled_transfers.read().await.contains(&tid) {
+        state.cancelled_transfers.write().await.remove(&tid);
+        if let Some(t) = progress_task { t.abort(); }
+        return Err("Transfer cancelled".to_string());
+    }
+
     let client_clone = client.clone();
-    
-    let uploaded_file = tauri::async_runtime::spawn(async move {
-        client_clone.upload_file(&path_clone).await
-    }).await.map_err(|e| format!("Task join error: {}", e))?
-      .map_err(map_error)?;
-        
+    let upload_result = tokio::spawn(async move {
+        client_clone.upload_stream(&mut reader, file_size as usize, file_name).await
+    }).await.map_err(|e| format!("Task join error: {}", e))?;
+
+    // Stop progress reporter
+    if let Some(t) = progress_task { t.abort(); }
+
+    // Check cancellation after upload
+    if state.cancelled_transfers.read().await.contains(&tid) {
+        state.cancelled_transfers.write().await.remove(&tid);
+        return Err("Transfer cancelled".to_string());
+    }
+
+    let uploaded_file = upload_result.map_err(map_error)?;
     let message = InputMessage::new().text("").file(uploaded_file);
 
-    let peer = resolve_peer_ref(&client, folder_id, &state.peer_cache).await?;
-    
-    client.send_message(peer, message).await.map_err(map_error)?;
-    
+    let peer = resolve_peer(&client, folder_id, &state.peer_cache).await?;
+
+    client.send_message(&peer, message).await.map_err(map_error)?;
+
     bw_state.add_up(size);
 
     // Emit completion
     if !tid.is_empty() {
-        let _ = app_handle.emit("upload-progress", ProgressPayload { id: tid, percent: 100 });
+        let _ = app_handle.emit("upload-progress", ProgressPayload {
+            id: tid, percent: 100, uploaded_bytes: size, total_bytes: size, speed_bytes_per_sec: 0,
+        });
     }
 
     Ok("File uploaded successfully".to_string())
@@ -329,26 +458,43 @@ pub async fn cmd_download_file(
 
     // Emit start
     if !tid.is_empty() {
-        let _ = app_handle.emit("download-progress", ProgressPayload { id: tid.clone(), percent: 0 });
+        let _ = app_handle.emit("download-progress", ProgressPayload {
+            id: tid.clone(), percent: 0, uploaded_bytes: 0, total_bytes: total_size, speed_bytes_per_sec: 0,
+        });
     }
 
     // Stream download with per-chunk progress
     let mut download_iter = client.iter_download(&media);
     let mut file = std::fs::File::create(&save_path).map_err(|e| e.to_string())?;
     let mut downloaded: u64 = 0;
-    let mut last_percent: u8 = 0;
+    let mut last_emit_time = std::time::Instant::now();
+    let mut last_emit_bytes: u64 = 0;
 
     while let Some(chunk) = download_iter.next().await.transpose() {
+        // Check cancellation
+        if state.cancelled_transfers.read().await.contains(&tid) {
+            state.cancelled_transfers.write().await.remove(&tid);
+            drop(file);
+            cleanup_partial_file(&save_path);
+            return Err("Transfer cancelled".to_string());
+        }
+
         let bytes = chunk.map_err(|e| format!("Download chunk error: {}", e))?;
         std::io::Write::write_all(&mut file, &bytes).map_err(|e| e.to_string())?;
         downloaded += bytes.len() as u64;
         
-        if !tid.is_empty() && total_size > 0 {
-            let percent = ((downloaded as f64 / total_size as f64) * 100.0).min(100.0) as u8;
-            // Only emit when percent actually changes to avoid event spam
-            if percent != last_percent {
-                last_percent = percent;
-                let _ = app_handle.emit("download-progress", ProgressPayload { id: tid.clone(), percent });
+        // Time-based progress emission (every 250ms)
+        if !tid.is_empty() {
+            let now = std::time::Instant::now();
+            let dt = now.duration_since(last_emit_time).as_secs_f64();
+            if dt >= 0.25 || downloaded >= total_size {
+                let speed = if dt > 0.0 { ((downloaded - last_emit_bytes) as f64 / dt) as u64 } else { 0 };
+                let percent = if total_size > 0 { ((downloaded as f64 / total_size as f64) * 100.0).min(100.0) as u8 } else { 0 };
+                let _ = app_handle.emit("download-progress", ProgressPayload {
+                    id: tid.clone(), percent, uploaded_bytes: downloaded, total_bytes: total_size, speed_bytes_per_sec: speed,
+                });
+                last_emit_time = now;
+                last_emit_bytes = downloaded;
             }
         }
     }
@@ -357,7 +503,9 @@ pub async fn cmd_download_file(
 
     // Emit completion
     if !tid.is_empty() {
-        let _ = app_handle.emit("download-progress", ProgressPayload { id: tid, percent: 100 });
+        let _ = app_handle.emit("download-progress", ProgressPayload {
+            id: tid, percent: 100, uploaded_bytes: downloaded, total_bytes: total_size, speed_bytes_per_sec: 0,
+        });
     }
 
     Ok("Download successful".to_string())

@@ -163,8 +163,8 @@ export function Dashboard({ onLogout, permissions, allowFolderManagement = true,
 
     } = useFileOperations(activeFolderId, selectedIds, setSelectedIds, displayedFiles);
 
-    const { uploadQueue, setUploadQueue, handleManualUpload, cancelAll: cancelUploads, isDragging } = useFileUpload(activeFolderId, store);
-    const { downloadQueue, queueDownload, clearFinished: clearDownloads, cancelAll: cancelDownloads } = useFileDownload(store);
+    const { uploadQueue, setUploadQueue, handleManualUpload, cancelAll: cancelUploads, cancelItem: cancelUploadItem, retryItem: retryUploadItem, isDragging } = useFileUpload(activeFolderId, store);
+    const { downloadQueue, queueDownload, clearFinished: clearDownloads, cancelAll: cancelDownloads, cancelItem: cancelDownloadItem, retryItem: retryDownloadItem } = useFileDownload(store);
 
 
     const handleSelectAll = useCallback(() => {
@@ -565,11 +565,15 @@ export function Dashboard({ onLogout, permissions, allowFolderManagement = true,
                 items={uploadQueue}
                 onClearFinished={() => setUploadQueue(q => q.filter(i => i.status !== 'success' && i.status !== 'error' && i.status !== 'cancelled'))}
                 onCancelAll={cancelUploads}
+                onCancelItem={cancelUploadItem}
+                onRetryItem={retryUploadItem}
             />
             <DownloadQueue
                 items={downloadQueue}
                 onClearFinished={clearDownloads}
                 onCancelAll={cancelDownloads}
+                onCancelItem={cancelDownloadItem}
+                onRetryItem={retryDownloadItem}
             />
         </div>
     );

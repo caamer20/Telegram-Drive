@@ -4,6 +4,11 @@ import { invoke } from '@tauri-apps/api/core';
 import { TelegramFile } from '../../types';
 import { isVideoFile, isAudioFile } from '../../utils';
 
+interface StreamInfo {
+    token: string;
+    base_url: string;
+}
+
 interface MediaPlayerProps {
     file: TelegramFile;
     onClose: () => void;
@@ -15,15 +20,15 @@ interface MediaPlayerProps {
 }
 
 export function MediaPlayer({ file, onClose, onNext, onPrev, currentIndex, totalItems, activeFolderId }: MediaPlayerProps) {
-    const [streamToken, setStreamToken] = useState<string | null>(null);
+    const [streamInfo, setStreamInfo] = useState<StreamInfo | null>(null);
 
     useEffect(() => {
-        invoke<string>('cmd_get_stream_token').then(setStreamToken).catch(() => {});
+        invoke<StreamInfo>('cmd_get_stream_info').then(setStreamInfo).catch(() => {});
     }, []);
 
     const folderIdParam = activeFolderId !== null ? activeFolderId.toString() : 'home';
-    const streamUrl = streamToken
-        ? `http://localhost:14200/stream/${folderIdParam}/${file.id}?token=${streamToken}`
+    const streamUrl = streamInfo
+        ? `${streamInfo.base_url}/stream/${folderIdParam}/${file.id}?token=${streamInfo.token}`
         : null;
 
     const isVideo = isVideoFile(file.name);

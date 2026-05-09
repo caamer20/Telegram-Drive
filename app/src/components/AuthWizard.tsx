@@ -1,10 +1,11 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { motion, AnimatePresence } from "framer-motion";
-import { Phone, Key, Lock, ArrowRight, Settings, ShieldCheck, Sun, Moon, HelpCircle, ExternalLink, X, Heart } from "lucide-react";
+import { Phone, Key, Lock, ArrowRight, Settings, ShieldCheck, Sun, Moon, HelpCircle, ExternalLink, X, Heart, QrCode } from "lucide-react";
 import { load } from '@tauri-apps/plugin-store';
 import { useTheme } from '../context/ThemeContext';
 import { open } from '@tauri-apps/plugin-shell';
+import { QRCodeSVG } from 'qrcode.react';
 
 type Step = "setup" | "phone" | "code" | "password";
 
@@ -58,6 +59,10 @@ export function AuthWizard({ onLogin }: { onLogin: () => void }) {
     const [floodWait, setFloodWait] = useState<number | null>(null);
     const [showHelp, setShowHelp] = useState(false);
     const [showDonate, setShowDonate] = useState(false);
+    const [loginMethod, setLoginMethod] = useState<'phone' | 'qr'>('phone');
+    const [qrUrl, setQrUrl] = useState<string | null>(null);
+    const [qrPolling, setQrPolling] = useState(false);
+    const qrPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
 
     useEffect(() => {
@@ -115,7 +120,71 @@ export function AuthWizard({ onLogin }: { onLogin: () => void }) {
         setError(null);
         await saveCredentials();
         setStep("phone");
+        setLoginMethod('phone');
+        setQrUrl(null);
+        setQrPolling(false);
     };
+
+    const handleQrLogin = async () => {
+        setError(null);
+        setLoading(true);
+        try {
+            const idInt = parseInt(apiId, 10);
+            if (isNaN(idInt)) throw new Error("API ID must be a number");
+
+            const url = await invoke<string>("cmd_auth_qr_login", {
+                apiId: idInt,
+                apiHash: apiHash
+            });
+
+            if (url === "__authorized__") {
+                onLogin();
+                return;
+            }
+
+            setQrUrl(url);
+            setQrPolling(true);
+        } catch (err: unknown) {
+            setError(err instanceof Error ? err.message : String(err));
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    // QR polling effect
+    useEffect(() => {
+        if (!qrPolling) {
+            if (qrPollRef.current) {
+                clearInterval(qrPollRef.current);
+                qrPollRef.current = null;
+            }
+            return;
+        }
+
+        qrPollRef.current = setInterval(async () => {
+            try {
+                const res = await invoke<{ success: boolean; next_step?: string }>("cmd_auth_qr_poll");
+                if (res.success) {
+                    setQrPolling(false);
+                    if (res.next_step === "password") {
+                        setStep("password");
+                    } else {
+                        onLogin();
+                    }
+                }
+                // If next_step === "waiting", keep polling
+            } catch {
+                // Polling error — keep trying silently
+            }
+        }, 3000);
+
+        return () => {
+            if (qrPollRef.current) {
+                clearInterval(qrPollRef.current);
+                qrPollRef.current = null;
+            }
+        };
+    }, [qrPolling, apiId, apiHash]);
 
     const handlePhoneSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -301,41 +370,111 @@ export function AuthWizard({ onLogin }: { onLogin: () => void }) {
 
 
                             {step === "phone" && (
-                                <motion.form
+                                <motion.div
                                     key="phone"
                                     initial={{ x: 20, opacity: 0 }}
                                     animate={{ x: 0, opacity: 1 }}
                                     exit={{ x: -20, opacity: 0 }}
-                                    onSubmit={handlePhoneSubmit}
                                     className="space-y-6"
                                 >
-                                    <div className="space-y-2">
-                                        <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider">Phone Number</label>
-                                        <div className="relative">
-                                            <Phone className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 auth-form-icon" />
-                                            <input
-                                                type="tel"
-                                                value={phone}
-                                                onChange={(e) => setPhone(e.target.value)}
-                                                placeholder="+1 234 567 8900"
-                                                className="w-full glass-input rounded-xl pl-12 pr-4 py-4 text-white placeholder-gray-600 focus:outline-none focus:border-blue-500 transition-all text-lg tracking-wide"
-                                            />
-                                        </div>
+                                    {/* Phone / QR Toggle */}
+                                    <div className="flex rounded-xl overflow-hidden border border-white/10">
+                                        <button
+                                            type="button"
+                                            onClick={() => { setLoginMethod('phone'); setQrUrl(null); setQrPolling(false); setError(null); }}
+                                            className={`flex-1 py-2.5 text-sm font-medium flex items-center justify-center gap-2 transition-all ${
+                                                loginMethod === 'phone'
+                                                    ? 'bg-white/15 text-white'
+                                                    : 'text-white/50 hover:text-white/70'
+                                            }`}
+                                        >
+                                            <Phone className="w-4 h-4" /> Phone Number
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => { setLoginMethod('qr'); setError(null); handleQrLogin(); }}
+                                            className={`flex-1 py-2.5 text-sm font-medium flex items-center justify-center gap-2 transition-all ${
+                                                loginMethod === 'qr'
+                                                    ? 'bg-white/15 text-white'
+                                                    : 'text-white/50 hover:text-white/70'
+                                            }`}
+                                        >
+                                            <QrCode className="w-4 h-4" /> QR Code
+                                        </button>
                                     </div>
 
-                                    <div className="flex flex-col gap-3">
-                                        <button
-                                            type="submit"
-                                            disabled={loading}
-                                            className="w-full bg-white text-black hover:bg-gray-100 font-bold py-4 rounded-xl flex items-center justify-center gap-2 transition-all shadow-lg active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
-                                        >
-                                            {loading ? "Connecting..." : <>Continue <ArrowRight className="w-5 h-5" /></>}
-                                        </button>
-                                        <button type="button" onClick={() => setStep("setup")} className="text-xs text-gray-500 hover:text-white transition-colors py-2">
-                                            Back to Configuration
-                                        </button>
-                                    </div>
-                                </motion.form>
+                                    {loginMethod === 'phone' ? (
+                                        <form onSubmit={handlePhoneSubmit} className="space-y-6">
+                                            <div className="space-y-2">
+                                                <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider">Phone Number</label>
+                                                <div className="relative">
+                                                    <Phone className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 auth-form-icon" />
+                                                    <input
+                                                        type="tel"
+                                                        value={phone}
+                                                        onChange={(e) => setPhone(e.target.value)}
+                                                        placeholder="+1 234 567 8900"
+                                                        className="w-full glass-input rounded-xl pl-12 pr-4 py-4 text-white placeholder-gray-600 focus:outline-none focus:border-blue-500 transition-all text-lg tracking-wide"
+                                                    />
+                                                </div>
+                                            </div>
+
+                                            <div className="flex flex-col gap-3">
+                                                <button
+                                                    type="submit"
+                                                    disabled={loading}
+                                                    className="w-full bg-white text-black hover:bg-gray-100 font-bold py-4 rounded-xl flex items-center justify-center gap-2 transition-all shadow-lg active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
+                                                >
+                                                    {loading ? "Connecting..." : <>Continue <ArrowRight className="w-5 h-5" /></>}
+                                                </button>
+                                                <button type="button" onClick={() => setStep("setup")} className="text-xs text-gray-500 hover:text-white transition-colors py-2">
+                                                    Back to Configuration
+                                                </button>
+                                            </div>
+                                        </form>
+                                    ) : (
+                                        <div className="flex flex-col items-center gap-5">
+                                            {loading && !qrUrl && (
+                                                <div className="w-52 h-52 rounded-2xl bg-white/5 flex items-center justify-center">
+                                                    <div className="w-8 h-8 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
+                                                </div>
+                                            )}
+                                            {qrUrl && (
+                                                <>
+                                                    <div className="p-4 bg-white rounded-2xl shadow-xl">
+                                                        <QRCodeSVG
+                                                            value={qrUrl}
+                                                            size={200}
+                                                            level="M"
+                                                            bgColor="#ffffff"
+                                                            fgColor="#000000"
+                                                        />
+                                                    </div>
+                                                    <div className="text-center space-y-1">
+                                                        <p className="text-sm text-white/80">Scan with your Telegram app</p>
+                                                        <p className="text-xs text-white/40">Settings &gt; Devices &gt; Link Desktop Device</p>
+                                                    </div>
+                                                    {qrPolling && (
+                                                        <div className="flex items-center gap-2 text-xs text-blue-300">
+                                                            <div className="w-3 h-3 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
+                                                            Waiting for scan...
+                                                        </div>
+                                                    )}
+                                                    <button
+                                                        type="button"
+                                                        onClick={handleQrLogin}
+                                                        className="text-xs text-white/50 hover:text-white transition-colors"
+                                                    >
+                                                        Refresh QR Code
+                                                    </button>
+                                                </>
+                                            )}
+                                            <button type="button" onClick={() => { setStep("setup"); setQrPolling(false); }} className="text-xs text-gray-500 hover:text-white transition-colors py-2">
+                                                Back to Configuration
+                                            </button>
+                                        </div>
+                                    )}
+                                </motion.div>
                             )}
 
 
@@ -440,7 +579,7 @@ export function AuthWizard({ onLogin }: { onLogin: () => void }) {
                 <div className="mt-8 pt-4 border-t border-white/5 text-center">
                     <button
                         onClick={() => setShowDonate(true)}
-                        className="text-xs text-white/40 hover:text-white transition-colors flex items-center justify-center gap-1.5 mx-auto"
+                        className="text-xs text-telegram-subtext hover:text-telegram-text transition-colors flex items-center justify-center gap-1.5 mx-auto"
                     >
                         <Heart className="w-3.5 h-3.5 text-red-500/80" />
                         Donate

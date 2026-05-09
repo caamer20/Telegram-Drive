@@ -11,6 +11,9 @@ import type { Store } from '@tauri-apps/plugin-store';
 interface ProgressPayload {
     id: string;
     percent: number;
+    uploaded_bytes: number;
+    total_bytes: number;
+    speed_bytes_per_sec: number;
 }
 
 export function useFileUpload(activeFolderId: number | null, store: Store | null) {
@@ -25,7 +28,13 @@ export function useFileUpload(activeFolderId: number | null, store: Store | null
         let unlisten: UnlistenFn | undefined;
         listen<ProgressPayload>('upload-progress', (event) => {
             setUploadQueue(q => q.map(i =>
-                i.id === event.payload.id ? { ...i, progress: event.payload.percent } : i
+                i.id === event.payload.id ? {
+                    ...i,
+                    progress: event.payload.percent,
+                    uploadedBytes: event.payload.uploaded_bytes,
+                    totalBytes: event.payload.total_bytes,
+                    speedBytesPerSec: event.payload.speed_bytes_per_sec,
+                } : i
             ));
         }).then(fn => { unlisten = fn; });
         return () => { unlisten?.(); };
@@ -73,8 +82,13 @@ export function useFileUpload(activeFolderId: number | null, store: Store | null
             }
         } catch (e) {
             if (!cancelledRef.current.has(item.id)) {
-                setUploadQueue(q => q.map(i => i.id === item.id ? { ...i, status: 'error', error: String(e) } : i));
-                toast.error(`Upload failed for ${item.path.split('/').pop()}: ${e}`);
+                const errMsg = String(e);
+                if (errMsg.includes('Transfer cancelled')) {
+                    setUploadQueue(q => q.map(i => i.id === item.id ? { ...i, status: 'cancelled' } : i));
+                } else {
+                    setUploadQueue(q => q.map(i => i.id === item.id ? { ...i, status: 'error', error: errMsg } : i));
+                    toast.error(`Upload failed for ${item.path.split('/').pop()}: ${e}`);
+                }
             } else {
                 cancelledRef.current.delete(item.id);
             }
@@ -105,12 +119,39 @@ export function useFileUpload(activeFolderId: number | null, store: Store | null
     const cancelAll = () => {
         setUploadQueue(q => {
             const uploading = q.find(i => i.status === 'uploading');
-            if (uploading) cancelledRef.current.add(uploading.id);
+            if (uploading) {
+                cancelledRef.current.add(uploading.id);
+                invoke('cmd_cancel_transfer', { transferId: uploading.id }).catch(() => {});
+            }
             return q
                 .filter(i => i.status !== 'pending')
                 .map(i => i.status === 'uploading' ? { ...i, status: 'cancelled' as const } : i);
         });
         toast.info('All uploads cancelled');
+    };
+
+    const cancelItem = (id: string) => {
+        setUploadQueue(q => {
+            const item = q.find(i => i.id === id);
+            if (item?.status === 'uploading') {
+                cancelledRef.current.add(id);
+                invoke('cmd_cancel_transfer', { transferId: id }).catch(() => {});
+                return q.map(i => i.id === id ? { ...i, status: 'cancelled' as const } : i);
+            }
+            // Remove pending items directly
+            if (item?.status === 'pending') {
+                return q.filter(i => i.id !== id);
+            }
+            return q;
+        });
+    };
+
+    const retryItem = (id: string) => {
+        setUploadQueue(q => q.map(i =>
+            i.id === id && (i.status === 'error' || i.status === 'cancelled')
+                ? { ...i, status: 'pending' as const, error: undefined, progress: undefined, uploadedBytes: undefined, totalBytes: undefined, speedBytesPerSec: undefined }
+                : i
+        ));
     };
 
     const { isDragging } = useFileDrop();
@@ -120,6 +161,8 @@ export function useFileUpload(activeFolderId: number | null, store: Store | null
         setUploadQueue,
         handleManualUpload,
         cancelAll,
+        cancelItem,
+        retryItem,
         isDragging
     };
 }

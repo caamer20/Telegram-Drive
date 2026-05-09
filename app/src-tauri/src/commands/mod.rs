@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use tokio::sync::Mutex;
 use grammers_client::{Client};
 use grammers_client::types::{LoginToken, PasswordToken, Peer};
@@ -25,6 +25,9 @@ pub struct TelegramState {
     /// Populated lazily on first resolve_peer call, eagerly during cmd_scan_folders.
     /// Cleared on logout.
     pub peer_cache: Arc<tokio::sync::RwLock<HashMap<i64, Peer>>>,
+    /// Set of transfer IDs that have been cancelled. Checked cooperatively
+    /// in upload/download chunk loops. Cleared on logout.
+    pub cancelled_transfers: Arc<tokio::sync::RwLock<HashSet<String>>>,
 }
 
 pub mod auth;

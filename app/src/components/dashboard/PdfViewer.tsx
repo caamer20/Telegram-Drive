@@ -10,6 +10,11 @@ import { TelegramFile } from '../../types';
 import workerUrl from 'pdfjs-dist/legacy/build/pdf.worker.mjs?url';
 pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl;
 
+interface StreamInfo {
+    token: string;
+    base_url: string;
+}
+
 interface PdfViewerProps {
     file: TelegramFile;
     onClose: () => void;
@@ -21,7 +26,7 @@ interface PdfViewerProps {
 }
 
 export function PdfViewer({ file, onClose, onNext, onPrev, currentIndex, totalItems, activeFolderId }: PdfViewerProps) {
-    const [streamToken, setStreamToken] = useState<string | null>(null);
+    const [streamInfo, setStreamInfo] = useState<StreamInfo | null>(null);
     const [pdf, setPdf] = useState<pdfjsLib.PDFDocumentProxy | null>(null);
     const [numPages, setNumPages] = useState<number>(0);
     const [scale, setScale] = useState<number>(1.2);
@@ -30,17 +35,17 @@ export function PdfViewer({ file, onClose, onNext, onPrev, currentIndex, totalIt
     const containerRef = useRef<HTMLDivElement>(null);
     const pdfRef = useRef<pdfjsLib.PDFDocumentProxy | null>(null);
 
-    // Fetch stream token once
+    // Fetch stream info once
     useEffect(() => {
-        invoke<string>('cmd_get_stream_token').then(setStreamToken).catch((err) => {
-            console.error("Failed to get stream token:", err);
+        invoke<StreamInfo>('cmd_get_stream_info').then(setStreamInfo).catch((err) => {
+            console.error("Failed to get stream info:", err);
             setError("Failed to initialize stream");
         });
     }, []);
 
     // Load PDF document when stream URL is ready or file changes
     useEffect(() => {
-        if (!streamToken) return;
+        if (!streamInfo) return;
 
         let cancelled = false;
         setLoading(true);
@@ -49,7 +54,7 @@ export function PdfViewer({ file, onClose, onNext, onPrev, currentIndex, totalIt
         setNumPages(0);
 
         const folderIdParam = activeFolderId !== null ? activeFolderId.toString() : 'home';
-        const streamUrl = `http://localhost:14200/stream/${folderIdParam}/${file.id}?token=${streamToken}`;
+        const streamUrl = `${streamInfo.base_url}/stream/${folderIdParam}/${file.id}?token=${streamInfo.token}`;
 
         const loadingTask = pdfjsLib.getDocument(streamUrl);
 
@@ -80,7 +85,7 @@ export function PdfViewer({ file, onClose, onNext, onPrev, currentIndex, totalIt
             cancelled = true;
             loadingTask.destroy();
         };
-    }, [streamToken, activeFolderId, file.id]);
+    }, [streamInfo, activeFolderId, file.id]);
 
     // Cleanup PDF document on unmount
     useEffect(() => {

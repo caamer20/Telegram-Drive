@@ -46,15 +46,33 @@ export function useTelegramConnection(onLogoutParent: () => void) {
                         setIsConnected(true);
                         queryClient.invalidateQueries({ queryKey: ['files'] });
                     } catch {
-                        const shouldRetry = window.confirm("Failed to connect to Telegram. Retry?");
-                        if (shouldRetry) {
-                            window.location.reload();
-                        } else {
-                            if (_store) {
-                                await _store.delete('api_id');
-                                await _store.save();
+                        // Retry loop: keep asking until the user succeeds or cancels
+                        let connected = false;
+                        while (!connected) {
+                            const shouldRetry = await confirm({
+                                title: "Connection Failed",
+                                message: "Failed to connect to Telegram. Would you like to retry?",
+                                confirmText: "Retry",
+                                variant: 'danger'
+                            });
+                            if (!shouldRetry) {
+                                // User chose cancel — clear credentials and log out
+                                if (_store) {
+                                    await _store.delete('api_id');
+                                    await _store.save();
+                                }
+                                onLogoutParent();
+                                return;
                             }
-                            onLogoutParent();
+                            try {
+                                const apiId = parseInt(apiIdStr as string);
+                                await invoke('cmd_connect', { apiId });
+                                setIsConnected(true);
+                                queryClient.invalidateQueries({ queryKey: ['files'] });
+                                connected = true;
+                            } catch {
+                                // Loop will show the confirm dialog again
+                            }
                         }
                     }
                 } else {
@@ -74,7 +92,7 @@ export function useTelegramConnection(onLogoutParent: () => void) {
             }
         };
         initStore();
-    }, [queryClient, onLogoutParent]);
+    }, [queryClient, onLogoutParent, confirm]);
 
 
     useEffect(() => {

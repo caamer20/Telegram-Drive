@@ -7,7 +7,7 @@ pub mod bandwidth;
 use tauri::Manager;
 use tokio::sync::Mutex;
 use std::sync::Arc;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use commands::TelegramState;
 use commands::streaming::StreamConfig;
 use nas::state::NasState;
@@ -60,9 +60,8 @@ pub fn run() {
                 runner_shutdown: Arc::new(std::sync::Mutex::new(None)),
                 runner_count: Arc::new(std::sync::atomic::AtomicU32::new(0)),
                 peer_cache: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
-            };
-            let telegram_state_arc = Arc::new(telegram_state.clone());
-            app.manage(telegram_state);
+                cancelled_transfers: Arc::new(tokio::sync::RwLock::new(HashSet::new())),
+            });
             app.manage(bandwidth::BandwidthManager::new(app.handle()));
             app.manage(StreamConfig { token: stream_token.clone(), port: STREAM_PORT });
             app.manage(ActixServerHandle(server_handle_for_setup.clone()));
@@ -141,6 +140,9 @@ pub fn run() {
             commands::cmd_clean_cache,
             commands::cmd_get_thumbnail,
             commands::cmd_get_stream_info,
+            commands::cmd_cancel_transfer,
+            commands::cmd_auth_qr_login,
+            commands::cmd_auth_qr_poll,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

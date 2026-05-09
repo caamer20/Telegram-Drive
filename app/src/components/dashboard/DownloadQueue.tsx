@@ -1,13 +1,23 @@
 import { DownloadItem } from "../../types";
-import { Download, Check, X, AlertCircle } from "lucide-react";
+import { Download, Check, X, AlertCircle, RotateCcw } from "lucide-react";
+
+function formatBytes(bytes: number): string {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return `${(bytes / Math.pow(k, i)).toFixed(1)} ${sizes[i]}`;
+}
 
 interface DownloadQueueProps {
     items: DownloadItem[];
     onClearFinished: () => void;
     onCancelAll: () => void;
+    onCancelItem: (id: string) => void;
+    onRetryItem: (id: string) => void;
 }
 
-export function DownloadQueue({ items, onClearFinished, onCancelAll }: DownloadQueueProps) {
+export function DownloadQueue({ items, onClearFinished, onCancelAll, onCancelItem, onRetryItem }: DownloadQueueProps) {
     if (items.length === 0) return null;
 
     const activeCount = items.filter(i => i.status === 'pending' || i.status === 'downloading').length;
@@ -50,29 +60,55 @@ export function DownloadQueue({ items, onClearFinished, onCancelAll }: DownloadQ
                             <div className="flex-1 truncate text-telegram-subtext" title={item.filename}>
                                 {item.filename}
                             </div>
-                            {item.status === 'downloading' && item.progress !== undefined && (
-                                <div className="text-xs text-telegram-secondary font-mono">{item.progress}%</div>
+                            {item.status === 'downloading' && (
+                                <button onClick={() => onCancelItem(item.id)} className="text-gray-400 hover:text-red-400 transition-colors flex-shrink-0" title="Cancel">
+                                    <X className="w-3.5 h-3.5" />
+                                </button>
                             )}
-                            {item.status === 'cancelled' && <div className="text-xs text-gray-400">Cancelled</div>}
+                            {item.status === 'pending' && (
+                                <button onClick={() => onCancelItem(item.id)} className="text-gray-400 hover:text-red-400 transition-colors flex-shrink-0" title="Remove">
+                                    <X className="w-3.5 h-3.5" />
+                                </button>
+                            )}
+                            {(item.status === 'error' || item.status === 'cancelled') && (
+                                <button onClick={() => onRetryItem(item.id)} className="text-gray-400 hover:text-blue-400 transition-colors flex-shrink-0" title="Retry">
+                                    <RotateCcw className="w-3.5 h-3.5" />
+                                </button>
+                            )}
                         </div>
                         {item.status === 'downloading' && (
-                            <div className="w-full bg-telegram-border h-1 mt-1 rounded-full overflow-hidden">
-                                {item.progress !== undefined ? (
-                                    <div
-                                        className="bg-telegram-secondary h-full rounded-full transition-all duration-300"
-                                        style={{ width: `${item.progress}%` }}
-                                    />
-                                ) : (
-                                    <div className="bg-telegram-secondary h-full w-full animate-progress-indeterminate" />
-                                )}
-                            </div>
+                            <>
+                                <div className="w-full bg-telegram-border h-1 mt-1 rounded-full overflow-hidden">
+                                    {item.progress !== undefined ? (
+                                        <div
+                                            className="bg-telegram-secondary h-full rounded-full transition-all duration-300"
+                                            style={{ width: `${item.progress}%` }}
+                                        />
+                                    ) : (
+                                        <div className="bg-telegram-secondary h-full w-full animate-progress-indeterminate" />
+                                    )}
+                                </div>
+                                <div className="flex justify-between text-[10px] text-telegram-subtext mt-0.5">
+                                    <span>
+                                        {item.uploadedBytes !== undefined && item.totalBytes !== undefined
+                                            ? `${formatBytes(item.uploadedBytes)} / ${formatBytes(item.totalBytes)}`
+                                            : item.progress !== undefined ? `${item.progress}%` : ''}
+                                    </span>
+                                    <span>
+                                        {item.speedBytesPerSec !== undefined && item.speedBytesPerSec > 0
+                                            ? `${formatBytes(item.speedBytesPerSec)}/s`
+                                            : ''}
+                                    </span>
+                                </div>
+                            </>
                         )}
                         {item.status === 'error' && item.error && (
                             <div className="flex items-center gap-1 text-xs text-red-400 mt-1">
-                                <AlertCircle className="w-3 h-3" />
+                                <AlertCircle className="w-3 h-3 flex-shrink-0" />
                                 <span className="truncate">{item.error}</span>
                             </div>
                         )}
+                        {item.status === 'cancelled' && <div className="text-xs text-gray-400 mt-0.5">Cancelled</div>}
                     </div>
                 ))}
             </div>

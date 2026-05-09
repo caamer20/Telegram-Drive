@@ -7,6 +7,8 @@ use grammers_mtsender::SenderPool;
 use grammers_session::storages::SqliteSession;
 use tokio::sync::oneshot;
 use tokio::time::Duration;
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+use grammers_tl_types as tl;
 
 use crate::TelegramState;
 use crate::models::{AuthResult};
@@ -186,6 +188,7 @@ pub async fn cmd_logout(
     *state.password_token.lock().await = None;
     *state.api_id.lock().await = None;
     crate::commands::utils::clear_peer_cache(&state.peer_cache).await;
+    state.cancelled_transfers.write().await.clear();
 
     // 4. Remove Session File
     let app_data_dir = app_handle.path().app_data_dir().unwrap();
@@ -312,5 +315,98 @@ pub async fn cmd_auth_check_password(
             })
         }
         Err(e) => Err(format!("2FA Failed: {}", e))
+    }
+}
+
+/// QR Login -- Step 1: Export a login token and return the `tg://login?token=...` URL.
+/// The frontend renders this as a QR code for the user to scan with their phone.
+#[tauri::command]
+pub async fn cmd_auth_qr_login(
+    app_handle: tauri::AppHandle,
+    api_id: i32,
+    api_hash: String,
+    state: State<'_, TelegramState>,
+) -> Result<String, String> {
+    if api_hash.trim().is_empty() {
+        return Err("API Hash cannot be empty.".to_string());
+    }
+
+    // Store API ID
+    *state.api_id.lock().await = Some(api_id);
+
+    let client = ensure_client_initialized(&app_handle, &state, api_id).await?;
+
+    log::info!("Requesting QR login token...");
+
+    let result = client.invoke(&tl::functions::auth::ExportLoginToken {
+        api_id,
+        api_hash: api_hash.clone(),
+        except_ids: vec![],
+    }).await.map_err(|e| format!("ExportLoginToken failed: {}", e))?;
+
+    match result {
+        tl::enums::auth::LoginToken::Token(t) => {
+            let encoded = URL_SAFE_NO_PAD.encode(&t.token);
+            let url = format!("tg://login?token={}", encoded);
+            log::info!("QR login URL generated, expires at {}", t.expires);
+            Ok(url)
+        }
+        tl::enums::auth::LoginToken::Success(_s) => {
+            // Already authorized (e.g. from a previous session)
+            log::info!("QR login: already authorized");
+            Ok("__authorized__".to_string())
+        }
+        tl::enums::auth::LoginToken::MigrateTo(m) => {
+            log::info!("QR login: need to migrate to DC {}", m.dc_id);
+            let encoded = URL_SAFE_NO_PAD.encode(&m.token);
+            let url = format!("tg://login?token={}", encoded);
+            Ok(url)
+        }
+    }
+}
+
+/// QR Login -- Step 2: Poll for scan completion.
+/// Checks if the session became authorized after the user scanned the QR code.
+///
+/// IMPORTANT: We must NOT call auth.exportLoginToken here for polling.
+/// Each call to exportLoginToken generates a NEW token and invalidates the
+/// previous one, causing the scanned QR code to fail with "Invalid code".
+/// Instead, we check is_authorized() which succeeds once the phone app
+/// accepts the token via auth.acceptLoginToken.
+#[tauri::command]
+pub async fn cmd_auth_qr_poll(
+    state: State<'_, TelegramState>,
+) -> Result<AuthResult, String> {
+    let client = {
+        let guard = state.client.lock().await;
+        guard.as_ref().ok_or("Client not initialized")?.clone()
+    };
+
+    // Check if the session is now authorized (user scanned QR on phone)
+    match client.is_authorized().await {
+        Ok(true) => {
+            log::info!("QR login: session authorized!");
+            Ok(AuthResult {
+                success: true,
+                next_step: Some("dashboard".to_string()),
+                error: None,
+            })
+        }
+        Ok(false) => {
+            // Not yet scanned or accepted
+            Ok(AuthResult {
+                success: false,
+                next_step: Some("waiting".to_string()),
+                error: None,
+            })
+        }
+        Err(e) => {
+            log::warn!("QR poll auth check failed: {}", e);
+            Ok(AuthResult {
+                success: false,
+                next_step: Some("waiting".to_string()),
+                error: None,
+            })
+        }
     }
 }
