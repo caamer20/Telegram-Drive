@@ -1,4 +1,7 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { load } from "@tauri-apps/plugin-store";
+
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { AuthWizard } from "./components/AuthWizard";
 import { Dashboard } from "./components/Dashboard";
@@ -16,8 +19,62 @@ const queryClient = new QueryClient();
 
 function AppContent() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [checkingSession, setCheckingSession] = useState(true);
+
   const { theme } = useTheme();
-  const { available, version, downloading, progress, downloadAndInstall, dismissUpdate } = useUpdateCheck();
+
+  const {
+    available,
+    version,
+    downloading,
+    progress,
+    downloadAndInstall,
+    dismissUpdate,
+  } = useUpdateCheck();
+
+  useEffect(() => {
+    const checkSession = async () => {
+      try {
+        const store = await load("config.json");
+
+        const savedId = await store.get<string>("api_id");
+
+        if (!savedId) {
+          setCheckingSession(false);
+          return;
+        }
+
+        const apiId = parseInt(savedId);
+
+        if (isNaN(apiId)) {
+          setCheckingSession(false);
+          return;
+        }
+
+        await invoke("cmd_connect", { apiId });
+
+        const ok = await invoke<boolean>("cmd_check_connection");
+
+        if (ok) {
+          setIsAuthenticated(true);
+        }
+      } catch (err) {
+        console.error(err);
+      } finally {
+        setCheckingSession(false);
+      }
+    };
+
+    checkSession();
+  }, []);
+
+  if (checkingSession) {
+    return (
+      <main className="h-screen w-screen flex items-center justify-center">
+        Checking saved session...
+      </main>
+    );
+  }
 
   return (
     <main className="h-screen w-screen text-telegram-text overflow-hidden selection:bg-telegram-primary/30 relative">
@@ -29,7 +86,9 @@ function AppContent() {
         onUpdate={downloadAndInstall}
         onDismiss={dismissUpdate}
       />
+
       <Toaster theme={theme} position="bottom-center" />
+
       {isAuthenticated ? (
         <Dashboard onLogout={() => setIsAuthenticated(false)} />
       ) : (
@@ -38,7 +97,6 @@ function AppContent() {
     </main>
   );
 }
-
 
 function App() {
   return (
