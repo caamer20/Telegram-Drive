@@ -104,6 +104,22 @@ jobs:
           projectPath: ./app
           args: ${{ matrix.args }}
 
+      - name: Brand macOS DMG file icon
+        if: matrix.platform == 'macos-latest'
+        run: |
+          bash .github/scripts/brand-dmg-file.sh \
+            "app/src-tauri/target/universal-apple-darwin/release/bundle/dmg/Telegram Drive_${{ needs.create-release.outputs.version }}_universal.dmg" \
+            "app/src-tauri/icons/icon.icns"
+
+      - name: Replace uploaded macOS DMG with branded asset
+        if: matrix.platform == 'macos-latest'
+        run: node .github/scripts/replace-release-asset.mjs
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          RELEASE_ID: ${{ needs.create-release.outputs.release_id }}
+          ASSET_PATH: app/src-tauri/target/universal-apple-darwin/release/bundle/dmg/Telegram Drive_${{ needs.create-release.outputs.version }}_universal.dmg
+
       - name: Patch AppImage for cross-distro EGL compatibility
         if: matrix.platform == 'ubuntu-22.04'
         run: |

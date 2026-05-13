@@ -38,6 +38,23 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "macOS": {
+      "dmg": {
+        "background": "./icons/dmg-background.png",
+        "windowSize": {
+          "width": 920,
+          "height": 560
+        },
+        "appPosition": {
+          "x": 170,
+          "y": 360
+        },
+        "applicationFolderPosition": {
+          "x": 710,
+          "y": 360
+        }
+      }
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

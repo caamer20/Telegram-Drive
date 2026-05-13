@@ -1,0 +1,68 @@
+<svg width="920" height="560" viewBox="0 0 920 560" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="96" y1="48" x2="812" y2="520" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#14263D"/>
+      <stop offset="0.55" stop-color="#0E1621"/>
+      <stop offset="1" stop-color="#0A111A"/>
+    </linearGradient>
+    <radialGradient id="glow-left" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(166 128) rotate(37.714) scale(280.228 219.031)">
+      <stop stop-color="#3CA5FF" stop-opacity="0.28"/>
+      <stop offset="1" stop-color="#3CA5FF" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glow-right" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(734 402) rotate(-145.162) scale(288.337 201.485)">
+      <stop stop-color="#2481CC" stop-opacity="0.18"/>
+      <stop offset="1" stop-color="#2481CC" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="card" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="rgba(255,255,255,0.12)"/>
+      <stop offset="1" stop-color="rgba(255,255,255,0.04)"/>
+    </linearGradient>
+    <linearGradient id="brand" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#3B82F6"/>
+      <stop offset="1" stop-color="#1D4ED8"/>
+    </linearGradient>
+    <linearGradient id="guide" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#3CA5FF" stop-opacity="0"/>
+      <stop offset="0.18" stop-color="#3CA5FF" stop-opacity="0.75"/>
+      <stop offset="0.82" stop-color="#3CA5FF" stop-opacity="0.75"/>
+      <stop offset="1" stop-color="#3CA5FF" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="blur" x="-40" y="-40" width="1000" height="640" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="16"/>
+    </filter>
+  </defs>
+
+  <rect width="920" height="560" rx="24" fill="url(#bg)"/>
+  <rect width="920" height="560" rx="24" fill="url(#glow-left)"/>
+  <rect width="920" height="560" rx="24" fill="url(#glow-right)"/>
+
+  <g opacity="0.9">
+    <rect x="42" y="34" width="310" height="104" rx="24" fill="url(#card)" stroke="rgba(255,255,255,0.08)"/>
+    <rect x="66" y="58" width="46" height="46" rx="13" fill="url(#brand)"/>
+    <path d="M89.0002 72.6666C81.7127 72.6666 75.8335 78.5458 75.8335 85.8333V87.1666C75.8335 98.6766 84.126 109.44 95.5002 111.833C106.874 109.44 115.167 98.6766 115.167 87.1666V85.8333C115.167 78.5458 109.287 72.6666 102 72.6666H89.0002ZM95.5002 101.167L87.2502 92.9166L90.0752 90.0916L95.5002 95.4916L105.925 85.0916L108.75 87.9166L95.5002 101.167Z" fill="white"/>
+    <text x="128" y="79" fill="#FFFFFF" font-family="SF Pro Display, Inter, Helvetica, Arial, sans-serif" font-size="26" font-weight="700">Telegram Drive</text>
+    <text x="128" y="107" fill="#8E9FB3" font-family="SF Pro Text, Inter, Helvetica, Arial, sans-serif" font-size="15" font-weight="500">Private cloud storage over Telegram</text>
+  </g>
+
+  <g opacity="0.9" filter="url(#blur)">
+    <path d="M324 312H590" stroke="url(#guide)" stroke-width="14" stroke-linecap="round"/>
+  </g>
+  <path d="M334 312H580" stroke="url(#guide)" stroke-width="6" stroke-linecap="round"/>
+  <path d="M554 285L583 312L554 339" stroke="#3CA5FF" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <g opacity="0.92">
+    <rect x="310" y="250" width="294" height="124" rx="28" fill="rgba(10,17,26,0.56)" stroke="rgba(255,255,255,0.08)"/>
+    <text x="457" y="298" text-anchor="middle" fill="#FFFFFF" font-family="SF Pro Display, Inter, Helvetica, Arial, sans-serif" font-size="24" font-weight="700">Install Telegram Drive</text>
+    <text x="457" y="329" text-anchor="middle" fill="#8E9FB3" font-family="SF Pro Text, Inter, Helvetica, Arial, sans-serif" font-size="17" font-weight="500">Drag the app into Applications</text>
+    <text x="457" y="353" text-anchor="middle" fill="#2481CC" font-family="SF Pro Text, Inter, Helvetica, Arial, sans-serif" font-size="14" font-weight="600">Universal build for Apple Silicon and Intel Macs</text>
+  </g>
+
+  <g opacity="0.32">
+    <circle cx="744" cy="130" r="3" fill="#3CA5FF"/>
+    <circle cx="772" cy="158" r="3" fill="#3CA5FF"/>
+    <circle cx="716" cy="158" r="3" fill="#3CA5FF"/>
+    <circle cx="170" cy="438" r="3" fill="#3CA5FF"/>
+    <circle cx="198" cy="466" r="3" fill="#3CA5FF"/>
+    <circle cx="142" cy="466" r="3" fill="#3CA5FF"/>
+  </g>
+</svg>
