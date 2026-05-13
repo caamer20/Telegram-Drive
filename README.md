@@ -106,6 +106,21 @@ Telegram Drive leverages the Telegram API to allow you to upload, organize, and 
     npm run tauri build
     ```
 
+### macOS Universal Releases and Auto-Updates
+
+Release tags (`v*`) build a universal macOS app with `--target universal-apple-darwin`, so the `.dmg` works on both Intel and Apple Silicon Macs. The `.dmg` is the user-facing installer; the in-app updater uses the signed `.app.tar.gz` artifact and `latest.json` from the GitHub Release.
+
+Updater artifacts are enabled only in release builds through `app/src-tauri/tauri.release.conf.json`, so regular local builds do not require the updater signing private key. The release workflow validates the macOS updater manifest before publishing the draft release. It ensures both `darwin-x86_64` and `darwin-aarch64` entries point to the same universal `.app.tar.gz` artifact, not the `.dmg`, and that the updater signature is present.
+
+Required GitHub Actions secrets for updater releases:
+
+```text
+TAURI_SIGNING_PRIVATE_KEY
+TAURI_SIGNING_PRIVATE_KEY_PASSWORD
+```
+
+Without an Apple Developer ID certificate, macOS builds are not Developer ID signed or notarized. Tauri updater signatures still protect update integrity, but first-install Gatekeeper trust is not equivalent to a notarized production macOS release.
+
 ##  Open Source & License
 
 This project is **Free and Open Source Software**. You are free to use, modify, and distribute it.

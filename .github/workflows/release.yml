@@ -10,6 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       release_id: ${{ steps.create-release.outputs.result }}
+      version: ${{ steps.get_version.outputs.VERSION }}
     permissions:
       contents: write
     steps:
@@ -45,23 +46,18 @@ jobs:
         include:
           # Windows
           - platform: windows-latest
-            args: ''
+            args: '--config src-tauri/tauri.release.conf.json'
             target: ''
           
           # Linux
           - platform: ubuntu-22.04
-            args: ''
+            args: '--config src-tauri/tauri.release.conf.json'
             target: ''
             
-          # macOS Intel
+          # macOS Universal (Intel + Apple Silicon)
           - platform: macos-latest
-            args: '--target x86_64-apple-darwin'
-            target: 'x86_64-apple-darwin'
-          
-          # macOS Apple Silicon
-          - platform: macos-latest
-            args: '--target aarch64-apple-darwin'
-            target: 'aarch64-apple-darwin'
+            args: '--target universal-apple-darwin --config src-tauri/tauri.release.conf.json'
+            target: 'x86_64-apple-darwin,aarch64-apple-darwin'
 
     runs-on: ${{ matrix.platform }}
     steps:
@@ -97,13 +93,14 @@ jobs:
         run: npm install
 
       - name: Build the app
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           releaseId: ${{ needs.create-release.outputs.release_id }}
+          tagName: v${{ needs.create-release.outputs.version }}
           projectPath: ./app
           args: ${{ matrix.args }}
 
@@ -249,8 +246,25 @@ jobs:
 
           echo "::notice::AppImage patched successfully for cross-distro EGL compatibility"
 
-  publish-release:
+  validate-macos-updater:
     needs: [create-release, build-tauri]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate and sync macOS updater manifest
+        run: node .github/scripts/macos-updater-release.mjs sync
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          RELEASE_ID: ${{ needs.create-release.outputs.release_id }}
+          VERSION: ${{ needs.create-release.outputs.version }}
+          RELEASE_NOTES: "See the assets below to download and install."
+
+  publish-release:
+    needs: [create-release, build-tauri, validate-macos-updater]
     runs-on: ubuntu-latest
     permissions:
       contents: write
