@@ -1,6 +1,7 @@
 use tauri::State;
 
 /// Holds the per-session streaming config (token + port)
+#[derive(Clone)]
 pub struct StreamConfig {
     pub token: String,
     pub port: u16,

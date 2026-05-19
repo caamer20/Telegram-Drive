@@ -8,6 +8,7 @@ use std::path::PathBuf;
 pub struct ApiSettingsFile {
     pub enabled: bool,
     pub port: u16,
+    pub host: String,
     pub key_hash: Option<String>,
 }
 
@@ -16,6 +17,7 @@ impl Default for ApiSettingsFile {
         Self {
             enabled: false,
             port: 8550,
+            host: "127.0.0.1".to_string(),
             key_hash: None,
         }
     }
@@ -26,6 +28,7 @@ impl Default for ApiSettingsFile {
 pub struct ApiSettingsResponse {
     pub enabled: bool,
     pub port: u16,
+    pub host: String,
     pub key_set: bool,
     pub running: bool,
 }
@@ -53,7 +56,7 @@ fn save_settings(app: &AppHandle, settings: &ApiSettingsFile) -> Result<(), Stri
     std::fs::write(path, json).map_err(|e| e.to_string())
 }
 
-fn hash_key(key: &str) -> String {
+pub(crate) fn hash_key(key: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(key.as_bytes());
     format!("{:x}", hasher.finalize())
@@ -76,6 +79,7 @@ pub async fn cmd_get_api_settings(
     Ok(ApiSettingsResponse {
         enabled: settings.enabled,
         port: settings.port,
+        host: settings.host.clone(),
         key_set: settings.key_hash.is_some(),
         running,
     })
@@ -85,6 +89,7 @@ pub async fn cmd_get_api_settings(
 pub async fn cmd_update_api_settings(
     enabled: bool,
     port: u16,
+    host: String,
     app: AppHandle,
 ) -> Result<ApiSettingsResponse, String> {
     // Validate port range
@@ -100,13 +105,15 @@ pub async fn cmd_update_api_settings(
     let mut settings = load_settings(&app);
     let port_changed = settings.port != port;
     let enabled_changed = settings.enabled != enabled;
+    let host_changed = settings.host != host;
 
     settings.enabled = enabled;
     settings.port = port;
+    settings.host = host;
     save_settings(&app, &settings)?;
 
     // Restart server if anything changed
-    if port_changed || enabled_changed {
+    if port_changed || enabled_changed || host_changed {
         crate::restart_api_server(&app);
     }
 
@@ -118,6 +125,7 @@ pub async fn cmd_update_api_settings(
     Ok(ApiSettingsResponse {
         enabled: settings.enabled,
         port: settings.port,
+        host: settings.host.clone(),
         key_set: settings.key_hash.is_some(),
         running,
     })

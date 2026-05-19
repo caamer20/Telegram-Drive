@@ -14,6 +14,7 @@ interface SettingsModalProps {
 interface ApiSettings {
     enabled: boolean;
     port: number;
+    host: string;
     key_set: boolean;
     running: boolean;
 }
@@ -24,8 +25,10 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     const [clearing, setClearing] = useState(false);
 
     // API settings state
-    const [apiSettings, setApiSettings] = useState<ApiSettings>({ enabled: false, port: 8550, key_set: false, running: false });
+    const [apiSettings, setApiSettings] = useState<ApiSettings>({ enabled: false, port: 8550, host: '127.0.0.1', key_set: false, running: false });
     const [apiPort, setApiPort] = useState('8550');
+    const [apiHost, setApiHost] = useState('127.0.0.1');
+    const [apiCustomHost, setApiCustomHost] = useState('');
     const [apiLoading, setApiLoading] = useState(false);
     const [generatedKey, setGeneratedKey] = useState<string | null>(null);
     const [keyCopied, setKeyCopied] = useState(false);
@@ -35,6 +38,10 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
             const result = await invoke<ApiSettings>('cmd_get_api_settings');
             setApiSettings(result);
             setApiPort(result.port.toString());
+            setApiHost(result.host);
+            if (!['127.0.0.1', '0.0.0.0'].includes(result.host)) {
+                setApiCustomHost(result.host);
+            }
         } catch {
             // API settings not available
         }
@@ -68,11 +75,32 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
             const result = await invoke<ApiSettings>('cmd_update_api_settings', {
                 enabled: !apiSettings.enabled,
                 port,
+                host: apiHost,
             });
             setApiSettings(result);
+            setApiHost(result.host);
             toast.success(result.enabled ? 'API server started' : 'API server stopped');
         } catch (e) {
             toast.error(`Failed to update API: ${e}`);
+        } finally {
+            setApiLoading(false);
+        }
+    };
+
+    const handleHostChange = async (newHost: string) => {
+        setApiHost(newHost);
+        setApiLoading(true);
+        try {
+            const port = parseInt(apiPort, 10);
+            const result = await invoke<ApiSettings>('cmd_update_api_settings', {
+                enabled: apiSettings.enabled,
+                port,
+                host: newHost,
+            });
+            setApiSettings(result);
+            toast.success(`API host updated to ${newHost}`);
+        } catch (e) {
+            toast.error(`Failed to update host: ${e}`);
         } finally {
             setApiLoading(false);
         }
@@ -90,8 +118,10 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
             const result = await invoke<ApiSettings>('cmd_update_api_settings', {
                 enabled: apiSettings.enabled,
                 port,
+                host: apiHost,
             });
             setApiSettings(result);
+            setApiHost(result.host);
             toast.success(`API port updated to ${port}`);
         } catch (e) {
             toast.error(`Failed to update port: ${e}`);
@@ -259,7 +289,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                         <div>
                                             <p className="text-sm text-telegram-text font-medium">Enable API Server</p>
                                             <p className="text-xs text-telegram-subtext">
-                                                {apiSettings.running ? `Running on port ${apiSettings.port}` : 'Localhost only (127.0.0.1)'}
+                                                {apiSettings.running ? `Running on http://${apiSettings.host}:${apiSettings.port}` : 'Server is stopped'}
                                             </p>
                                         </div>
                                     </div>
@@ -290,6 +320,66 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                             className="w-20 bg-telegram-bg border border-telegram-border rounded-md px-2 py-1 text-sm text-telegram-text text-center focus:outline-none focus:border-telegram-primary/50 transition"
                                         />
                                     </div>
+                                </div>
+
+                                {/* Bind Address */}
+                                <div className="p-3 rounded-lg bg-telegram-hover/50">
+                                    <div className="flex items-center gap-2 mb-2.5">
+                                        <Globe className="w-4 h-4 text-telegram-subtext" />
+                                        <p className="text-sm text-telegram-text font-medium">Bind Address</p>
+                                    </div>
+                                    <div className="flex gap-2">
+                                        {['127.0.0.1', '0.0.0.0'].map(hostOpt => (
+                                            <button
+                                                key={hostOpt}
+                                                disabled={apiLoading}
+                                                onClick={() => handleHostChange(hostOpt)}
+                                                className={`flex-1 px-3 py-2 rounded-lg text-xs font-medium transition border ${
+                                                    apiHost === hostOpt
+                                                        ? 'bg-telegram-primary/10 text-telegram-primary border-telegram-primary/30'
+                                                        : 'bg-telegram-bg text-telegram-subtext border-telegram-border hover:border-telegram-primary/30 hover:text-telegram-text'
+                                                } disabled:opacity-50`}
+                                            >
+                                                <div className="font-semibold">{hostOpt === '127.0.0.1' ? 'Localhost' : 'All Interfaces'}</div>
+                                                <div className="text-[10px] opacity-70 mt-0.5">{hostOpt}</div>
+                                            </button>
+                                        ))}
+                                        <button
+                                            disabled={apiLoading}
+                                            onClick={() => {
+                                                const custom = apiCustomHost || '';
+                                                if (custom && custom !== apiHost) handleHostChange(custom);
+                                            }}
+                                            className={`flex-1 px-3 py-2 rounded-lg text-xs font-medium transition border ${
+                                                !['127.0.0.1', '0.0.0.0'].includes(apiHost)
+                                                    ? 'bg-telegram-primary/10 text-telegram-primary border-telegram-primary/30'
+                                                    : 'bg-telegram-bg text-telegram-subtext border-telegram-border hover:border-telegram-primary/30 hover:text-telegram-text'
+                                            } disabled:opacity-50`}
+                                        >
+                                            <div className="font-semibold">Custom</div>
+                                            <div className="text-[10px] opacity-70 mt-0.5">
+                                                {!['127.0.0.1', '0.0.0.0'].includes(apiHost) ? apiHost : 'Enter IP'}
+                                            </div>
+                                        </button>
+                                    </div>
+                                    {!['127.0.0.1', '0.0.0.0'].includes(apiHost) && (
+                                        <div className="flex gap-2 mt-2">
+                                            <input
+                                                type="text"
+                                                value={apiCustomHost}
+                                                onChange={e => setApiCustomHost(e.target.value)}
+                                                placeholder="e.g. 192.168.1.20"
+                                                className="flex-1 bg-telegram-bg border border-telegram-border rounded-md px-2 py-1.5 text-sm text-telegram-text focus:outline-none focus:border-telegram-primary/50 transition"
+                                            />
+                                            <button
+                                                disabled={apiLoading || !apiCustomHost}
+                                                onClick={() => apiCustomHost && handleHostChange(apiCustomHost)}
+                                                className="px-3 py-1.5 rounded-lg text-xs font-medium bg-telegram-primary/10 text-telegram-primary hover:bg-telegram-primary/20 transition disabled:opacity-50"
+                                            >
+                                                Apply
+                                            </button>
+                                        </div>
+                                    )}
                                 </div>
 
                                 {/* API Key */}

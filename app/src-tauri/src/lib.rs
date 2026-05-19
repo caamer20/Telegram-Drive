@@ -13,6 +13,7 @@ use rand::Rng;
 
 pub mod server;
 pub mod api_routes;
+use crate::server::StreamTokenData;
 
 /// Single source of truth for the Actix streaming server port.
 /// Referenced in lib.rs (server startup) and exposed to the frontend
@@ -61,8 +62,10 @@ pub fn restart_api_server(app: &tauri::AppHandle) {
     // Need TelegramState to share with the API server
     let tg_state = Arc::new(app.state::<TelegramState>().inner().clone());
     let api_port = settings.port;
+    let api_host = settings.host.clone();
     let key_hash = settings.key_hash.clone();
     let handle_for_thread = api_handle_arc.clone();
+    let stream_config = app.state::<StreamConfig>().inner().clone();
 
     std::thread::spawn(move || {
         let sys = actix_rt::System::new();
@@ -70,9 +73,14 @@ pub fn restart_api_server(app: &tauri::AppHandle) {
             let api_state_data = actix_web::web::Data::new(tg_state);
             let api_state = actix_web::web::Data::new(api_routes::ApiState {
                 key_hash,
+                folder_cache: tokio::sync::RwLock::new(None),
             });
+            let stream_token_data = actix_web::web::Data::new(StreamTokenData {
+                token: stream_config.token.clone(),
+            });
+            let stream_api_config = actix_web::web::Data::new(stream_config.clone());
 
-            log::info!("Starting REST API server on port {}", api_port);
+            log::info!("Starting REST API server on {}:{}", api_host, api_port);
 
             match actix_web::HttpServer::new(move || {
                 let cors = actix_cors::Cors::default()
@@ -84,14 +92,16 @@ pub fn restart_api_server(app: &tauri::AppHandle) {
                     .wrap(cors)
                     .app_data(api_state_data.clone())
                     .app_data(api_state.clone())
+                    .app_data(stream_token_data.clone())
+                    .app_data(stream_api_config.clone())
                     .configure(api_routes::configure_api)
             })
-            .bind(("127.0.0.1", api_port)) {
+            .bind((api_host.as_str(), api_port)) {
                 Ok(bound) => {
                     let server = bound.run();
                     *handle_for_thread.lock().unwrap() = Some(server.handle());
                     running_flag.store(true, std::sync::atomic::Ordering::Relaxed);
-                    log::info!("REST API server started on http://127.0.0.1:{}", api_port);
+                    log::info!("REST API server started on http://{}:{}", api_host, api_port);
                     server.await.ok();
                 }
                 Err(e) => {
@@ -245,3 +255,4 @@ pub fn run() {
         }
     });
 }
+
