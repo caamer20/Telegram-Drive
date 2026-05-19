@@ -1,17 +1,11 @@
-# Telegram Drive 
-
-**Telegram Drive** is an open-source, cross-platform desktop application that turns your Telegram account into an unlimited, secure cloud storage drive. Built with **Tauri**, **Rust**, and **React**.
-
 # Telegram Drive
 
-**Telegram Drive** is an open-source, cross-platform desktop application that turns
-your Telegram account into an unlimited, secure cloud storage drive. Built with
-**Tauri**, **Rust**, and **React**.
+**Telegram Drive** is an open-source, cross-platform desktop and mobile application that turns your Telegram account into an unlimited, secure cloud storage drive. Built with **Tauri (Rust/React)** and **Flutter (Dart)**.
 
 <div align="center">
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20MacOS%20%7C%20Linux-blue)]()
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20MacOS%20%7C%20Linux%20%7C%20iOS%20%7C%20Android-blue)]()
 [![Downloads](https://img.shields.io/github/downloads/caamer20/telegram-drive/total)](https://github.com/caamer20/telegram-drive/releases)
 [![oosmetrics](https://api.oosmetrics.com/api/v1/badge/achievement/ae8e5a6b-e815-4799-a408-4a59980cf9c8.svg)](https://oosmetrics.com/repo/caamer20/Telegram-Drive)
 [![oosmetrics](https://api.oosmetrics.com/api/v1/badge/achievement/029fb97b-a54a-4566-a1eb-aa1a5039065d.svg)](https://oosmetrics.com/repo/caamer20/Telegram-Drive)
@@ -28,16 +22,19 @@ Telegram Drive leverages the Telegram API to allow you to upload, organize, and 
 ###  Key Features
 
 *   **Unlimited Cloud Storage**: Utilizing Telegram's generous cloud infrastructure.
+*   **Mobile Companion App (Flutter)**: Native iOS and Android app for browsing, downloading, and streaming files on the go.
 *   **High Performance Grid**: Virtual scrolling handles folders with thousands of files instantly.
 *   **Auto-Updates**: Seamless updates for Windows, macOS, and Linux.
 *   **Media Streaming**: Stream video and audio files directly without downloading.
 *   **PDF Viewer:** Built-in PDF support with infinite scrolling for seamless document reading.
 *   **Drag & Drop**: Intuitive drag-and-drop upload and file management.
 *   **Thumbnail Previews**: Inline thumbnails for images and media files.
+*   **Thumbnail Cleanup on Folder Delete**: Thumbnails are automatically cleaned up when a folder is deleted.
 *   **Folder Management**: Create "Folders" (private Telegram Channels) to organize content.
-*   **REST API for AI Integration**: Secure local API (off by default) with configurable port and API key auth. OpenAPI spec for seamless LLM and tool integration.
+*   **Folder Upload with Automatic Zipping**: Upload entire folders as compressed zip files with a single click.
+*   **Configurable REST API (OpenAPI)**: Secure local API with configurable port, API key authentication, and OpenAPI spec for seamless LLM and tool integration. Off by default.
 *   **Privacy Focused**: API keys and data stay local. No third-party servers.
-*   **Cross-Platform**: Native apps for macOS (Intel/ARM), Windows, and Linux.
+*   **Cross-Platform**: Native apps for macOS (Intel/ARM), Windows, Linux, iOS, and Android.
 
 ##  Screenshots
 
@@ -65,6 +62,7 @@ Telegram Drive leverages the Telegram API to allow you to upload, organize, and 
 
 *   **Frontend**: React, TypeScript, TailwindCSS, Framer Motion
 *   **Backend**: Rust (Tauri), Grammers (Telegram Client)
+*   **Mobile**: Flutter (Dart), go_router, audioplayers, video_player
 *   **Build Tool**: Vite
 
 
@@ -117,6 +115,18 @@ Telegram Drive leverages the Telegram API to allow you to upload, organize, and 
     npm run tauri build
     ```
 
+### Mobile App (Flutter)
+
+A companion iOS/Android app connects to the desktop app's local REST API.
+
+```bash
+cd mobile
+flutter pub get
+flutter run
+```
+
+See [mobile/README.md](mobile/README.md) for full details.
+
 ##  Open Source & License
 
 This project is **Free and Open Source Software**. You are free to use, modify, and distribute it.
@@ -128,6 +138,17 @@ Licensed under the **MIT License**.
 
 If you're looking for a version of this app that's optimized for VPNs check out this repo:
 https://github.com/caamer20/Telegram-Drive-ForVPNs
+
+## Changelog
+
+### v1.4.2
+- Folder Upload with Automatic Zipping
+
+### v1.4.1
+- Thumbnail Cleanup Fixes
+
+### v1.4.0
+- Settings Modal and Secure REST API
 
 <div align="center">
   <!-- PayPal -->

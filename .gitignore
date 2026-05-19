@@ -9,9 +9,21 @@ dist/
 /app/src-tauri/gen/
 **/*.rs.bk
 
+# Flutter / Dart (mobile)
+mobile/.dart_tool/
+mobile/.pub/
+mobile/.packages
+mobile/build/
+mobile/coverage/
+mobile/.flutter-plugins
+mobile/.flutter-plugins-dependencies
+
 # Editors
 .vscode/
 .idea/
+
+# Session / Work artifacts
+.sisyphus/
 
 # Misc
 CompiledApps/
