@@ -10,11 +10,28 @@ interface ThemeContextType {
 
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 
+function getStoredTheme(): Theme | null {
+    try {
+        const saved = localStorage.getItem('theme');
+        return saved === 'light' || saved === 'dark' ? saved : null;
+    } catch {
+        return null;
+    }
+}
+
+function persistTheme(theme: Theme) {
+    try {
+        localStorage.setItem('theme', theme);
+    } catch {
+        // Keep the in-memory theme even when storage is unavailable.
+    }
+}
+
 // Get initial theme synchronously to prevent flash
 function getInitialTheme(): Theme {
     if (typeof window !== 'undefined') {
-        const saved = localStorage.getItem('theme') as Theme;
-        if (saved === 'light' || saved === 'dark') return saved;
+        const saved = getStoredTheme();
+        if (saved) return saved;
         if (window.matchMedia('(prefers-color-scheme: light)').matches) {
             return 'light';
         }
@@ -45,7 +62,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     // Use useLayoutEffect to apply theme synchronously before paint
     useLayoutEffect(() => {
         applyTheme(theme);
-        localStorage.setItem('theme', theme);
+        persistTheme(theme);
     }, [theme]);
 
     const toggleTheme = () => {
