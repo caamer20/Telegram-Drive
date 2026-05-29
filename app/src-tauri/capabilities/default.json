@@ -10,6 +10,15 @@
     "shell:allow-open",
     "store:default",
     "updater:default",
-    "process:allow-restart"
+    "process:allow-restart",
+    "dialog:default",
+    "dialog:allow-open",
+    "dialog:allow-save",
+    "fs:default",
+    "fs:allow-read-file",
+    "fs:allow-write-file",
+    "fs:allow-read-dir",
+    "fs:scope-home-recursive",
+    "fs:scope-download-recursive"
   ]
 }

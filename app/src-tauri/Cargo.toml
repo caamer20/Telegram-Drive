@@ -52,6 +52,4 @@ sqlite = "0.37.0"
 [target.'cfg(target_os = "android")'.dependencies]
 jni = "0.21"
 ndk-context = "0.1.1"
-
-
-
+bitflags = "=2.10.0"
