@@ -627,7 +627,7 @@ pub async fn cmd_search_global(
         for msg in msgs.messages {
             if let tl::enums::Message::Message(m) = msg {
                 if let Some(tl::enums::MessageMedia::Document(d)) = m.media {
-                    if let tl::enums::Document::Document(doc) = d.document.unwrap() {
+                    if let Some(tl::enums::Document::Document(doc)) = d.document {
                         let name = doc.attributes.iter().find_map(|a| match a {
                             tl::enums::DocumentAttribute::Filename(f) => Some(f.file_name.clone()),
                             _ => None
@@ -653,7 +653,7 @@ pub async fn cmd_search_global(
         for msg in msgs.messages {
             if let tl::enums::Message::Message(m) = msg {
                 if let Some(tl::enums::MessageMedia::Document(d)) = m.media {
-                    if let tl::enums::Document::Document(doc) = d.document.unwrap() {
+                    if let Some(tl::enums::Document::Document(doc)) = d.document {
                         let name = doc.attributes.iter().find_map(|a| match a {
                             tl::enums::DocumentAttribute::Filename(f) => Some(f.file_name.clone()),
                             _ => None
