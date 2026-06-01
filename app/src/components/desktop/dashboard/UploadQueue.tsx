@@ -22,6 +22,22 @@ export function UploadQueue({ items, onClearFinished, onCancelAll, onCancelItem,
 
     const hasPendingOrActive = items.some(i => i.status === 'pending' || i.status === 'uploading');
 
+    const activeAndSuccessItems = items.filter(i => i.status === 'uploading' || i.status === 'pending' || i.status === 'success');
+    let totalBytes = 0;
+    let totalUploadedBytes = 0;
+    let successCount = 0;
+
+    activeAndSuccessItems.forEach(i => {
+        if (i.status === 'success') {
+            successCount++;
+        }
+        const size = i.totalBytes || 0;
+        totalBytes += size;
+        totalUploadedBytes += i.uploadedBytes || (i.status === 'success' ? size : 0);
+    });
+
+    const overallPercent = totalBytes > 0 ? Math.round((totalUploadedBytes / totalBytes) * 100) : 0;
+
     return (
         <div className="fixed bottom-4 right-4 w-80 bg-telegram-surface border border-telegram-border rounded-xl shadow-2xl overflow-hidden z-[100]">
             <div className="p-3 border-b border-telegram-border bg-telegram-hover flex justify-between items-center">
@@ -33,6 +49,24 @@ export function UploadQueue({ items, onClearFinished, onCancelAll, onCancelItem,
                     <button onClick={onClearFinished} className="text-xs text-telegram-primary hover:text-telegram-text transition-colors">Clear Finished</button>
                 </div>
             </div>
+            {hasPendingOrActive && (
+                <div className="p-3 border-b border-telegram-border bg-telegram-surface/30 flex flex-col gap-1.5">
+                    <div className="flex justify-between text-[11px] text-telegram-subtext font-medium">
+                        <span>Uploading {successCount}/{activeAndSuccessItems.length} file(s)</span>
+                        <span>{overallPercent}%</span>
+                    </div>
+                    <div className="w-full bg-telegram-border h-1.5 rounded-full overflow-hidden">
+                        {totalBytes > 0 ? (
+                            <div
+                                className="bg-blue-500 h-full rounded-full transition-all duration-300"
+                                style={{ width: `${overallPercent}%` }}
+                            />
+                        ) : (
+                            <div className="bg-blue-500 h-full w-full animate-pulse" style={{ width: '10%' }} />
+                        )}
+                    </div>
+                </div>
+            )}
             <div className="max-h-60 overflow-y-auto p-2 space-y-2">
                 {items.map(item => (
                     <div key={item.id} className="flex flex-col gap-1 p-2 bg-telegram-hover rounded">

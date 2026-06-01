@@ -679,6 +679,8 @@ pub async fn cmd_upload_file(
     mut path: String,
     folder_id: Option<i64>,
     transfer_id: Option<String>,
+    as_video: Option<bool>,
+    delete_after_upload: Option<bool>,
     app_handle: tauri::AppHandle,
     state: State<'_, TelegramState>,
     bw_state: State<'_, BandwidthManager>,
@@ -707,6 +709,8 @@ pub async fn cmd_upload_file(
         path.clone(),
         folder_id,
         transfer_id,
+        as_video,
+        delete_after_upload,
         app_handle,
         state,
         bw_state,
@@ -725,6 +729,8 @@ async fn cmd_upload_file_inner(
     path: String,
     folder_id: Option<i64>,
     transfer_id: Option<String>,
+    as_video: Option<bool>,
+    delete_after_upload: Option<bool>,
     app_handle: tauri::AppHandle,
     state: State<'_, TelegramState>,
     bw_state: State<'_, BandwidthManager>,
@@ -740,6 +746,13 @@ async fn cmd_upload_file_inner(
     if client_opt.is_none() {
         log::info!("[MOCK] Uploaded file {} to {:?}", path, folder_id);
         bw_state.add_up(size);
+        if delete_after_upload.unwrap_or(false) {
+            if let Err(e) = tokio::fs::remove_file(&path).await {
+                log::warn!("Auto-delete failed for mock upload {}: {}", path, e);
+            } else {
+                log::info!("Auto-deleted local file after successful mock upload: {}", path);
+            }
+        }
         return Ok("Mock upload successful".to_string());
     }
     let client = client_opt.ok_or_else(|| "Client not connected".to_string())?;
@@ -830,7 +843,23 @@ async fn cmd_upload_file_inner(
     if let Some(t) = progress_task { t.abort(); }
 
     let uploaded_file = upload_result.map_err(map_error)?;
-    let message = InputMessage::new().text("").file(uploaded_file);
+
+    let lower_path = path.to_lowercase();
+    let is_video_ext = lower_path.ends_with(".mp4") || lower_path.ends_with(".mkv") || lower_path.ends_with(".avi") || lower_path.ends_with(".mov") || lower_path.ends_with(".webm") || lower_path.ends_with(".flv");
+    let is_video = as_video.unwrap_or(false) && is_video_ext;
+
+    let message = if is_video {
+        use grammers_client::types::Attribute;
+        InputMessage::new().text("").document(uploaded_file).attribute(Attribute::Video {
+            round_message: false,
+            supports_streaming: true,
+            duration: std::time::Duration::from_secs(0),
+            w: 0,
+            h: 0,
+        })
+    } else {
+        InputMessage::new().text("").file(uploaded_file)
+    };
 
     let peer = resolve_peer(&client, folder_id, &state.peer_cache).await?;
 
@@ -849,6 +878,13 @@ async fn cmd_upload_file_inner(
                     let _ = app_handle.emit("upload-progress", ProgressPayload {
                         id: tid, percent: 100, uploaded_bytes: size, total_bytes: size, speed_bytes_per_sec: 0,
                     });
+                }
+                if delete_after_upload.unwrap_or(false) {
+                    if let Err(e) = tokio::fs::remove_file(&path).await {
+                        log::error!("Failed to auto-delete local file: {}", e);
+                    } else {
+                        log::info!("Auto-deleted local file after successful upload: {}", path);
+                    }
                 }
                 return Ok("File uploaded successfully".to_string());
             }
@@ -885,6 +921,8 @@ pub async fn initiate_upload(
     path: String,
     folder_id: Option<i64>,
     transfer_id: Option<String>,
+    as_video: Option<bool>,
+    delete_after_upload: Option<bool>,
     app_handle: tauri::AppHandle,
     state: State<'_, TelegramState>,
     bw_state: State<'_, BandwidthManager>,
@@ -895,6 +933,8 @@ pub async fn initiate_upload(
         path,
         folder_id,
         transfer_id,
+        as_video,
+        delete_after_upload,
         app_handle,
         state,
         bw_state,

@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, RotateCcw, Download, Upload, Trash2, HardDrive, Globe, Key, Copy, Check, RefreshCw, FolderArchive, Shield, Zap, Activity, Gauge, Wifi, ChevronDown, Link, Sparkles, Info } from 'lucide-react';
+import { X, RotateCcw, Download, Upload, Trash2, HardDrive, Globe, Key, Copy, Check, RefreshCw, FolderArchive, Shield, Zap, Activity, Gauge, Wifi, ChevronDown, Link, Sparkles, Info, Video } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-shell';
 import { toast } from 'sonner';
@@ -483,6 +483,40 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                         className={`relative w-11 h-6 rounded-full transition-colors duration-200 ${settings.zipFolders ? 'bg-telegram-primary' : 'bg-telegram-border'}`}
                                     >
                                         <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform duration-200 ${settings.zipFolders ? 'translate-x-5' : 'translate-x-0'}`} />
+                                    </button>
+                                </div>
+
+                                {/* Upload Videos As Playable Media */}
+                                <div className="flex items-center justify-between p-3 rounded-lg bg-telegram-hover/50">
+                                    <div className="flex items-center gap-2">
+                                        <Video className="w-4 h-4 text-telegram-subtext" />
+                                        <div>
+                                            <p className="text-sm text-telegram-text font-medium">Upload Videos as Media</p>
+                                            <p className="text-xs text-telegram-subtext">Send videos as streamable media instead of files</p>
+                                        </div>
+                                    </div>
+                                    <button
+                                        onClick={() => updateSetting('uploadVideoAsMedia', !settings.uploadVideoAsMedia)}
+                                        className={`relative w-11 h-6 rounded-full transition-colors duration-200 ${settings.uploadVideoAsMedia ? 'bg-telegram-primary' : 'bg-telegram-border'}`}
+                                    >
+                                        <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform duration-200 ${settings.uploadVideoAsMedia ? 'translate-x-5' : 'translate-x-0'}`} />
+                                    </button>
+                                </div>
+
+                                {/* Delete Local Files After Upload */}
+                                <div className="flex items-center justify-between p-3 rounded-lg bg-telegram-hover/50">
+                                    <div className="flex items-center gap-2">
+                                        <Trash2 className="w-4 h-4 text-telegram-subtext" />
+                                        <div>
+                                            <p className="text-sm text-telegram-text font-medium">Delete File After Upload</p>
+                                            <p className="text-xs text-telegram-subtext">Automatically delete local files once uploaded</p>
+                                        </div>
+                                    </div>
+                                    <button
+                                        onClick={() => updateSetting('deleteAfterUpload', !settings.deleteAfterUpload)}
+                                        className={`relative w-11 h-6 rounded-full transition-colors duration-200 ${settings.deleteAfterUpload ? 'bg-telegram-primary' : 'bg-telegram-border'}`}
+                                    >
+                                        <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform duration-200 ${settings.deleteAfterUpload ? 'translate-x-5' : 'translate-x-0'}`} />
                                     </button>
                                 </div>
                             </section>

@@ -97,7 +97,13 @@ export function useFileUpload(activeFolderId: number | null, store: Store | null
         setProcessing(true);
         setUploadQueue(q => q.map(i => i.id === item.id ? { ...i, status: 'uploading', progress: 0 } : i));
         try {
-            await invoke('cmd_upload_file', { path: item.path, folderId: item.folderId, transferId: item.id });
+            await invoke('cmd_upload_file', {
+                path: item.path,
+                folderId: item.folderId,
+                transferId: item.id,
+                asVideo: settings.uploadVideoAsMedia,
+                deleteAfterUpload: settings.deleteAfterUpload
+            });
             // Check if cancelled during upload
             if (cancelledRef.current.has(item.id)) {
                 cancelledRef.current.delete(item.id);

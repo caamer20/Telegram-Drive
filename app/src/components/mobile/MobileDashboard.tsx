@@ -247,7 +247,7 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
           <div className="space-y-4">
             <div className="p-4 rounded-2xl bg-telegram-hover/20 border border-telegram-border/30 space-y-4">
               <h3 className="text-sm font-bold text-telegram-primary tracking-wide uppercase text-[10px]">Preferences</h3>
-              <div className="flex items-center justify-between py-2">
+              <div className="flex items-center justify-between py-2 border-b border-telegram-border/20">
                 <div>
                   <p className="text-xs font-medium">Zip Folders Before Upload</p>
                   <p className="text-[10px] text-telegram-subtext">Compress folders into .zip before uploading</p>
@@ -257,6 +257,32 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
                   className={`relative w-11 h-6 rounded-full transition-colors duration-200 flex-shrink-0 ${settings.zipFolders ? 'bg-telegram-primary' : 'bg-telegram-border'}`}
                 >
                   <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform duration-200 ${settings.zipFolders ? 'translate-x-5' : 'translate-x-0'}`} />
+                </button>
+              </div>
+
+              <div className="flex items-center justify-between py-2 border-b border-telegram-border/20">
+                <div>
+                  <p className="text-xs font-medium">Upload Videos as Media</p>
+                  <p className="text-[10px] text-telegram-subtext">Send videos as streamable media instead of files</p>
+                </div>
+                <button
+                  onClick={() => updateSetting('uploadVideoAsMedia', !settings.uploadVideoAsMedia)}
+                  className={`relative w-11 h-6 rounded-full transition-colors duration-200 flex-shrink-0 ${settings.uploadVideoAsMedia ? 'bg-telegram-primary' : 'bg-telegram-border'}`}
+                >
+                  <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform duration-200 ${settings.uploadVideoAsMedia ? 'translate-x-5' : 'translate-x-0'}`} />
+                </button>
+              </div>
+
+              <div className="flex items-center justify-between py-2">
+                <div>
+                  <p className="text-xs font-medium">Delete File After Upload</p>
+                  <p className="text-[10px] text-telegram-subtext">Automatically delete local files once uploaded</p>
+                </div>
+                <button
+                  onClick={() => updateSetting('deleteAfterUpload', !settings.deleteAfterUpload)}
+                  className={`relative w-11 h-6 rounded-full transition-colors duration-200 flex-shrink-0 ${settings.deleteAfterUpload ? 'bg-telegram-primary' : 'bg-telegram-border'}`}
+                >
+                  <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform duration-200 ${settings.deleteAfterUpload ? 'translate-x-5' : 'translate-x-0'}`} />
                 </button>
               </div>
             </div>

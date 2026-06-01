@@ -7,6 +7,8 @@ export interface Settings {
     maxConcurrentUploads: number;
     maxConcurrentDownloads: number;
     zipFolders: boolean;
+    deleteAfterUpload: boolean;
+    uploadVideoAsMedia: boolean;
 
     // ── Proxy ──────────────────────────────────────────────
     proxyEnabled: boolean;
@@ -45,6 +47,8 @@ const defaultSettings: Settings = {
     maxConcurrentUploads: 6,
     maxConcurrentDownloads: 6,
     zipFolders: true,
+    deleteAfterUpload: false,
+    uploadVideoAsMedia: true,
 
     // Proxy — off by default
     proxyEnabled: false,
