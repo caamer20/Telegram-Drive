@@ -45,7 +45,7 @@ export function FileListItem({
             draggable
             onDragStart={(e) => {
                 if (onDragStart) onDragStart(file.id);
-                e.dataTransfer.setData("application/x-telegram-file-id", file.id.toString());
+                e.dataTransfer.setData('application/x-telegram-file-id', file.id.toString());
                 e.dataTransfer.effectAllowed = 'move';
             }}
             onDragEnd={() => {
@@ -73,7 +73,7 @@ export function FileListItem({
                     onDrop(e, file.id);
                 }
             }}
-            className={`group grid grid-cols-[2rem_2fr_6rem_8rem] gap-4 items-center px-4 py-3 rounded-lg cursor-pointer border border-transparent transition-all hover:bg-telegram-hover relative
+            className={`group grid grid-cols-[2rem_minmax(0,1fr)_6rem_8rem_auto] gap-4 items-center px-4 py-3 rounded-lg cursor-pointer border border-transparent transition-all hover:bg-telegram-hover relative
                 ${selectedIds.includes(file.id) ? 'bg-telegram-primary/10 border-telegram-primary/20' : ''}
                 ${isDragOver ? 'ring-2 ring-telegram-primary bg-telegram-primary/20' : ''}
             `}
@@ -81,12 +81,14 @@ export function FileListItem({
             <div className="flex justify-center">
                 {isFolder ? <Folder className="w-5 h-5 text-telegram-primary" /> : <FileTypeIcon filename={file.name} className="w-5 h-5" />}
             </div>
-            <div className="truncate text-sm text-telegram-text font-medium">
+            <div className="min-w-0 truncate text-sm text-telegram-text font-medium pr-2">
                 <span>{file.name}</span>
-                <VideoMetaBadge metadata={videoMeta} isLoading={videoMetaLoading} />
+                <span className="hidden sm:inline">
+                    <VideoMetaBadge metadata={videoMeta} isLoading={videoMetaLoading} />
+                </span>
                 {cachedQualities.length > 0 && (
-                    <span className="inline-flex items-center gap-0.5 ml-1.5">
-                        {cachedQualities.map(q => (
+                    <span className="hidden sm:inline-flex items-center gap-0.5 ml-1.5">
+                        {cachedQualities.map((q) => (
                             <span key={q} className="inline-flex items-center gap-0.5 text-[9px] font-medium text-emerald-400 bg-emerald-500/10 px-1 py-0.5 rounded">
                                 <Check className="w-2.5 h-2.5" />
                                 {q}
@@ -95,8 +97,8 @@ export function FileListItem({
                     </span>
                 )}
             </div>
-            <div className="text-right text-xs text-telegram-subtext truncate">{file.sizeStr}</div>
-            <div className="text-right text-xs text-telegram-subtext font-mono opacity-50 truncate pr-8">{file.created_at || '-'}</div>
+            <div className="min-w-0 text-right text-xs text-telegram-subtext truncate">{file.sizeStr}</div>
+            <div className="min-w-0 text-right text-xs text-telegram-subtext font-mono opacity-50 truncate pr-2">{file.created_at || '-'}</div>
 
             {/* 3-dot Menu Button */}
             <button
@@ -104,7 +106,7 @@ export function FileListItem({
                     e.stopPropagation();
                     handleContextMenu(e, file);
                 }}
-                className="absolute right-4 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 p-1 bg-telegram-surface hover:bg-telegram-hover border border-telegram-border shadow-md rounded text-telegram-subtext hover:text-telegram-text transition-all z-10"
+                className="justify-self-end opacity-0 group-hover:opacity-100 p-1 bg-telegram-surface hover:bg-telegram-hover border border-telegram-border shadow-md rounded text-telegram-subtext hover:text-telegram-text transition-all z-10"
                 title="Actions"
             >
                 <MoreVertical className="w-4 h-4" />
