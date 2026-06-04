@@ -13,11 +13,17 @@ function loadSettings(): StreamingSettings {
         const raw = localStorage.getItem(STORAGE_KEY);
         if (raw) {
             const parsed = JSON.parse(raw);
+            if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+                return { ...DEFAULTS };
+            }
+
             // Validate quality
             const validQualities: StreamingQuality[] = ['360p', '480p', '720p', '1080p', 'original'];
-            if (!validQualities.includes(parsed.quality)) parsed.quality = DEFAULTS.quality;
-            if (typeof parsed.adaptiveMode !== 'boolean') parsed.adaptiveMode = DEFAULTS.adaptiveMode;
-            return { ...DEFAULTS, ...parsed };
+            const quality = validQualities.includes(parsed.quality) ? parsed.quality : DEFAULTS.quality;
+            const adaptiveMode =
+                typeof parsed.adaptiveMode === 'boolean' ? parsed.adaptiveMode : DEFAULTS.adaptiveMode;
+
+            return { quality, adaptiveMode };
         }
     } catch { /* corrupt data, use defaults */ }
     return { ...DEFAULTS };
