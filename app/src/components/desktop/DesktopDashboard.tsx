@@ -268,15 +268,17 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
         setSelectedIds([]);
     }, []);
 
-    const handleFileClick = (e: React.MouseEvent, id: number) => {
+    const handleFileClick = (e: React.MouseEvent, id: number, orderedFiles: TelegramFile[]) => {
         e.stopPropagation();
-        const currentIndex = displayedFiles.findIndex(f => f.id === id);
+        const currentIndex = orderedFiles.findIndex(f => f.id === id);
 
         if (e.shiftKey && lastClickedIndexRef.current >= 0) {
-            // Shift+Click: range select from last clicked to current
+            // Shift+Click: range select from last clicked to current.
+            // Must use the same (sorted) order the grid renders, not displayedFiles,
+            // otherwise the range mismatches what's visually between the two clicks.
             const start = Math.min(lastClickedIndexRef.current, currentIndex);
             const end = Math.max(lastClickedIndexRef.current, currentIndex);
-            const rangeIds = displayedFiles.slice(start, end + 1).map(f => f.id);
+            const rangeIds = orderedFiles.slice(start, end + 1).map(f => f.id);
             setSelectedIds(rangeIds);
         } else if (e.metaKey || e.ctrlKey) {
             // Ctrl/Cmd+Click: toggle individual file

@@ -19,7 +19,7 @@ interface FileExplorerProps {
     viewMode: 'grid' | 'list';
     selectedIds: number[];
     activeFolderId: number | null;
-    onFileClick: (e: React.MouseEvent, id: number) => void;
+    onFileClick: (e: React.MouseEvent, id: number, orderedFiles: TelegramFile[]) => void;
     onDelete: (id: number) => void;
     onDownload: (id: number, name: string) => void;
     onPreview: (file: TelegramFile, orderedFiles?: TelegramFile[]) => void;
@@ -317,7 +317,7 @@ export function FileExplorer({
                                                 key={file.id}
                                                 file={file}
                                                 isSelected={selectedIds.includes(file.id)}
-                                                onClick={(e) => onFileClick(e, file.id)}
+                                                onClick={(e) => onFileClick(e, file.id, sortedFiles)}
                                                 onContextMenu={(e) => handleContextMenu(e, file)}
                                                 onDelete={() => onDelete(file.id)}
                                                 onDownload={() => onDownload(file.id, file.name)}
@@ -404,7 +404,7 @@ export function FileExplorer({
                                     <FileListItem
                                         file={file}
                                         selectedIds={selectedIds}
-                                        onFileClick={onFileClick}
+                                        onFileClick={(e, id) => onFileClick(e, id, sortedFiles)}
                                         handleContextMenu={handleContextMenu}
                                         onDragStart={onDragStart}
                                         onDragEnd={onDragEnd}
@@ -433,7 +433,7 @@ export function FileExplorer({
                     }}
                     onPreview={() => {
                         if (contextMenu.file.type === 'folder') {
-                            onFileClick({ preventDefault: () => { }, stopPropagation: () => { } } as React.MouseEvent, contextMenu.file.id);
+                            onFileClick({ preventDefault: () => { }, stopPropagation: () => { } } as React.MouseEvent, contextMenu.file.id, sortedFiles);
                         } else {
                             handlePreviewRequest(contextMenu.file);
                         }
