@@ -192,6 +192,11 @@ export function AdaptiveMediaPlayer({
         abort: abortMse,
     } = useAdaptiveStreaming(restartStreamUrl, file.name, progressiveCallback);
 
+    // Tracks a failure in the native <video> fallback itself (distinct from
+    // the MSE pipeline's own error, which becomes stale once useFallback
+    // switches playback over to this element).
+    const [fallbackError, setFallbackError] = useState<string | null>(null);
+
     // ── HLS transcode state ──────────────────────────────────────────
     // playbackMode is the single source of truth: 'original' or 'hls'
     const [playbackMode, setPlaybackMode] = useState<'original' | 'hls'>('original');
@@ -383,6 +388,7 @@ export function AdaptiveMediaPlayer({
         setFmp4Remuxing(false);
         setFmp4RemuxError(null);
         setFmp4StreamUrl(null);
+        setFallbackError(null);
         fmp4RemuxingRef.current = false;
         remuxGenerationRef.current += 1;
     }, [streamUrl]);
@@ -811,7 +817,14 @@ export function AdaptiveMediaPlayer({
     const isMseLoading = msePhase === 'loading' || msePhase === 'initializing';
     const isHlsLoading = hlsPhase === 'preparing' || hlsPhase === 'caching' || hlsPhase === 'transcoding';
     const displayPhase: string = isHlsMode ? hlsPhase : (isMseLoading ? 'loading' : msePhase);
-    const displayError: string | null = isHlsMode ? hlsError : mseError;
+    // Once the MSE pipeline hands off to the native <video> fallback, its
+    // 'error' phase is stale (that's what triggered the handoff) — the
+    // fallback is a separate playback path with its own pass/fail outcome,
+    // tracked by fallbackError instead.
+    const showError = isHlsMode
+        ? (displayPhase === 'error' || displayPhase === 'failed')
+        : (useFallback ? !!fallbackError : (displayPhase === 'error' || displayPhase === 'failed'));
+    const displayError: string | null = isHlsMode ? hlsError : (useFallback ? fallbackError : mseError);
     const showOriginalVideo = !isHlsMode && !useFallback;
 
     // Build the effective quality label
@@ -875,7 +888,7 @@ export function AdaptiveMediaPlayer({
                     )}
 
                     {/* Error display */}
-                    {(displayPhase === 'error' || displayPhase === 'failed') && (
+                    {showError && (
                         <div className="flex flex-col items-center gap-3 text-white px-8">
                             <AlertTriangle className="w-10 h-10 text-red-400" />
                             <p className="text-sm text-red-400 font-medium">Playback Error</p>
@@ -943,7 +956,14 @@ export function AdaptiveMediaPlayer({
 
                     {/* Fallback: native <video> (non-MP4 or no MSE support) */}
                     {useFallback && !isHlsMode && (
-                        <video src={fallbackUrl} controls controlsList="nodownload" autoPlay className="w-full h-full object-contain" />
+                        <video
+                            src={fallbackUrl}
+                            controls
+                            controlsList="nodownload"
+                            autoPlay
+                            className="w-full h-full object-contain"
+                            onError={(e) => setFallbackError(e.currentTarget.error?.message || 'Native video playback failed')}
+                        />
                     )}
 
                     {/* HLS video element — rendered as soon as HLS mode is active so attachMedia works */}
@@ -1044,7 +1064,7 @@ export function AdaptiveMediaPlayer({
                 )}
 
                 {/* Fullscreen overlay toolbar */}
-                {isFullscreen && (displayPhase !== 'error' && displayPhase !== 'failed') && (
+                {isFullscreen && !showError && (
                     <div className="absolute bottom-0 left-0 right-0 z-30 bg-gradient-to-t from-black/90 via-black/60 to-transparent p-4 pt-12 pointer-events-none">
                         <div className="flex items-center justify-between pointer-events-auto">
                             <div className="flex items-center gap-3">

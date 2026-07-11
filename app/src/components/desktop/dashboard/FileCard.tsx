@@ -139,7 +139,11 @@ export function FileCard({ file, onDelete, onDownload, onPreview, onShare, isSel
                         <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent" />
                     </div>
                 ) : (
-                    <div className="absolute inset-0 flex items-center justify-center p-4">
+                    // Reserve space for the file-info overlay below (name + size/badges)
+                    // so the centered icon doesn't visually collide with that text on
+                    // shorter cards — most noticeable with video files, whose metadata
+                    // badge makes that overlay taller than other file types'.
+                    <div className="absolute top-0 left-0 right-0 bottom-16 flex items-center justify-center p-4">
                         {isFolder ? (
                             <Folder className="w-12 h-12 text-telegram-primary" />
                         ) : thumbnailLoading && isImageFile(file.name) ? (
