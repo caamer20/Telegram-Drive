@@ -37,5 +37,6 @@ local.properties
 /app/src-tauri/gen/schemas/android-schema.json
 /app/src-tauri/icons/android/
 
-
-
+# Migration DB & temp files
+migration.db*
+*.part

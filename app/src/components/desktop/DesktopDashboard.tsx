@@ -26,6 +26,7 @@ import { RenameFolderModal } from './dashboard/RenameFolderModal';
 import { RenameFileModal } from './dashboard/RenameFileModal';
 import { DesktopAdBanner } from './dashboard/DesktopAdBanner';
 import { RemoteUploadModal } from './dashboard/RemoteUploadModal';
+import { OneDriveMigrationPage } from '../migration/OneDriveMigrationPage';
 import { Link, Copy, Check, X, Loader2, Share2 } from 'lucide-react';
 
 // Hooks
@@ -63,6 +64,7 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
     const [searchResults, setSearchResults] = useState<TelegramFile[]>([]);
     const [isSearching, setIsSearching] = useState(false);
     const [cardScale, setCardScale] = useState(1.0);
+    const [activeView, setActiveView] = useState<'files' | 'onedrive'>('files');
     const internalDragRef = useRef<number[] | null>(null);
 
     const setInternalDragIds = (ids: number[] | null) => {
@@ -660,58 +662,64 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
                 onCreateGroup={handleCreateGroup}
                 onUpdateGroup={handleUpdateGroup}
                 onDeleteGroup={handleDeleteGroup}
+                activeView={activeView}
+                onViewChange={setActiveView}
             />
 
-            <main className="flex-1 flex flex-col">
-                <TopBar
-                    currentFolderName={currentFolderName}
-                    selectedIds={selectedIds}
-                    onShowMoveModal={() => setShowMoveModal(true)}
-                    onBulkDownload={handleBulkDownload}
-                    onBulkDelete={handleBulkDelete}
-                    onBulkShare={handleBulkShare}
-                    onDownloadFolder={handleDownloadFolder}
-                    onClearSelection={clearSelection}
-                    viewMode={viewMode}
-                    setViewMode={setViewMode}
-                    searchTerm={searchTerm}
-                    onSearchChange={setSearchTerm}
-                    onSettingsClick={() => setShowSettings(true)}
-                    onRemoteUploadClick={() => setShowRemoteUpload(true)}
-                />
-                {searchTerm.length > 2 && (
-                    <div className="px-6 pt-4 pb-0">
-                        <h2 className="text-sm font-medium text-telegram-subtext">
-                            Search Results for <span className="text-telegram-primary">"{searchTerm}"</span>
-                        </h2>
-                    </div>
-                )}
-                <FileExplorer
-                    folders={folders}
-                    files={displayedFiles}
-                    loading={(isLoading && allFiles.length === 0) || isSearching}
-                    error={error}
-                    viewMode={viewMode}
-                    selectedIds={selectedIds}
-                    activeFolderId={activeFolderId}
-                    onFileClick={handleFileClick}
-                    onDelete={handleDelete}
-                    onDownload={(id, name) => queueDownload(id, name, activeFolderId)}
-                    onPreview={handlePreview}
-                    onManualUpload={handleManualUpload}
-                    onFolderUpload={handleFolderUpload}
-                    showFolderUpload={settings.zipFolders}
-                    onToggleSelection={handleToggleSelection}
-                    onDrop={handleDropOnFolder}
-                    onDragStart={(ids) => setInternalDragIds(ids)}
-                    onDragEnd={() => setTimeout(() => setInternalDragIds(null), 50)}
-                    onShare={setShareFile}
-                    onRename={handleRename}
-                    onFileMove={handleFileMove}
-                    cardScale={cardScale}
-                    onCardScaleChange={setCardScale}
-                />
-            </main>
+            {activeView === 'onedrive' ? (
+                <OneDriveMigrationPage />
+            ) : (
+                <main className="flex-1 flex flex-col">
+                    <TopBar
+                        currentFolderName={currentFolderName}
+                        selectedIds={selectedIds}
+                        onShowMoveModal={() => setShowMoveModal(true)}
+                        onBulkDownload={handleBulkDownload}
+                        onBulkDelete={handleBulkDelete}
+                        onBulkShare={handleBulkShare}
+                        onDownloadFolder={handleDownloadFolder}
+                        onClearSelection={clearSelection}
+                        viewMode={viewMode}
+                        setViewMode={setViewMode}
+                        searchTerm={searchTerm}
+                        onSearchChange={setSearchTerm}
+                        onSettingsClick={() => setShowSettings(true)}
+                        onRemoteUploadClick={() => setShowRemoteUpload(true)}
+                    />
+                    {searchTerm.length > 2 && (
+                        <div className="px-6 pt-4 pb-0">
+                            <h2 className="text-sm font-medium text-telegram-subtext">
+                                Search Results for <span className="text-telegram-primary">"{searchTerm}"</span>
+                            </h2>
+                        </div>
+                    )}
+                    <FileExplorer
+                        folders={folders}
+                        files={displayedFiles}
+                        loading={(isLoading && allFiles.length === 0) || isSearching}
+                        error={error}
+                        viewMode={viewMode}
+                        selectedIds={selectedIds}
+                        activeFolderId={activeFolderId}
+                        onFileClick={handleFileClick}
+                        onDelete={handleDelete}
+                        onDownload={(id, name) => queueDownload(id, name, activeFolderId)}
+                        onPreview={handlePreview}
+                        onManualUpload={handleManualUpload}
+                        onFolderUpload={handleFolderUpload}
+                        showFolderUpload={settings.zipFolders}
+                        onToggleSelection={handleToggleSelection}
+                        onDrop={handleDropOnFolder}
+                        onDragStart={(ids) => setInternalDragIds(ids)}
+                        onDragEnd={() => setTimeout(() => setInternalDragIds(null), 50)}
+                        onShare={setShareFile}
+                        onRename={handleRename}
+                        onFileMove={handleFileMove}
+                        cardScale={cardScale}
+                        onCardScaleChange={setCardScale}
+                    />
+                </main>
+            )}
 
             {previewFile && (
                 <PreviewModal

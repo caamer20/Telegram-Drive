@@ -26,7 +26,7 @@
 - Q: Restart/resume sau crash hoặc đóng ứng dụng? → A: File đang downloading/uploading dở → `failed` hoặc `pending`. Resume thủ công (người dùng nhấn "Tiếp tục"). Không auto-start. MVP cung cấp at-least-once attempt, **không** đảm bảo exactly-once khi crash giữa upload và persist.
 - Q: Retry hoạt động thế nào? → A: Tối đa 3 lần retry tự động cho lỗi tạm thời (mạng, timeout). Sau 3 lần → `failed`. Manual retry (người dùng nhấn) reset counter về 0.
 - Q: Telegram cooldown/flood control xử lý ra sao? → A: Dừng upload, hiển thị trạng thái cooldown kèm thời gian chờ, không bypass. Tự động tiếp tục sau khi hết cooldown. Persist trạng thái cooldown để không mất khi restart.
-- Q: File vượt giới hạn kích thước Telegram? → A: Nếu biết trước từ metadata OneDrive → `failed` ngay, không download. Nếu chỉ phát hiện khi upload bị từ chối → `failed`, không retry tự động.
+- Q: File vượt giới hạn kích thước Telegram? → A: Không hardcode giới hạn kích thước. Nếu upload bị từ chối do file quá lớn (upload adapter trả `telegram_file_too_large`) → `failed`, không retry tự động.
 - Q: Local working directory quản lý thế nào? → A: Một directory cho mỗi job. Nếu directory unavailable (không tồn tại, không writable) → dừng job, hiển thị lỗi, cho người dùng chọn lại.
 - Q: File tạm local xóa khi nào? → A: Xóa sau upload thành công hoặc sau khi phát hiện duplicate (đã download về). Giữ lại để retry nếu file gặp lỗi.
 - Q: Có thể chạy nhiều job cùng lúc không? → A: Chỉ một job `running` tại một thời điểm. Có thể lưu nhiều job trong history (completed, cancelled, failed).
@@ -67,7 +67,7 @@ Người dùng sau khi scan xong nhấn "Bắt đầu", hệ thống xử lý tu
 3. **Given** migration đang chạy, **When** người dùng nhấn "Tạm dừng", **Then** hệ thống hoàn tất file đang xử lý rồi dừng, các file completed giữ nguyên trạng thái, file pending chưa xử lý vẫn là pending.
 4. **Given** migration đang tạm dừng, **When** người dùng nhấn "Tiếp tục", **Then** hệ thống tiếp tục xử lý từ file pending tiếp theo.
 5. **Given** migration đang chạy, **When** người dùng nhấn "Hủy", **Then** hệ thống không bắt đầu file mới, file đang xử lý được hoàn tất hoặc dừng, các file pending còn lại không được xử lý, job chuyển trạng thái `cancelled`, giữ nguyên lịch sử file completed và dữ liệu đã upload.
-6. **Given** file vượt quá giới hạn kích thước của Telegram, **When** đến lượt xử lý file đó, **Then** nếu biết trước từ metadata → `failed` ngay không download; nếu chỉ phát hiện khi upload bị từ chối → `failed` không retry tự động. Hệ thống chuyển sang file tiếp theo.
+6. **Given** file vượt quá giới hạn kích thước của Telegram, **When** đến lượt xử lý file đó, **Then** hệ thống download và thử upload, khi upload adapter trả lỗi `telegram_file_too_large` → đánh dấu `failed`, không retry tự động. Hệ thống chuyển sang file tiếp theo.
 7. **Given** file có OneDrive fingerprint trùng với duplicate history, **When** đến lượt xử lý file đó, **Then** file bị skip trước khi download, đánh dấu `skipped_duplicate`, không tải file về local.
 8. **Given** file không có OneDrive fingerprint và phải tính SHA-256 sau download, **When** download xong và fingerprint trùng duplicate history, **Then** file bị skip upload, đánh dấu `skipped_duplicate`, file tạm local bị xóa.
 9. **Given** Telegram trả về thời gian chờ (cooldown) trong lúc upload, **When** đang xử lý file, **Then** hệ thống dừng upload, hiển thị trạng thái cooldown kèm thời gian chờ, tự động tiếp tục upload file đó sau khi hết cooldown.
@@ -104,7 +104,7 @@ Người dùng đóng ứng dụng khi migration đang chạy. Khi mở lại, j
 - **Microsoft authentication hết hạn**: Khi token hết hạn trong lúc migration, hệ thống dừng xử lý file hiện tại, hiển thị lỗi xác thực, cho phép người dùng kết nối lại và tiếp tục.
 - **Thư mục local không writable**: Kiểm tra trước khi bắt đầu mỗi file, nếu không ghi được thì dừng job, hiển thị lỗi, cho phép chọn thư mục khác.
 - **Không đủ dung lượng local**: Trước khi download từng file, kiểm tra dung lượng trống. Nếu không đủ, dừng job, hiển thị cảnh báo.
-- **File vượt giới hạn Telegram**: Nếu biết trước kích thước từ metadata OneDrive → `failed` ngay, không download. Nếu chỉ phát hiện khi upload bị từ chối → `failed`, không retry tự động. Kèm thông báo rõ ràng.
+- **File vượt giới hạn Telegram**: Không hardcode giới hạn kích thước. Nếu upload adapter trả lỗi `telegram_file_too_large` → `failed`, không retry tự động. Kèm thông báo rõ ràng.
 - **File thay đổi sau scan (`source_changed`)**: Nếu file OneDrive thay đổi (kích thước, hash, thời gian sửa) so với lúc scan → đánh dấu `failed` với error `source_changed`. Không tự thêm phiên bản mới.
 - **Download từ OneDrive thất bại**: File được đánh dấu "failed", lưu thông báo lỗi, hệ thống tiếp tục với file tiếp theo. Tự động retry tối đa 3 lần cho lỗi tạm thời; sau đó yêu cầu retry thủ công.
 - **Upload lên Telegram thất bại**: Tương tự download thất bại — đánh dấu failed, lưu lỗi, auto-retry 3 lần cho lỗi tạm thời, tiếp tục file kế tiếp.
@@ -165,7 +165,7 @@ Người dùng đóng ứng dụng khi migration đang chạy. Khi mở lại, j
 ### Key Entities
 
 - **Migration Job**: Đại diện cho một lần migration. Chứa: trạng thái job (`draft`, `ready`, `running`, `paused`, `completed`, `failed`, `cancelled`), thư mục OneDrive nguồn, Telegram destination, thư mục local, migration snapshot (danh sách file cố định tại thời điểm scan), thời gian tạo, thời gian cập nhật. Mỗi thời điểm chỉ có tối đa một job ở trạng thái `running`. Có thể lưu nhiều job history (completed, cancelled, failed).
-- **Migration File**: Một file trong job migration. Chứa: tên file, đường dẫn tương đối từ thư mục nguồn (source relative path), dung lượng, trạng thái (`pending`, `downloading`, `uploading`, `completed`, `skipped_duplicate`, `failed`), content fingerprint, loại lỗi (nếu failed: `source_changed`, `network`, `auth`, `telegram_limit`, `unknown`), thông báo lỗi chi tiết, retry count, Telegram message identifier (optional, nếu upload thành công), thời gian hoàn thành.
+- **Migration File**: Một file trong job migration. Chứa: tên file, đường dẫn tương đối từ thư mục nguồn (source relative path), dung lượng, trạng thái (`pending`, `downloading`, `uploading`, `completed`, `skipped_duplicate`, `failed`), content fingerprint, loại lỗi (nếu failed: `source_changed`, `network`, `auth`, `telegram_file_too_large`, `unknown`), thông báo lỗi chi tiết, retry count, Telegram message identifier (optional, nếu upload thành công), thời gian hoàn thành.
 - **Migration Folder**: Một thư mục trong cây thư mục nguồn. Chứa: đường dẫn tương đối, số lượng file, tổng dung lượng.
 - **Microsoft Connection**: Trạng thái kết nối với tài khoản Microsoft. Chứa: trạng thái kết nối, tên tài khoản, thời gian kết nối.
 - **Duplicate Record**: Lịch sử file đã migrate thành công. Chứa: content fingerprint, Telegram destination, thời gian migrate.
@@ -197,7 +197,7 @@ Người dùng đóng ứng dụng khi migration đang chạy. Khi mở lại, j
 - Một file được coi là "đã migrate thành công" khi upload lên Telegram hoàn tất và nhận được xác nhận từ Telegram API.
 - Content fingerprint ưu tiên dùng hash do OneDrive cung cấp (nếu API trả về). Nếu không có, SHA-256 được tính từ file local sau khi download. Nếu OneDrive fingerprint có sẵn, duplicate được phát hiện trước download, tiết kiệm băng thông.
 - Sau khi migration bắt đầu, danh sách file được cố định dựa trên migration snapshot lúc scan. Người dùng có thể scan lại để cập nhật danh sách trước khi bắt đầu, tạo snapshot mới.
-- MVP cho phép tối đa 3 lần retry tự động cho lỗi mạng tạm thời. Manual retry reset counter. Các lỗi khác (source_changed, telegram_limit, auth) không retry tự động.
+- MVP cho phép tối đa 3 lần retry tự động cho lỗi mạng tạm thời. Manual retry reset counter. Các lỗi khác (source_changed, telegram_file_too_large, auth) không retry tự động.
 
 ## Scope
 

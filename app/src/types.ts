@@ -198,3 +198,162 @@ export interface VideoMetadata {
     width: number | null;
     height: number | null;
 }
+
+// ── OneDrive Migration Types ─────────────────────────────────────────
+
+export interface MsAccountInfo {
+    account_name: string;
+    account_email: string;
+}
+
+export interface AutoMigrationProfile {
+    id: number;
+    account_id: string;
+    enabled: boolean;
+    default_telegram_dest_id?: number | null;
+    default_telegram_dest_name?: string | null;
+    local_temp_dir?: string | null;
+    last_auto_scan_at?: number | null;
+    created_at: number;
+    updated_at: number;
+}
+
+export interface DailyMigrationQuota {
+    date_string: string;
+    uploaded_bytes: number;
+    limit_bytes: number;
+}
+
+
+export interface OneDriveItem {
+    id: string;
+    name: string;
+    item_type: 'folder' | 'file';
+    size: number;
+    path?: string | null;
+    child_count?: number | null;
+    etag?: string | null;
+    quickxor_hash?: string | null;
+    sha1_hash?: string | null;
+    last_modified?: string | null;
+}
+
+export interface OneDriveFolder {
+    id: string;
+    name: string;
+    source_path: string;
+    file_count: number;
+    total_size: number;
+}
+
+export type JobState = 'draft' | 'ready' | 'running' | 'paused' | 'completed' | 'cancelled' | 'failed';
+export type ItemState = 'pending' | 'downloading' | 'uploading' | 'completed' | 'skipped_duplicate' | 'failed';
+
+export interface MigrationJob {
+    id: number;
+    state: JobState;
+    onedrive_folder_id?: string | null;
+    onedrive_folder_path?: string | null;
+    telegram_destination_id?: number | null;
+    telegram_destination_name?: string | null;
+    local_dir?: string | null;
+    cooldown_until?: number | null;
+    created_at: number;
+    started_at?: number | null;
+    completed_at?: number | null;
+    updated_at: number;
+}
+
+export interface MigrationJobSummary {
+    id: number;
+    state: JobState;
+    onedrive_folder_path?: string | null;
+    total_files: number;
+    completed_files: number;
+    created_at: number;
+}
+
+export interface MigrationStats {
+    total_folders: number;
+    total_files: number;
+    total_bytes: number;
+    completed_files: number;
+    completed_bytes: number;
+    failed_files: number;
+    skipped_duplicates: number;
+    pending_files: number;
+}
+
+export interface FolderSummary {
+    source_path: string;
+    name: string;
+    file_count: number;
+    total_size: number;
+}
+
+export interface MigrationItem {
+    id: number;
+    job_id: number;
+    item_type: 'file' | 'folder';
+    name: string;
+    source_path: string;
+    source_item_id?: string | null;
+    size_bytes: number;
+    source_etag?: string | null;
+    source_last_modified?: string | null;
+    source_fingerprint_type?: string | null;
+    source_fingerprint_value?: string | null;
+    state: ItemState;
+    last_error_code?: string | null;
+    last_error_message?: string | null;
+    attempt_count: number;
+    computed_sha256?: string | null;
+    telegram_message_id?: number | null;
+    created_at: number;
+    completed_at?: number | null;
+}
+
+export interface MigrationJobDetail {
+    job: MigrationJob;
+    stats: MigrationStats;
+    folders: FolderSummary[];
+    files: MigrationItem[];
+}
+
+export interface JobStatePayload {
+    job_id: number;
+    state: JobState;
+    previous_state: JobState;
+}
+
+export interface ItemProgressPayload {
+    job_id: number;
+    item_id: number;
+    item_name: string;
+    phase: 'downloading' | 'uploading';
+    percent: number;
+    bytes_done: number;
+    bytes_total: number;
+    speed_bytes_per_sec: number;
+}
+
+export interface ItemCompletePayload {
+    job_id: number;
+    item_id: number;
+    item_name: string;
+    status: ItemState;
+    error_type?: string;
+    error_message?: string;
+}
+
+export interface StatsPayload {
+    job_id: number;
+    stats: MigrationStats;
+}
+
+export interface CooldownPayload {
+    job_id: number;
+    cooldown_until: number | null;
+    seconds_remaining: number;
+}
+

@@ -668,13 +668,13 @@ struct ProgressPayload {
 
 /// Async reader wrapper that tracks bytes read for progress reporting.
 /// Wraps a tokio File and counts how many bytes have been consumed.
-struct ProgressReader {
+pub struct ProgressReader {
     inner: tokio::io::BufReader<tokio::fs::File>,
     bytes_read: std::sync::Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl ProgressReader {
-    async fn new(path: &str) -> Result<(Self, u64, std::sync::Arc<std::sync::atomic::AtomicU64>), String> {
+    pub async fn new(path: &str) -> Result<(Self, u64, std::sync::Arc<std::sync::atomic::AtomicU64>), String> {
         let file = tokio::fs::File::open(path).await.map_err(|e| e.to_string())?;
         let metadata = file.metadata().await.map_err(|e| e.to_string())?;
         let size = metadata.len();

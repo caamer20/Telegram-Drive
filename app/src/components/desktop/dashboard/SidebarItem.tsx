@@ -11,7 +11,7 @@ interface SidebarItemProps {
     label: string;
     active: boolean;
     onClick: () => void;
-    onDrop: (e: React.DragEvent) => void;
+    onDrop?: (e: React.DragEvent) => void;
     onDelete?: () => void;
     folderId: number | null;
     isPublic?: boolean;

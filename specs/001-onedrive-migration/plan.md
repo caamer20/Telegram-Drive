@@ -18,7 +18,7 @@ Tích hợp tính năng OneDrive Migration vào Telegram-Drive desktop, cho phé
 
 **Primary Dependencies**:
 - **Backend**: Tauri v2, grammers-client (Telegram MTProto), reqwest v0.12 (HTTP + SOCKS cho Microsoft Graph), serde (serialization), sha2 (SHA-256), sqlite (migration.db), tokio (async runtime), log + env_logger (logging)
-- **Frontend**: React 18, TypeScript, Tailwind CSS v4, @tanstack/react-query, sonner (toast), @tauri-apps/api/core, @tauri-apps/api/event, @tauri-apps/plugin-dialog, react-i18next
+- **Frontend**: React 19, TypeScript, Tailwind CSS v4, @tanstack/react-query, sonner (toast), @tauri-apps/api/core, @tauri-apps/api/event, @tauri-apps/plugin-dialog, react-i18next
 
 **Storage**: SQLite (`migration.db`), tách biệt với `shares.db` hiện có. WAL mode, synchronous=FULL. 3 business tables: `migration_jobs`, `migration_items`, `migrated_fingerprints`.
 
@@ -40,11 +40,12 @@ Tích hợp tính năng OneDrive Migration vào Telegram-Drive desktop, cho phé
 - Không được xóa/thay đổi file nguồn trên OneDrive
 - Không log Microsoft access token, refresh token, Telegram session
 - Microsoft token chỉ trong Rust process memory, không persist ra disk
+- Không hardcode Telegram file size limit — nếu file quá lớn, upload adapter trả `telegram_file_too_large`, không auto-retry
 
 **Scale/Scope**:
 - Hỗ trợ thư mục OneDrive với hàng trăm đến hàng nghìn file
 - Một tài khoản Microsoft, một Telegram destination mỗi job
-- 15 Tauri commands, 5 events, 1 frontend page, 3 business tables
+- ~15 Tauri commands, 5 events, 1 frontend page, 3 business tables
 - 5 phases implementation
 
 ## Constitution Check
@@ -96,20 +97,236 @@ app/
             ├── microsoft.rs          # OAuth session, Graph API, scan, download
             ├── worker.rs             # Pipeline: validate→download→upload→persist→next
             ├── upload_adapter.rs     # Shared internal upload function seam
-            └── commands.rs           # 15 Tauri commands + 5 event emitters
+            └── commands.rs           # ~15 Tauri commands + 5 event emitters
 ```
 
-**Structure Decision**: Backend 7 modules, frontend 1 page + 3 components.
+**Structure Decision**: Backend 7 modules, frontend 1 page + 3 supporting components.
 
 ## Implementation Phases
 
-| Phase | Goal | Code areas | Dependencies | Independent validation | Exit criteria |
-|---|---|---|---|---|---|
-| **Phase 1 — Foundation & Seams** | Models, DB schema, error types, upload adapter trait | `migration/models.rs`, `migration/db.rs`, `migration/upload_adapter.rs`, `commands/fs.rs` (extract), `commands/utils.rs` (extract) | `sqlite`, `sha2` | Unit: schema creation, one-active-job guard, structured error types, adapter interface | migration.db created, upload internal function compiles, models valid |
-| **Phase 2 — Snapshot Scan** | Microsoft OAuth, recursive scan, snapshot persistence, folder browsing | `migration/microsoft.rs`, `migration/commands.rs` (connect/scan/list), `migration/db.rs` (batch insert) | Phase 1, `reqwest` | Manual: connect MS, scan folder, verify file count & total size match OneDrive | Scan totals chính xác, pagination hoạt động, snapshot persisted |
-| **Phase 3 — Sequential Worker** | Download, upload, duplicate check, retry, cooldown, pause/cancel | `migration/worker.rs`, `migration/microsoft.rs` (download), `migration/upload_adapter.rs` | Phase 2 | Unit: duplicate logic, retry max 3, cooldown gate. Integration: mock upload 5 files tuần tự | 5 files migrated, duplicate detected, cooldown respected, pause/cancel hoạt động |
-| **Phase 4 — IPC & UI** | Commands, events, React page, sidebar integration | `migration/commands.rs`, `migration/mod.rs`, `lib.rs` (register), `components/migration/*`, `hooks/useMigration.ts`, `Sidebar.tsx`, i18n | Phase 3 | Manual: full UI flow, progress bars, all controls | UI hoàn chỉnh: setup → scan → migrate → complete, progress visible |
-| **Phase 5 — Tests & Hardening** | Unit tests, integration tests, quickstart verification | All `#[cfg(test)]` modules, fake adapters, quickstart.md | Phase 4 | All 7 quickstart scenarios pass, unit tests green, type-check + build pass | Gate: PASS cho `/speckit.converge` |
+### Phase 1 — OneDrive Connect & Folder Tree (Foundation)
+
+**Goal**: Người dùng có thể kết nối tài khoản Microsoft và duyệt cây thư mục OneDrive. Đây là nền tảng cho toàn bộ feature.
+
+**Code areas**:
+- `migration/mod.rs` — MigrationState struct, module registration
+- `migration/models.rs` — Structs cơ bản: MsAccountInfo, OneDriveFolder, OneDriveItem, error enums
+- `migration/db.rs` — Schema creation (`migration.db`), bảng `migration_jobs` (cơ bản)
+- `migration/microsoft.rs` — OAuth PKCE flow, token refresh, folder listing, recursive tree
+- `migration/commands.rs` — Commands: `cmd_migration_ms_connect`, `cmd_migration_ms_disconnect`, `cmd_migration_ms_status`, `cmd_migration_list_onedrive_folders`
+- `lib.rs` — Đăng ký MigrationState + commands
+- `Cargo.toml` — Thêm dep: `sha2`
+- `components/migration/OneDriveMigrationPage.tsx` — Page chính
+- `components/migration/SetupSection.tsx` — Connect button + folder tree display
+- `Sidebar.tsx` — Thêm nav item "OneDrive Migration"
+- `hooks/useMigration.ts` — Hook cơ bản: connect/disconnect/status/list folders
+- `types.ts` — TypeScript types cho migration
+- `i18n/locales/{vi,en}.json` — i18n keys cho Phase 1
+
+**Dependencies**: `reqwest` (đã có), `sqlite` (đã có), `tauri-plugin-opener` (đã có)
+
+**Independent validation**:
+- Manual: Mở app → click "OneDrive Migration" → kết nối Microsoft → thấy cây thư mục hiển thị
+- Unit: OAuth PKCE code_verifier/challenge generation, token parsing
+- Schema: `migration.db` tạo thành công với bảng `migration_jobs`
+
+**Exit criteria**:
+- ✅ Kết nối Microsoft OAuth thành công, hiển thị tên tài khoản
+- ✅ Ngắt kết nối Microsoft hoạt động
+- ✅ Hiển thị danh sách thư mục OneDrive (đệ quy) với tên, số file, dung lượng
+- ✅ Navigate giữa các thư mục con
+- ✅ migration.db tạo thành công
+- ✅ i18n cho vi/en hoạt động
+- ✅ Sidebar nav item hiển thị đúng
+
+---
+
+### Phase 2 — Scan Snapshot & Job Setup
+
+**Goal**: Người dùng có thể tạo migration job, chọn nguồn/đích/thư mục local, scan snapshot đầy đủ.
+
+**Code areas**:
+- `migration/db.rs` — Bảng `migration_items`, batch insert, stats queries
+- `migration/models.rs` — MigrationJob, MigrationItem, MigrationStats, FolderSummary structs đầy đủ
+- `migration/microsoft.rs` — Recursive scan với pagination, metadata extraction (eTag, hashes)
+- `migration/commands.rs` — Commands: `cmd_migration_create_job`, `cmd_migration_get_jobs`, `cmd_migration_get_job`, `cmd_migration_delete_job`, `cmd_migration_set_onedrive_folder`, `cmd_migration_set_telegram_destination`, `cmd_migration_set_local_dir`, `cmd_migration_scan`
+- `components/migration/SetupSection.tsx` — Job creation, source/dest/local picker, scan trigger
+- `components/migration/FileTable.tsx` — Danh sách file pending
+- `hooks/useMigration.ts` — Thêm job management, scan
+
+**Dependencies**: Phase 1
+
+**Independent validation**:
+- Manual: Tạo job → chọn thư mục OneDrive + Telegram dest + local dir → scan → xác nhận số file + tổng dung lượng khớp
+- Unit: Batch insert items, stats calculation, one-active-job guard
+
+**Exit criteria**:
+- ✅ Scan totals chính xác (khớp OneDrive)
+- ✅ Pagination hoạt động cho thư mục lớn
+- ✅ Snapshot persisted trong migration.db
+- ✅ Job state machine: draft → ready hoạt động
+
+---
+
+### Phase 3 — Sequential Migration Worker
+
+**Goal**: Worker pipeline hoạt động: download → duplicate check → upload → persist → cleanup → next file.
+
+**Code areas**:
+- `migration/worker.rs` — Pipeline loop: validate → download → SHA-256 → duplicate check → upload → COMMIT → cleanup → pause/cancel check → next
+- `migration/upload_adapter.rs` — Shared upload function seam, FloodWait handling
+- `migration/microsoft.rs` — Stream download to .part file
+- `migration/db.rs` — Bảng `migrated_fingerprints`, success transaction, recovery mapping
+- `commands/fs.rs` — Extract `upload_core()` shared internal function
+- `commands/utils.rs` — Extract `parse_flood_wait_seconds()`
+- `migration/commands.rs` — Commands: `cmd_migration_start`, `cmd_migration_pause`, `cmd_migration_resume`, `cmd_migration_cancel`, `cmd_migration_retry_item`, `cmd_migration_retry_all_failed`
+
+**Dependencies**: Phase 2
+
+**Independent validation**:
+- Unit: Duplicate logic (pre-download quickxor, post-download SHA-256), retry max 3, cooldown gate, recovery mapping, one-active-job enforcement
+- Integration: Mock upload 5 files tuần tự, duplicate detected, cooldown respected
+
+**Exit criteria**:
+- ✅ 5 files migrated tuần tự thành công
+- ✅ Duplicate detection hoạt động (pre-download + post-download)
+- ✅ Cooldown respected, persist `cooldown_until`
+- ✅ Pause/resume/cancel hoạt động
+- ✅ Retry max 3, manual retry reset counter
+- ✅ File tạm xóa sau success/duplicate
+
+---
+
+### Phase 4 — IPC Events & UI Progress
+
+**Goal**: UI hoàn chỉnh với progress events, controls, file table.
+
+**Code areas**:
+- `migration/commands.rs` — 5 event emitters: `migration:job-state`, `migration:item-progress`, `migration:item-complete`, `migration:stats`, `migration:cooldown`
+- `migration/mod.rs` — MigrationState registration đầy đủ
+- `lib.rs` — Đăng ký tất cả commands + state
+- `components/migration/ProgressPanel.tsx` — Summary stats + current file progress + controls (start/pause/resume/cancel/retry)
+- `components/migration/FileTable.tsx` — File list với status, error display, retry button
+- `hooks/useMigration.ts` — Event listeners, command wrappers đầy đủ
+- `i18n/locales/{vi,en}.json` — i18n keys cho Phases 2-4
+
+**Dependencies**: Phase 3
+
+**Independent validation**:
+- Manual: Full UI flow — setup → scan → start → watch progress → pause → resume → complete
+- Progress bars hiển thị download/upload %
+- All controls hoạt động từ UI
+
+**Exit criteria**:
+- ✅ UI hoàn chỉnh: setup → scan → migrate → complete
+- ✅ Progress visible: download %, upload %, file name
+- ✅ All controls: start/pause/resume/cancel/retry
+- ✅ Toast notifications cho success/error/cooldown
+- ✅ i18n vi/en cho toàn bộ UI
+
+---
+
+### Phase 5 — Tests & Hardening
+
+**Goal**: Unit tests, integration tests, quickstart verification, edge case hardening.
+
+**Code areas**:
+- All `#[cfg(test)]` modules
+- Fake Microsoft adapter (trait-based)
+- Fake Telegram upload adapter
+- Temporary SQLite cho test
+- quickstart.md verification
+
+**Dependencies**: Phase 4
+
+**Independent validation**:
+- All 7 quickstart scenarios pass
+- Unit tests green
+- Type-check + build pass
+
+**Exit criteria**:
+- ✅ Unit tests: state transitions, one-active-job, retry, duplicate logic, recovery mapping
+- ✅ Integration tests: scan + pagination, download stream, upload success transaction, cooldown gate
+- ✅ All 7 quickstart scenarios verified
+- ✅ `tsc --noEmit` pass
+- ✅ `npm run build` pass
+- ✅ Gate: PASS cho `/speckit-converge`
+
+---
+
+## Duplicate Detection Strategy
+
+Hai tầng kiểm tra, fingerprint types khác nhau:
+
+1. **Pre-download**: OneDrive `quickXorHash` (type `onedrive_quickxor`) → check `migrated_fingerprints` với composite key `(fingerprint_type, fingerprint_value, file_size)`. Match → skip, không download.
+2. **Post-download**: SHA-256 tính từ stream download (type `sha256`) → check `migrated_fingerprints`. Match → skip upload, xóa file tạm.
+
+**Quy tắc**: Không so sánh hash khác thuật toán. Không dùng filename/path/mtime. File size phải khớp.
+
+## Upload Seam
+
+**Shared core** (`upload_core`): Nhận raw dependencies, trả `Result<UploadResult, UploadError>`. Không tự retry/sleep.
+
+- **Manual adapter**: Giữ nguyên retry/sleep policy hiện tại.
+- **Migration adapter**: Nhận `FloodWait{seconds}`, persist `cooldown_until`, không upload mới trước expiry, tự tiếp tục khi hết.
+
+## OAuth Flow
+
+- Authorization Code + PKCE (S256), public-client app registration
+- System browser via `tauri-plugin-opener`
+- Redirect URI: `http://localhost` (loopback, đã đăng ký trong app registration)
+- Callback server bind `127.0.0.1` only
+- `state` parameter cho CSRF protection
+- Timeout 120 giây
+- Không log code/token
+
+## Token Handling
+
+- Access/refresh token chỉ trong Rust process memory
+- Không persist ra SQLite
+- Sau app restart: cần reconnect Microsoft → Manual Resume
+- Job/snapshot/progress vẫn persist bình thường
+
+## Recovery Mapping
+
+| Persisted state | Recovery state | Ghi chú |
+|---|---|---|
+| `pending` | `pending` | Giữ nguyên |
+| `downloading` | `pending` + `recovery_interrupted` | Cleanup `.part` |
+| `uploading` | `pending` + `recovery_interrupted` | Cleanup `.part` |
+| `completed` | `completed` | Giữ nguyên |
+| `skipped_duplicate` | `skipped_duplicate` | Giữ nguyên |
+| `failed` | `failed` | Giữ nguyên |
+
+Không tăng `attempt_count` chỉ vì restart. Không auto-start.
+
+## Test Strategy
+
+### Fakeable Boundaries
+
+- **Microsoft**: Trait cho list folders, scan snapshot, get metadata, download item
+- **Telegram**: Fakeable upload adapter
+- **Database**: Temporary SQLite (`":memory:"` hoặc temp file)
+
+### Rust Tests
+
+- State/control transitions
+- One active job
+- Retry max 3, manual retry reset
+- Completed/duplicate not reselected
+- Provider fingerprint exact-type matching
+- Hash type mismatch not duplicate
+- Same content/different path = duplicate
+- Same name/different content = not duplicate
+- Post-download SHA-256 duplicate
+- Temp cleanup
+- Recovery mapping
+
+### Frontend
+
+- Type-check (`tsc --noEmit`)
+- Production build
+- Manual quickstart
 
 ## Complexity Tracking
 

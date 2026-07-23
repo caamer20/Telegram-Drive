@@ -52,6 +52,30 @@ Trả về `null` nếu chưa kết nối.
 
 ---
 
+### OneDrive Browsing
+
+#### `cmd_migration_list_onedrive_folders`
+Duyệt danh sách children (thư mục và file) của một thư mục OneDrive. Dùng cho folder tree browsing.
+
+```
+Invoke: cmd_migration_list_onedrive_folders(parent_id: Option<String>)
+Returns: Result<Vec<OneDriveItem>, String>
+
+OneDriveItem {
+    id: String,             // OneDrive item ID
+    name: String,           // Tên file/thư mục
+    item_type: String,      // "folder" | "file"
+    size: i64,              // Dung lượng (bytes), 0 cho folder
+    path: Option<String>,   // Đường dẫn tương đối
+    child_count: Option<i64>, // Số children (chỉ cho folder)
+}
+```
+**Input**: `parent_id = None` → root OneDrive. `parent_id = Some("...")` → children của thư mục đó.
+**Guard**: Microsoft phải đã kết nối.
+**Pagination**: Tự động xử lý `@odata.nextLink` phía backend — trả về toàn bộ children.
+
+---
+
 ### Job Management
 
 #### `cmd_migration_create_job`

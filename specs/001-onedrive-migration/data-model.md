@@ -253,7 +253,7 @@ Khi backend khởi động, tất cả item được ánh xạ trạng thái nh�
 ### Job-level
 - Chỉ 1 job `running` tại một thời điểm (enforced bởi DB check + in-process `Arc<AtomicBool>` guard)
 - `onedrive_folder_id`, `local_dir`, `telegram_destination_id` phải được set trước khi chuyển `ready` → `running`
-- `completed_files + failed_files + skipped_duplicates + pending_files = total_files`
+- `completed_files + failed_files + skipped_duplicates + pending_files = total_files` (trong đó `pending_files` bao gồm cả items đang ở trạng thái `downloading`/`uploading` — đây là trạng thái tạm thời trong luồng xử lý)
 - `pending_files = 0` → có thể chuyển sang `completed`
 
 ### Item-level
@@ -278,12 +278,14 @@ Stats trong `migration_jobs` được cập nhật mỗi khi item thay đổi tr
 
 ```sql
 -- Cập nhật stats sau mỗi item change
+-- pending_files bao gồm cả downloading/uploading (trạng thái tạm thời)
+-- completed_bytes bao gồm cả skipped_duplicate để progress bar đạt 100%
 UPDATE migration_jobs SET
     completed_files = (SELECT COUNT(*) FROM migration_items WHERE job_id = ? AND state = 'completed'),
-    completed_bytes = (SELECT COALESCE(SUM(size_bytes), 0) FROM migration_items WHERE job_id = ? AND state = 'completed'),
+    completed_bytes = (SELECT COALESCE(SUM(size_bytes), 0) FROM migration_items WHERE job_id = ? AND state IN ('completed', 'skipped_duplicate')),
     failed_files = (SELECT COUNT(*) FROM migration_items WHERE job_id = ? AND state = 'failed'),
     skipped_duplicates = (SELECT COUNT(*) FROM migration_items WHERE job_id = ? AND state = 'skipped_duplicate'),
-    pending_files = (SELECT COUNT(*) FROM migration_items WHERE job_id = ? AND state = 'pending'),
+    pending_files = (SELECT COUNT(*) FROM migration_items WHERE job_id = ? AND state IN ('pending', 'downloading', 'uploading')),
     updated_at = strftime('%s', 'now')
 WHERE id = ?;
 ```

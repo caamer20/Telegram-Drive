@@ -63,6 +63,8 @@ pub mod jni_cache;
 pub mod transcode;
 pub mod fmp4_remux;
 pub mod mp4_utils;
+pub mod migration;
+
 
 
 /// Single source of truth for the Actix streaming server port.
@@ -591,6 +593,13 @@ pub fn run() {
                 e
             })?;
             app.manage(db_pool.clone());
+
+            // Initialize Migration Database & State
+            let migration_db = migration::db::init_migration_db(app.handle()).map_err(|e| {
+                log::error!("Failed to initialize Migration SQLite database: {}", e);
+                e
+            })?;
+            app.manage(migration::MigrationState::new(migration_db));
             
             // Start Streaming Server on dedicated thread (Actix needs its own runtime)
             // Disabled on Android: actix_rt::System creates a second Tokio runtime that
@@ -662,8 +671,16 @@ pub fn run() {
                 });
             }
 
+            // Auto Migration Engine trigger
+            let handle_auto = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let _ = migration::auto_engine::start_auto_engine(handle_auto).await;
+            });
+
             Ok(())
         })
+
+
         .invoke_handler(tauri::generate_handler![
             commands::cmd_auth_request_code,
             commands::cmd_auth_sign_in,
@@ -746,9 +763,32 @@ pub fn run() {
             commands::cmd_assign_folder_to_group,
             commands::cmd_update_group_order,
             commands::cmd_get_groups,
+            migration::commands::cmd_migration_ms_connect,
+            migration::commands::cmd_migration_ms_disconnect,
+            migration::commands::cmd_migration_ms_status,
+            migration::commands::cmd_migration_list_onedrive_folders,
+            migration::commands::cmd_migration_create_job,
+            migration::commands::cmd_migration_get_jobs,
+            migration::commands::cmd_migration_get_job,
+            migration::commands::cmd_migration_delete_job,
+            migration::commands::cmd_migration_set_onedrive_folder,
+            migration::commands::cmd_migration_set_telegram_destination,
+            migration::commands::cmd_migration_set_local_dir,
+            migration::commands::cmd_migration_scan,
+            migration::commands::cmd_migration_start,
+            migration::commands::cmd_migration_pause,
+            migration::commands::cmd_migration_resume,
+            migration::commands::cmd_migration_cancel,
+            migration::commands::cmd_migration_retry_item,
+            migration::commands::cmd_migration_retry_all_failed,
+            migration::commands::cmd_migration_get_auto_status,
+            migration::commands::cmd_migration_toggle_auto,
+            migration::commands::cmd_migration_update_auto_settings,
+            migration::commands::cmd_migration_get_daily_quota,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
+
 
     app.run(|app_handle, event| {
         if let tauri::RunEvent::Exit = event {

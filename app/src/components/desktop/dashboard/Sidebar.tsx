@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { HardDrive, Folder, Plus, RefreshCw, LogOut, ChevronLeft, ChevronRight, Settings2, Trash2, Check, X, Eye, EyeOff } from 'lucide-react';
+import { HardDrive, Folder, Plus, RefreshCw, LogOut, ChevronLeft, ChevronRight, Settings2, Trash2, Check, X, Eye, EyeOff, Cloud } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { SidebarItem } from './SidebarItem';
 import { BandwidthWidget } from './BandwidthWidget';
@@ -122,12 +122,15 @@ interface SidebarProps {
     onCreateGroup: (name: string, colorHex: string) => Promise<void>;
     onUpdateGroup: (groupId: number, name: string, colorHex: string) => Promise<void>;
     onDeleteGroup: (groupId: number) => Promise<void>;
+    activeView?: 'files' | 'onedrive';
+    onViewChange?: (view: 'files' | 'onedrive') => void;
 }
 
 export function Sidebar({
     folders, groups = [], activeFolderId, setActiveFolderId, onDrop, onDelete, onRename, onToggleVisibility, onExportInvite, onCreate,
     isSyncing, isConnected, onSync, onLogout, bandwidth,
-    onAssignFolderToGroup, onReorderFolders, onUpdateGroupOrder, onCreateGroup, onUpdateGroup, onDeleteGroup
+    onAssignFolderToGroup, onReorderFolders, onUpdateGroupOrder, onCreateGroup, onUpdateGroup, onDeleteGroup,
+    activeView = 'files', onViewChange,
 }: SidebarProps) {
     const [showNewFolderInput, setShowNewFolderInput] = useState(false);
     const [newFolderName, setNewFolderName] = useState("");
@@ -426,9 +429,20 @@ export function Sidebar({
                     <SidebarItem
                         icon={HardDrive}
                         label={t('common.saved_messages')}
-                        active={activeFolderId === null}
-                        onClick={() => setActiveFolderId(null)}
+                        active={activeView === 'files' && activeFolderId === null}
+                        onClick={() => {
+                            onViewChange?.('files');
+                            setActiveFolderId(null);
+                        }}
                         onDrop={(e: React.DragEvent) => onDrop(e, null)}
+                        folderId={null}
+                        collapsed={settings.sidebarCollapsed}
+                    />
+                    <SidebarItem
+                        icon={Cloud}
+                        label={t('migration.page_title', 'OneDrive Migration')}
+                        active={activeView === 'onedrive'}
+                        onClick={() => onViewChange?.('onedrive')}
                         folderId={null}
                         collapsed={settings.sidebarCollapsed}
                     />
@@ -441,8 +455,11 @@ export function Sidebar({
                                 key={folder.id}
                                 icon={Folder}
                                 label={folder.name}
-                                active={activeFolderId === folder.id}
-                                onClick={() => setActiveFolderId(folder.id)}
+                                active={activeView === 'files' && activeFolderId === folder.id}
+                                onClick={() => {
+                                    onViewChange?.('files');
+                                    setActiveFolderId(folder.id);
+                                }}
                                 onDrop={(e: React.DragEvent) => onDrop(e, folder.id)}
                                 onDelete={() => onDelete(folder.id, folder.name)}
                                 onRename={() => onRename(folder.id, folder.name)}
