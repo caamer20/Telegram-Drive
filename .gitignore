@@ -39,4 +39,5 @@ local.properties
 
 # Migration DB & temp files
 migration.db*
+microsoft-session*.json
 *.part

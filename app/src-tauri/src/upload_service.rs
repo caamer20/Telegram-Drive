@@ -5,17 +5,13 @@ pub fn start_foreground_service() {
     if let Ok(vm) = unsafe { jni::JavaVM::from_raw(ctx_obj.vm().cast()) } {
         if let Ok(mut env) = vm.attach_current_thread() {
             let ctx = unsafe { jni::objects::JObject::from_raw(ctx_obj.context().cast()) };
-            
+
             // Get class loader from Context
-            match env.call_method(
-                &ctx,
-                "getClassLoader",
-                "()Ljava/lang/ClassLoader;",
-                &[],
-            ) {
+            match env.call_method(&ctx, "getClassLoader", "()Ljava/lang/ClassLoader;", &[]) {
                 Ok(class_loader_val) => {
                     if let Ok(class_loader) = class_loader_val.l() {
-                        let class_name = env.new_string("com.cameronamer.telegramdrive.UploadForegroundService");
+                        let class_name =
+                            env.new_string("com.cameronamer.telegramdrive.UploadForegroundService");
                         if let Ok(class_name_obj) = class_name {
                             let class_obj_val = env.call_method(
                                 &class_loader,
@@ -45,7 +41,10 @@ pub fn start_foreground_service() {
                                     }
                                 }
                                 Err(e) => {
-                                    log::error!("JNI: loadClass UploadForegroundService failed: {}", e);
+                                    log::error!(
+                                        "JNI: loadClass UploadForegroundService failed: {}",
+                                        e
+                                    );
                                     if env.exception_check().unwrap_or(false) {
                                         let _ = env.exception_describe();
                                         let _ = env.exception_clear();
@@ -74,17 +73,13 @@ pub fn stop_foreground_service() {
     if let Ok(vm) = unsafe { jni::JavaVM::from_raw(ctx_obj.vm().cast()) } {
         if let Ok(mut env) = vm.attach_current_thread() {
             let ctx = unsafe { jni::objects::JObject::from_raw(ctx_obj.context().cast()) };
-            
+
             // Get class loader from Context
-            match env.call_method(
-                &ctx,
-                "getClassLoader",
-                "()Ljava/lang/ClassLoader;",
-                &[],
-            ) {
+            match env.call_method(&ctx, "getClassLoader", "()Ljava/lang/ClassLoader;", &[]) {
                 Ok(class_loader_val) => {
                     if let Ok(class_loader) = class_loader_val.l() {
-                        let class_name = env.new_string("com.cameronamer.telegramdrive.UploadForegroundService");
+                        let class_name =
+                            env.new_string("com.cameronamer.telegramdrive.UploadForegroundService");
                         if let Ok(class_name_obj) = class_name {
                             let class_obj_val = env.call_method(
                                 &class_loader,
@@ -114,7 +109,10 @@ pub fn stop_foreground_service() {
                                     }
                                 }
                                 Err(e) => {
-                                    log::error!("JNI: loadClass UploadForegroundService failed: {}", e);
+                                    log::error!(
+                                        "JNI: loadClass UploadForegroundService failed: {}",
+                                        e
+                                    );
                                     if env.exception_check().unwrap_or(false) {
                                         let _ = env.exception_describe();
                                         let _ = env.exception_clear();

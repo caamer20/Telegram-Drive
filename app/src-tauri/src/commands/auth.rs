@@ -1,23 +1,23 @@
-use tauri::State;
-use tauri::Manager;
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use grammers_client::Client;
-use std::sync::Arc;
-use std::sync::atomic::Ordering;
 use grammers_mtsender::SenderPool;
 use grammers_session::storages::SqliteSession;
 use grammers_session::Session;
+use grammers_tl_types as tl;
+use std::sync::atomic::Ordering;
+use std::sync::Arc;
+use tauri::Manager;
+use tauri::State;
 use tokio::sync::oneshot;
 use tokio::time::Duration;
-use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
-use grammers_tl_types as tl;
 
-use crate::TelegramState;
-use crate::models::{AuthResult};
 use crate::commands::utils::map_error;
+use crate::models::AuthResult;
+use crate::TelegramState;
 use grammers_client::SignInError;
 
 /// Ensures the Telegram client is initialized.
-/// 
+///
 /// IMPORTANT: This function properly manages runner lifecycle to prevent stack overflow.
 /// Before spawning a new runner, it signals the old runner to shutdown.
 pub async fn ensure_client_initialized(
@@ -28,11 +28,17 @@ pub async fn ensure_client_initialized(
     #[cfg(target_os = "android")]
     {
         let mut count = 0;
-        while ndk_context::android_context().vm().is_null() || ndk_context::android_context().context().is_null() {
-            if count >= 200 { // 10 seconds timeout
+        while ndk_context::android_context().vm().is_null()
+            || ndk_context::android_context().context().is_null()
+        {
+            if count >= 200 {
+                // 10 seconds timeout
                 return Err("Timeout waiting for Android JNI context initialization.".to_string());
             }
-            log::info!("Waiting for Android JNI context to initialize ({}ms)...", count * 50);
+            log::info!(
+                "Waiting for Android JNI context to initialize ({}ms)...",
+                count * 50
+            );
             tokio::time::sleep(Duration::from_millis(50)).await;
             count += 1;
         }
@@ -62,23 +68,29 @@ pub async fn ensure_client_initialized(
     }
 
     let runner_num = state.runner_count.fetch_add(1, Ordering::SeqCst) + 1;
-    log::info!("Initializing Telegram Client #{} with API ID: {}", runner_num, api_id);
-    
+    log::info!(
+        "Initializing Telegram Client #{} with API ID: {}",
+        runner_num,
+        api_id
+    );
+
     // Resolve session path safely
-    let app_data_dir = app_handle.path().app_data_dir()
+    let app_data_dir = app_handle
+        .path()
+        .app_data_dir()
         .map_err(|e| format!("Failed to get app data dir: {}", e))?;
-        
+
     if !app_data_dir.exists() {
         std::fs::create_dir_all(&app_data_dir)
             .map_err(|e| format!("Failed to create app data dir: {}", e))?;
     }
-    
+
     let session_path = app_data_dir.join("telegram.session");
     let session_path_str = session_path.to_string_lossy().to_string();
     log::info!("Opening session at: {}", session_path_str);
-    
+
     let mut session_open_result = SqliteSession::open(&session_path_str);
-    
+
     // Retry opening the session database up to 5 times (every 100ms)
     // in case the database is temporarily locked by the old shutting down runner.
     if session_open_result.is_err() {
@@ -95,16 +107,19 @@ pub async fn ensure_client_initialized(
     let session = match session_open_result.map_err(|e| e.to_string()) {
         Ok(s) => s,
         Err(e) => {
-            log::warn!("Session file could not be opened after retries ({}). Recreating...", e);
+            log::warn!(
+                "Session file could not be opened after retries ({}). Recreating...",
+                e
+            );
             let _ = std::fs::remove_file(&session_path);
             let _ = std::fs::remove_file(format!("{}-wal", session_path_str));
             let _ = std::fs::remove_file(format!("{}-shm", session_path_str));
-            
+
             SqliteSession::open(&session_path_str)
                 .map_err(|err| format!("Failed to open session after recreation: {}", err))?
         }
     };
-        
+
     let net_config = app_handle.state::<Arc<crate::vpn_optimizer::NetworkConfig>>();
     let preferred_dc = {
         let vpn = net_config.vpn.read().unwrap();
@@ -130,11 +145,11 @@ pub async fn ensure_client_initialized(
     let session = Arc::new(session);
     let pool = SenderPool::with_configuration(session, api_id, connection_params);
     let client = Client::new(&pool);
-    
+
     // Create shutdown channel for this runner
     let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
     *state.runner_shutdown.lock().unwrap() = Some(shutdown_tx);
-    
+
     // Spawn the network runner with shutdown support
     let SenderPool { runner, .. } = pool;
     tauri::async_runtime::spawn(async move {
@@ -149,7 +164,7 @@ pub async fn ensure_client_initialized(
             }
         }
     });
-    
+
     *client_guard = Some(client.clone());
     Ok(client)
 }
@@ -184,7 +199,7 @@ pub async fn cmd_check_connection(
         }
         log::warn!("Connection check failed (get_me). Attempting reconnect...");
     } else {
-         log::warn!("Connection check: No client found. Checking for saved API ID...");
+        log::warn!("Connection check: No client found. Checking for saved API ID...");
     }
 
     // 2. Reconnect Logic
@@ -192,7 +207,7 @@ pub async fn cmd_check_connection(
     if let Some(api_id) = api_id_opt {
         // Force re-init: Clear old client first to ensure fresh pool
         *state.client.lock().await = None;
-        
+
         match ensure_client_initialized(&app_handle, &state, api_id).await {
             Ok(c) => {
                 // Double check
@@ -202,8 +217,8 @@ pub async fn cmd_check_connection(
                 } else {
                     return Err("Reconnect succeeded but ping failed.".to_string());
                 }
-            },
-            Err(e) => return Err(format!("Auto-reconnect failed: {}", e))
+            }
+            Err(e) => return Err(format!("Auto-reconnect failed: {}", e)),
         }
     }
 
@@ -258,7 +273,7 @@ pub async fn cmd_logout(
     state: State<'_, TelegramState>,
 ) -> Result<bool, String> {
     log::info!("Logging out...");
-    
+
     // 1. Shutdown the network runner FIRST to prevent any operations
     {
         let mut shutdown_guard = state.runner_shutdown.lock().unwrap();
@@ -267,12 +282,12 @@ pub async fn cmd_logout(
             let _ = shutdown_tx.send(());
         }
     }
-    
+
     // 2. Try to sign out from Telegram (if connected)
     let client_opt = { state.client.lock().await.clone() };
     if let Some(client) = client_opt {
         // We don't strictly care if this fails (e.g. network down), we just want to clear local state.
-        let _ = client.sign_out().await; 
+        let _ = client.sign_out().await;
     }
 
     // 3. Clear State
@@ -284,13 +299,19 @@ pub async fn cmd_logout(
     state.cancelled_transfers.write().await.clear();
 
     // 4. Remove Session File
-    let app_data_dir = app_handle.path().app_data_dir().map_err(|e| e.to_string())?;
+    let app_data_dir = app_handle
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?;
     let session_path = app_data_dir.join("telegram.session");
     let _ = std::fs::remove_file(session_path);
     let _ = std::fs::remove_file(app_data_dir.join("telegram.session-wal"));
     let _ = std::fs::remove_file(app_data_dir.join("telegram.session-shm"));
 
-    log::info!("Logout complete. Runner count: {}", state.runner_count.load(Ordering::SeqCst));
+    log::info!(
+        "Logout complete. Runner count: {}",
+        state.runner_count.load(Ordering::SeqCst)
+    );
     Ok(true)
 }
 
@@ -302,7 +323,6 @@ pub async fn cmd_auth_request_code(
     api_hash: String,
     state: State<'_, TelegramState>,
 ) -> Result<String, String> {
-    
     if api_hash.trim().is_empty() {
         return Err("API Hash cannot be empty.".to_string());
     }
@@ -311,11 +331,11 @@ pub async fn cmd_auth_request_code(
     *state.api_id.lock().await = Some(api_id);
 
     let client_handle = ensure_client_initialized(&app_handle, &state, api_id).await?;
-    
+
     log::info!("Requesting code for {}", phone);
-    
+
     let mut last_error = String::new();
-    
+
     // Retry up to 2 times for AUTH_RESTART or 500
     for i in 1..=2 {
         match client_handle.request_login_code(&phone, &api_hash).await {
@@ -323,18 +343,18 @@ pub async fn cmd_auth_request_code(
                 let mut token_guard = state.login_token.lock().await;
                 *token_guard = Some(token);
                 return Ok("code_sent".to_string());
-            },
+            }
             Err(e) => {
                 let err_msg = e.to_string();
                 log::warn!("Error requesting code (Attempt {}): {}", i, err_msg);
-                
+
                 if err_msg.contains("AUTH_RESTART") || err_msg.contains("500") {
                     log::info!("AUTH_RESTART error detected. Retrying...");
                     last_error = err_msg;
                     // Prepare for retry
                     continue;
                 }
-                
+
                 // Other errors, fail immediately
                 return Err(map_error(e));
             }
@@ -350,19 +370,21 @@ pub async fn cmd_auth_sign_in(
     state: State<'_, TelegramState>,
 ) -> Result<AuthResult, String> {
     log::info!("Signing in with code...");
-    
+
     let client = {
         let guard = state.client.lock().await;
         guard.as_ref().ok_or("Client not initialized")?.clone()
     };
 
     let token_guard = state.login_token.lock().await;
-    let login_token = token_guard.as_ref().ok_or("No login session found (restart flow)")?;
+    let login_token = token_guard
+        .as_ref()
+        .ok_or("No login session found (restart flow)")?;
 
     match client.sign_in(login_token, &code).await {
         Ok(_user) => {
-             log::info!("Successfully logged in.");
-             Ok(AuthResult {
+            log::info!("Successfully logged in.");
+            Ok(AuthResult {
                 success: true,
                 next_step: Some("dashboard".to_string()),
                 error: None,
@@ -379,8 +401,8 @@ pub async fn cmd_auth_sign_in(
             })
         }
         Err(e) => {
-           log::error!("Sign in error: {}", e);
-           Err(format!("Sign in failed: {}", e))
+            log::error!("Sign in error: {}", e);
+            Err(format!("Sign in failed: {}", e))
         }
     }
 }
@@ -394,20 +416,20 @@ pub async fn cmd_auth_check_password(
         let guard = state.client.lock().await;
         guard.as_ref().ok_or("Client not initialized")?.clone()
     };
-    
+
     let mut pw_guard = state.password_token.lock().await;
     let pw_token = pw_guard.take().ok_or("No password session found")?;
 
     match client.check_password(pw_token, password.as_str()).await {
         Ok(_user) => {
-             log::info!("2FA Success.");
-             Ok(AuthResult {
+            log::info!("2FA Success.");
+            Ok(AuthResult {
                 success: true,
                 next_step: Some("dashboard".to_string()),
                 error: None,
             })
         }
-        Err(e) => Err(format!("2FA Failed: {}", e))
+        Err(e) => Err(format!("2FA Failed: {}", e)),
     }
 }
 
@@ -431,11 +453,14 @@ pub async fn cmd_auth_qr_login(
 
     log::info!("Requesting QR login token...");
 
-    let result = client.invoke(&tl::functions::auth::ExportLoginToken {
-        api_id,
-        api_hash: api_hash.clone(),
-        except_ids: vec![],
-    }).await.map_err(|e| format!("ExportLoginToken failed: {}", e))?;
+    let result = client
+        .invoke(&tl::functions::auth::ExportLoginToken {
+            api_id,
+            api_hash: api_hash.clone(),
+            except_ids: vec![],
+        })
+        .await
+        .map_err(|e| format!("ExportLoginToken failed: {}", e))?;
 
     match result {
         tl::enums::auth::LoginToken::Token(t) => {
@@ -467,9 +492,7 @@ pub async fn cmd_auth_qr_login(
 /// Instead, we check is_authorized() which succeeds once the phone app
 /// accepts the token via auth.acceptLoginToken.
 #[tauri::command]
-pub async fn cmd_auth_qr_poll(
-    state: State<'_, TelegramState>,
-) -> Result<AuthResult, String> {
+pub async fn cmd_auth_qr_poll(state: State<'_, TelegramState>) -> Result<AuthResult, String> {
     let client = {
         let guard = state.client.lock().await;
         guard.as_ref().ok_or("Client not initialized")?.clone()

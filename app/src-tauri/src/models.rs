@@ -4,8 +4,13 @@ use serde::{Deserialize, Serialize};
 #[serde(tag = "status", content = "data")]
 pub enum AuthState {
     LoggedOut,
-    AwaitingCode { phone: String, phone_code_hash: String },
-    AwaitingPassword { phone: String },
+    AwaitingCode {
+        phone: String,
+        phone_code_hash: String,
+    },
+    AwaitingPassword {
+        phone: String,
+    },
     LoggedIn,
 }
 
@@ -24,8 +29,8 @@ pub struct FileMetadata {
     pub size: u64, // Updated to u64
     pub mime_type: Option<String>,
     pub file_ext: Option<String>, // Added field
-    pub created_at: String, 
-    pub icon_type: String, 
+    pub created_at: String,
+    pub icon_type: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

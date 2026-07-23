@@ -1,8 +1,8 @@
+use grammers_client::types::Peer;
+use grammers_client::InputMessage;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use grammers_client::types::Peer;
-use grammers_client::InputMessage;
 use tokio::sync::RwLock;
 
 use crate::commands::utils::{map_error, resolve_peer};
@@ -27,8 +27,12 @@ pub enum UploadError {
 impl std::fmt::Display for UploadError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            UploadError::FloodWait { seconds } => write!(f, "Telegram flood wait for {} seconds", seconds),
-            UploadError::TelegramFileTooLarge(msg) => write!(f, "Telegram file size limit exceeded: {}", msg),
+            UploadError::FloodWait { seconds } => {
+                write!(f, "Telegram flood wait for {} seconds", seconds)
+            }
+            UploadError::TelegramFileTooLarge(msg) => {
+                write!(f, "Telegram file size limit exceeded: {}", msg)
+            }
             UploadError::Network(msg) => write!(f, "Network error: {}", msg),
             UploadError::Auth(msg) => write!(f, "Authentication error: {}", msg),
             UploadError::Cancelled => write!(f, "Transfer cancelled"),
@@ -39,6 +43,28 @@ impl std::fmt::Display for UploadError {
 
 impl std::error::Error for UploadError {}
 
+fn normalize_destination_id(folder_id: Option<i64>) -> Option<i64> {
+    folder_id.filter(|id| *id != 0)
+}
+
+fn destination_description(folder_id: Option<i64>) -> String {
+    match normalize_destination_id(folder_id) {
+        Some(id) => format!("chat_id={id}"),
+        None => "Saved Messages (self)".to_string(),
+    }
+}
+
+fn upload_file_name(original_file_name: &str, local_path: &str) -> String {
+    let original_file_name = original_file_name.trim();
+    if !original_file_name.is_empty() {
+        return original_file_name.to_string();
+    }
+
+    std::path::Path::new(local_path)
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .unwrap_or_else(|| "file".to_string())
+}
 
 pub fn parse_flood_wait_seconds(err_str: &str) -> Option<i64> {
     if let Some(idx) = err_str.find("FLOOD_WAIT_") {
@@ -47,7 +73,10 @@ pub fn parse_flood_wait_seconds(err_str: &str) -> Option<i64> {
         digits.parse::<i64>().ok()
     } else if let Some(idx) = err_str.find("flood wait") {
         // Try parsing digits in message
-        let digits: String = err_str[idx..].chars().filter(|c| c.is_ascii_digit()).collect();
+        let digits: String = err_str[idx..]
+            .chars()
+            .filter(|c| c.is_ascii_digit())
+            .collect();
         digits.parse::<i64>().ok()
     } else {
         None
@@ -57,13 +86,22 @@ pub fn parse_flood_wait_seconds(err_str: &str) -> Option<i64> {
 pub fn parse_upload_error(err_str: String) -> UploadError {
     if let Some(seconds) = parse_flood_wait_seconds(&err_str) {
         UploadError::FloodWait { seconds }
-    } else if err_str.contains("FILE_TOO_LARGE") || err_str.contains("too large") || err_str.contains("telegram_file_too_large") {
+    } else if err_str.contains("FILE_TOO_LARGE")
+        || err_str.contains("too large")
+        || err_str.contains("telegram_file_too_large")
+    {
         UploadError::TelegramFileTooLarge(err_str)
-    } else if err_str.contains("AUTH_KEY") || err_str.contains("SESSION_EXPIRED") || err_str.contains("Unauthorized") {
+    } else if err_str.contains("AUTH_KEY")
+        || err_str.contains("SESSION_EXPIRED")
+        || err_str.contains("Unauthorized")
+    {
         UploadError::Auth(err_str)
     } else if err_str.contains("cancelled") || err_str.contains("Cancelled") {
         UploadError::Cancelled
-    } else if err_str.contains("connection") || err_str.contains("timeout") || err_str.contains("reset") {
+    } else if err_str.contains("connection")
+        || err_str.contains("timeout")
+        || err_str.contains("reset")
+    {
         UploadError::Network(err_str)
     } else {
         UploadError::Unknown(err_str)
@@ -75,6 +113,7 @@ pub async fn upload_core<F>(
     client: &grammers_client::Client,
     peer_cache: &Arc<RwLock<HashMap<i64, Peer>>>,
     path: &str,
+    original_file_name: &str,
     folder_id: Option<i64>,
     cancel_token: &Arc<AtomicBool>,
     progress_cb: Option<F>,
@@ -91,10 +130,17 @@ where
         .map_err(|e| UploadError::Unknown(format!("Failed to read file metadata: {}", e)))?;
     let file_size = meta.len();
 
-    let file_name = std::path::Path::new(path)
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_else(|| "file".to_string());
+    let file_name = upload_file_name(original_file_name, path);
+    let normalized_folder_id = normalize_destination_id(folder_id);
+    let destination = destination_description(folder_id);
+    log::info!(
+        "Preparing Telegram upload: file='{}', bytes={}, destination={}, requested_destination_id={:?}, local_path='{}'",
+        file_name,
+        file_size,
+        destination,
+        folder_id,
+        path
+    );
 
     let (mut reader, size, bytes_counter) = crate::commands::fs::ProgressReader::new(path)
         .await
@@ -122,49 +168,103 @@ where
     let fname_clone = file_name.clone();
 
     let upload_task = tokio::spawn(async move {
-        client_clone.upload_stream(&mut reader, size as usize, fname_clone).await
+        client_clone
+            .upload_stream(&mut reader, size as usize, fname_clone)
+            .await
     });
 
     let uploaded_file = match upload_task.await {
         Ok(res) => match res {
             Ok(f) => f,
             Err(e) => {
-                if let Some(t) = progress_task { t.abort(); }
+                if let Some(t) = progress_task {
+                    t.abort();
+                }
                 let err_msg = map_error(e);
-                return Err(parse_upload_error(err_msg));
+                return Err(parse_upload_error(format!(
+                    "Telegram binary upload failed [file='{}', bytes={}, local_path='{}']: {}",
+                    file_name, file_size, path, err_msg
+                )));
             }
         },
         Err(e) => {
-            if let Some(t) = progress_task { t.abort(); }
-            return Err(UploadError::Unknown(format!("Upload task join error: {}", e)));
+            if let Some(t) = progress_task {
+                t.abort();
+            }
+            return Err(UploadError::Unknown(format!(
+                "Upload task join error: {}",
+                e
+            )));
         }
     };
 
-    if let Some(t) = progress_task { t.abort(); }
+    if let Some(t) = progress_task {
+        t.abort();
+    }
 
     if cancel_token.load(Ordering::Relaxed) {
         return Err(UploadError::Cancelled);
     }
 
-    let peer = resolve_peer(client, folder_id, peer_cache)
+    let peer = resolve_peer(client, normalized_folder_id, peer_cache)
         .await
-        .map_err(|e| UploadError::Unknown(format!("Failed to resolve peer: {}", e)))?;
+        .map_err(|e| {
+            UploadError::Unknown(format!(
+                "Telegram peer resolution failed [destination={}, requested_destination_id={:?}, file='{}', bytes={}]: {}",
+                destination, folder_id, file_name, file_size, e
+            ))
+        })?;
 
     let message = InputMessage::new().text("").file(uploaded_file);
 
     let send_res = client.send_message(&peer, message).await;
 
     match send_res {
-        Ok(msg) => {
-            Ok(UploadResult {
-                message_id: Some(msg.id()),
-                file_name,
-                file_size: file_size as i64,
-            })
-        }
+        Ok(msg) => Ok(UploadResult {
+            message_id: Some(msg.id()),
+            file_name,
+            file_size: file_size as i64,
+        }),
         Err(e) => {
             let err_msg = map_error(e);
-            Err(parse_upload_error(err_msg))
+            Err(parse_upload_error(format!(
+                "Telegram send_message failed [destination={}, requested_destination_id={:?}, file='{}', bytes={}]: {}",
+                destination, folder_id, file_name, file_size, err_msg
+            )))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{destination_description, normalize_destination_id, upload_file_name};
+
+    #[test]
+    fn zero_destination_means_saved_messages() {
+        assert_eq!(normalize_destination_id(Some(0)), None);
+        assert_eq!(normalize_destination_id(None), None);
+        assert_eq!(destination_description(Some(0)), "Saved Messages (self)");
+    }
+
+    #[test]
+    fn valid_destination_id_is_preserved() {
+        assert_eq!(normalize_destination_id(Some(42)), Some(42));
+        assert_eq!(destination_description(Some(42)), "chat_id=42");
+    }
+
+    #[test]
+    fn original_file_name_is_used_instead_of_checkpoint_name() {
+        assert_eq!(
+            upload_file_name("date_icon.png", "/tmp/mig_8_9067.part"),
+            "date_icon.png"
+        );
+    }
+
+    #[test]
+    fn checkpoint_name_is_only_a_fallback_for_missing_original_name() {
+        assert_eq!(
+            upload_file_name("   ", "/tmp/mig_8_9067.part"),
+            "mig_8_9067.part"
+        );
     }
 }

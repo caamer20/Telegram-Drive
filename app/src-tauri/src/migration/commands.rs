@@ -1,5 +1,5 @@
-use tauri::State;
 use std::sync::Arc;
+use tauri::{Manager, State};
 
 use crate::migration::db;
 use crate::migration::microsoft;
@@ -27,18 +27,25 @@ pub async fn cmd_migration_ms_connect(
 
     let session = microsoft::start_oauth_flow(&cid, &t, &r, &app_handle).await?;
     let info = session.account_info.clone();
+    crate::migration::session_store::save(&app_handle, &session)?;
     *state.ms_session.lock().await = Some(session);
+    if let Ok(mut progress) = state.scan_progress.lock() {
+        *progress = None;
+    }
+
     Ok(info)
 }
-
-
-
 
 #[tauri::command]
 pub async fn cmd_migration_ms_disconnect(
     state: State<'_, MigrationState>,
+    app_handle: tauri::AppHandle,
 ) -> Result<(), String> {
     *state.ms_session.lock().await = None;
+    if let Ok(mut progress) = state.scan_progress.lock() {
+        *progress = None;
+    }
+    crate::migration::session_store::delete(&app_handle)?;
     Ok(())
 }
 
@@ -57,6 +64,7 @@ pub async fn cmd_migration_ms_status(
 #[tauri::command]
 pub async fn cmd_migration_list_onedrive_folders(
     state: State<'_, MigrationState>,
+    app_handle: tauri::AppHandle,
     parent_id: Option<String>,
 ) -> Result<Vec<OneDriveItem>, String> {
     let http = reqwest::Client::new();
@@ -64,7 +72,8 @@ pub async fn cmd_migration_list_onedrive_folders(
         let mut guard = state.ms_session.lock().await;
         if let Some(ref mut session) = *guard {
             if session.is_expired() {
-                microsoft::refresh_access_token(microsoft::DEFAULT_MS_CLIENT_ID, session).await?;
+                microsoft::refresh_access_token(session).await?;
+                crate::migration::session_store::save(&app_handle, session)?;
             }
             session.access_token.clone()
         } else {
@@ -99,7 +108,8 @@ pub async fn cmd_migration_get_job(
     let items = db::get_items_by_job(&state.db, job_id)?;
 
     // Calculate folder summaries
-    let mut folder_map: std::collections::HashMap<String, (i64, i64)> = std::collections::HashMap::new();
+    let mut folder_map: std::collections::HashMap<String, (i64, i64)> =
+        std::collections::HashMap::new();
     for item in &items {
         if item.item_type == "file" {
             let parent_path = std::path::Path::new(&item.source_path)
@@ -119,7 +129,13 @@ pub async fn cmd_migration_get_job(
             let name = std::path::Path::new(&path)
                 .file_name()
                 .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| if path.is_empty() { "Root".into() } else { path.clone() });
+                .unwrap_or_else(|| {
+                    if path.is_empty() {
+                        "Root".into()
+                    } else {
+                        path.clone()
+                    }
+                });
 
             FolderSummary {
                 source_path: path,
@@ -182,6 +198,7 @@ pub async fn cmd_migration_set_local_dir(
 #[tauri::command]
 pub async fn cmd_migration_scan(
     state: State<'_, MigrationState>,
+    app_handle: tauri::AppHandle,
     job_id: i64,
 ) -> Result<MigrationStats, String> {
     let job = db::get_job(&state.db, job_id)?;
@@ -194,7 +211,8 @@ pub async fn cmd_migration_scan(
         let mut guard = state.ms_session.lock().await;
         if let Some(ref mut session) = *guard {
             if session.is_expired() {
-                microsoft::refresh_access_token(microsoft::DEFAULT_MS_CLIENT_ID, session).await?;
+                microsoft::refresh_access_token(session).await?;
+                crate::migration::session_store::save(&app_handle, session)?;
             }
             session.access_token.clone()
         } else {
@@ -218,7 +236,9 @@ pub async fn cmd_migration_start(
     }
 
     if job.onedrive_folder_id.is_none() || job.local_dir.is_none() {
-        return Err("Please complete job configuration (OneDrive folder and Local working dir)".into());
+        return Err(
+            "Please complete job configuration (OneDrive folder and Local working dir)".into(),
+        );
     }
 
     let mig_state = state.inner().clone_state();
@@ -234,7 +254,9 @@ pub async fn cmd_migration_pause(
     state: State<'_, MigrationState>,
     _job_id: i64,
 ) -> Result<(), String> {
-    state.pause_token.store(true, std::sync::atomic::Ordering::Relaxed);
+    state
+        .pause_token
+        .store(true, std::sync::atomic::Ordering::Relaxed);
     Ok(())
 }
 
@@ -262,7 +284,9 @@ pub async fn cmd_migration_cancel(
     state: State<'_, MigrationState>,
     _job_id: i64,
 ) -> Result<(), String> {
-    state.cancel_token.store(true, std::sync::atomic::Ordering::Relaxed);
+    state
+        .cancel_token
+        .store(true, std::sync::atomic::Ordering::Relaxed);
     Ok(())
 }
 
@@ -286,15 +310,75 @@ pub async fn cmd_migration_retry_all_failed(
 #[tauri::command]
 pub async fn cmd_migration_get_auto_status(
     state: State<'_, MigrationState>,
-) -> Result<Option<AutoMigrationProfile>, String> {
-    let email = {
+) -> Result<AutoMigrationStatus, String> {
+    let account = {
         let guard = state.ms_session.lock().await;
-        guard.as_ref().map(|s| s.account_info.account_email.clone()).unwrap_or_default()
+        guard.as_ref().map(|session| session.account_info.clone())
     };
-    if email.is_empty() {
-        return Ok(None);
-    }
-    db::get_auto_profile(&state.db, &email)
+    let profile = match account.as_ref() {
+        Some(account) if !account.account_email.is_empty() => {
+            db::get_auto_profile(&state.db, &account.account_email)?
+        }
+        _ => None,
+    };
+    let active_job = match profile.as_ref().and_then(|value| value.active_job_id) {
+        Some(job_id) => Some(MigrationJobDetail {
+            job: db::get_job(&state.db, job_id)?,
+            stats: db::get_job_stats(&state.db, job_id)?,
+            folders: Vec::new(),
+            files: db::get_items_by_job(&state.db, job_id)?,
+        }),
+        None => None,
+    };
+    let in_memory_scan_progress = state
+        .scan_progress
+        .lock()
+        .map_err(|e| e.to_string())?
+        .clone();
+    let scan_progress = match (in_memory_scan_progress, account.as_ref()) {
+        (Some(mut progress), _) => {
+            // A crash/reload can leave a persisted `stopping` checkpoint even
+            // though no scanner task exists anymore. Treat that stale state as
+            // stopped so the UI can resume or reset it.
+            if matches!(
+                progress.phase.as_str(),
+                "enumerating" | "building_snapshot" | "stopping"
+            ) && !state.scan_running.load(std::sync::atomic::Ordering::SeqCst)
+            {
+                progress.phase = "stopped".into();
+                if let Some(account) = account.as_ref() {
+                    let _ = db::set_auto_scan_status(&state.db, &account.account_email, "stopped");
+                }
+            }
+            Some(progress)
+        }
+        (None, Some(account)) if !account.account_email.is_empty() => {
+            db::get_auto_scan_checkpoint(&state.db, &account.account_email)?.map(|checkpoint| {
+                ScanProgressPayload {
+                    phase: if matches!(
+                        checkpoint.status.as_str(),
+                        "enumerating" | "building_snapshot" | "stopping"
+                    ) && !state.scan_running.load(std::sync::atomic::Ordering::SeqCst)
+                    {
+                        "stopped".into()
+                    } else {
+                        checkpoint.status
+                    },
+                    pages_scanned: checkpoint.pages_scanned,
+                    discovered_files: checkpoint.discovered_files,
+                    discovered_folders: checkpoint.discovered_folders,
+                    elapsed_ms: checkpoint.elapsed_ms,
+                }
+            })
+        }
+        _ => None,
+    };
+    Ok(AutoMigrationStatus {
+        profile,
+        account,
+        active_job,
+        scan_progress,
+    })
 }
 
 #[tauri::command]
@@ -305,7 +389,10 @@ pub async fn cmd_migration_toggle_auto(
 ) -> Result<AutoMigrationProfile, String> {
     let email = {
         let guard = state.ms_session.lock().await;
-        guard.as_ref().map(|s| s.account_info.account_email.clone()).unwrap_or_default()
+        guard
+            .as_ref()
+            .map(|s| s.account_info.account_email.clone())
+            .unwrap_or_default()
     };
     if email.is_empty() {
         return Err("Microsoft account not connected".into());
@@ -314,10 +401,18 @@ pub async fn cmd_migration_toggle_auto(
     let profile = db::upsert_auto_profile(&state.db, &email, enabled, None, None, None)?;
 
     if enabled {
+        state
+            .pause_token
+            .store(false, std::sync::atomic::Ordering::Relaxed);
         let handle_clone = app_handle.clone();
         tokio::spawn(async move {
             let _ = crate::migration::auto_engine::start_auto_engine(handle_clone).await;
         });
+    } else {
+        state
+            .pause_token
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        db::pause_auto_job(&state.db, &email, "user")?;
     }
 
     Ok(profile)
@@ -332,14 +427,26 @@ pub async fn cmd_migration_update_auto_settings(
 ) -> Result<AutoMigrationProfile, String> {
     let email = {
         let guard = state.ms_session.lock().await;
-        guard.as_ref().map(|s| s.account_info.account_email.clone()).unwrap_or_default()
+        guard
+            .as_ref()
+            .map(|s| s.account_info.account_email.clone())
+            .unwrap_or_default()
     };
     if email.is_empty() {
         return Err("Microsoft account not connected".into());
     }
 
-    let current = db::get_auto_profile(&state.db, &email)?.map(|p| p.enabled).unwrap_or(true);
-    db::upsert_auto_profile(&state.db, &email, current, dest_id, dest_name.as_deref(), temp_dir.as_deref())
+    let current = db::get_auto_profile(&state.db, &email)?
+        .map(|p| p.enabled)
+        .unwrap_or(true);
+    db::upsert_auto_profile(
+        &state.db,
+        &email,
+        current,
+        dest_id,
+        dest_name.as_deref(),
+        temp_dir.as_deref(),
+    )
 }
 
 #[tauri::command]
@@ -349,6 +456,222 @@ pub async fn cmd_migration_get_daily_quota(
     db::get_daily_quota(&state.db)
 }
 
+#[tauri::command]
+pub async fn cmd_migration_rescan_auto(
+    state: State<'_, MigrationState>,
+    app_handle: tauri::AppHandle,
+    reset: Option<bool>,
+) -> Result<(), String> {
+    if reset.unwrap_or(false) {
+        if state.scan_running.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err("scan_already_running".into());
+        }
+        if state
+            .worker_running
+            .load(std::sync::atomic::Ordering::SeqCst)
+        {
+            return Err("migration_running".into());
+        }
+        let account_email = {
+            let session = state.ms_session.lock().await;
+            session
+                .as_ref()
+                .map(|value| value.account_info.account_email.clone())
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| "microsoft_not_connected".to_string())?
+        };
+        db::clear_auto_scan_checkpoint(&state.db, &account_email)?;
+        if let Ok(mut progress) = state.scan_progress.lock() {
+            *progress = None;
+        }
+    }
+    crate::migration::auto_engine::start_rescan_auto_engine(app_handle)
+}
+
+#[tauri::command]
+pub async fn cmd_migration_stop_auto_scan(
+    app_handle: tauri::AppHandle,
+) -> Result<ScanProgressPayload, String> {
+    crate::migration::auto_engine::request_stop_auto_scan(app_handle).await
+}
+
+#[tauri::command]
+pub async fn cmd_migration_get_scan_snapshot(
+    state: State<'_, MigrationState>,
+) -> Result<Vec<OneDriveItem>, String> {
+    load_stopped_scan_snapshot(state.inner()).await
+}
+
+async fn load_stopped_scan_snapshot(state: &MigrationState) -> Result<Vec<OneDriveItem>, String> {
+    let account_email = {
+        let session = state.ms_session.lock().await;
+        session
+            .as_ref()
+            .map(|value| value.account_info.account_email.clone())
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| "microsoft_not_connected".to_string())?
+    };
+    let checkpoint = db::get_auto_scan_checkpoint(&state.db, &account_email)?
+        .ok_or_else(|| "scan_snapshot_not_available".to_string())?;
+    if checkpoint.status != "stopped" {
+        return Err("scan_snapshot_not_stopped".into());
+    }
+    let values = db::load_auto_scan_items(&state.db, &account_email)?;
+    Ok(microsoft::build_delta_snapshot(&values))
+}
+
+#[tauri::command]
+pub async fn cmd_migration_sync_scan_snapshot_item(
+    state: State<'_, MigrationState>,
+    app_handle: tauri::AppHandle,
+    source_item_id: String,
+) -> Result<i64, String> {
+    if state
+        .worker_running
+        .load(std::sync::atomic::Ordering::SeqCst)
+    {
+        return Err("migration_running".into());
+    }
+
+    let account_email = {
+        let session = state.ms_session.lock().await;
+        session
+            .as_ref()
+            .map(|value| value.account_info.account_email.clone())
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| "microsoft_not_connected".to_string())?
+    };
+    let item = load_stopped_scan_snapshot(state.inner())
+        .await?
+        .into_iter()
+        .find(|item| item.id == source_item_id)
+        .ok_or_else(|| "scan_snapshot_item_not_found".to_string())?;
+    if item.item_type != "file" {
+        return Err("scan_snapshot_item_not_file".into());
+    }
+
+    let profile = db::get_auto_profile(&state.db, &account_email)?
+        .ok_or_else(|| "auto_migration_profile_not_configured".to_string())?;
+    let temp_dir = match profile.local_temp_dir {
+        Some(dir) if !dir.trim().is_empty() => dir,
+        _ => {
+            let dir = app_handle
+                .path()
+                .app_data_dir()
+                .map_err(|error| error.to_string())?
+                .join("temp_migration");
+            std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+            dir.to_string_lossy().to_string()
+        }
+    };
+    let destination_name = profile
+        .default_telegram_dest_name
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "Saved Messages".to_string());
+    let (job_id, _) = db::create_migration_job(
+        &state.db,
+        Some("root"),
+        Some("/ (Root)"),
+        profile.default_telegram_dest_id,
+        Some(&destination_name),
+        &temp_dir,
+        &[item],
+    )?;
+
+    let migration_state = state.inner().clone_state();
+    tauri::async_runtime::spawn(async move {
+        worker::run_migration_worker(migration_state, job_id, app_handle).await;
+    });
+
+    Ok(job_id)
+}
+
+#[tauri::command]
+pub async fn cmd_migration_get_activity(
+    state: State<'_, MigrationState>,
+    job_id: i64,
+    limit: Option<i64>,
+) -> Result<Vec<MigrationActivity>, String> {
+    db::get_activity(&state.db, job_id, limit.unwrap_or(100))
+}
+
+#[tauri::command]
+pub async fn cmd_migration_delete_item(
+    state: State<'_, MigrationState>,
+    job_id: i64,
+    item_id: i64,
+    app_handle: tauri::AppHandle,
+) -> Result<(), String> {
+    // 1. Fetch item detail from DB to get OneDrive source_item_id
+    if let Ok(Some(item)) = db::get_item_by_id(&state.db, item_id) {
+        if let Some(ref ms_item_id) = item.source_item_id {
+            if !ms_item_id.is_empty() {
+                // 2. Get valid access token from Microsoft session
+                let access_token = {
+                    let mut guard = state.ms_session.lock().await;
+                    if let Some(ref mut session) = *guard {
+                        if session.is_expired()
+                            && microsoft::refresh_access_token(session).await.is_ok()
+                        {
+                            let _ = crate::migration::session_store::save(&app_handle, session);
+                        }
+                        Some(session.access_token.clone())
+                    } else {
+                        None
+                    }
+                };
+
+                // 3. Delete file from OneDrive via Graph API
+                if let Some(token) = access_token {
+                    let http = reqwest::Client::new();
+                    if let Err(e) = microsoft::delete_onedrive_item(&http, &token, ms_item_id).await
+                    {
+                        log::warn!(
+                            "Failed to delete item from OneDrive (will still remove from DB): {}",
+                            e
+                        );
+                    } else {
+                        log::info!(
+                            "Successfully deleted item {} ({}) from OneDrive",
+                            item.name,
+                            ms_item_id
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    // 4. Remove item from migration DB
+    db::delete_item(&state.db, job_id, item_id)
+}
+
+#[tauri::command]
+pub async fn cmd_migration_rename_item(
+    state: State<'_, MigrationState>,
+    job_id: i64,
+    item_id: i64,
+    new_name: String,
+) -> Result<(), String> {
+    db::rename_item(&state.db, job_id, item_id, &new_name)
+}
+
+#[tauri::command]
+pub async fn cmd_migration_sync_single_item(
+    state: State<'_, MigrationState>,
+    app_handle: tauri::AppHandle,
+    job_id: i64,
+    item_id: i64,
+) -> Result<(), String> {
+    db::retry_item(&state.db, job_id, item_id)?;
+
+    let mig_state = state.inner().clone_state();
+    tauri::async_runtime::spawn(async move {
+        worker::run_migration_worker(mig_state, job_id, app_handle).await;
+    });
+
+    Ok(())
+}
 
 impl MigrationState {
     pub fn clone_state(&self) -> Arc<Self> {
@@ -356,6 +679,9 @@ impl MigrationState {
             db: self.db.clone(),
             ms_session: self.ms_session.clone(),
             worker_running: self.worker_running.clone(),
+            scan_running: self.scan_running.clone(),
+            scan_stop_requested: self.scan_stop_requested.clone(),
+            scan_progress: self.scan_progress.clone(),
             cancel_token: self.cancel_token.clone(),
             pause_token: self.pause_token.clone(),
         })

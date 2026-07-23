@@ -53,10 +53,34 @@ pub struct QualityPreset {
 }
 
 pub const QUALITY_PRESETS: &[QualityPreset] = &[
-    QualityPreset { label: "360p",  height: 360,  scale_filter: "scale=-2:360",  video_bitrate_k: 800,  audio_bitrate_k: 96 },
-    QualityPreset { label: "480p",  height: 480,  scale_filter: "scale=-2:480",  video_bitrate_k: 1400, audio_bitrate_k: 128 },
-    QualityPreset { label: "720p",  height: 720,  scale_filter: "scale=-2:720",  video_bitrate_k: 2800, audio_bitrate_k: 128 },
-    QualityPreset { label: "1080p", height: 1080, scale_filter: "scale=-2:1080", video_bitrate_k: 5000, audio_bitrate_k: 160 },
+    QualityPreset {
+        label: "360p",
+        height: 360,
+        scale_filter: "scale=-2:360",
+        video_bitrate_k: 800,
+        audio_bitrate_k: 96,
+    },
+    QualityPreset {
+        label: "480p",
+        height: 480,
+        scale_filter: "scale=-2:480",
+        video_bitrate_k: 1400,
+        audio_bitrate_k: 128,
+    },
+    QualityPreset {
+        label: "720p",
+        height: 720,
+        scale_filter: "scale=-2:720",
+        video_bitrate_k: 2800,
+        audio_bitrate_k: 128,
+    },
+    QualityPreset {
+        label: "1080p",
+        height: 1080,
+        scale_filter: "scale=-2:1080",
+        video_bitrate_k: 5000,
+        audio_bitrate_k: 160,
+    },
 ];
 
 // ── Types ───────────────────────────────────────────────────────────────
@@ -184,7 +208,8 @@ impl TranscodeManager {
             for entry in entries.flatten() {
                 let path = entry.path();
                 if path.is_file() {
-                    let should_remove = if path.extension().and_then(|e| e.to_str()) == Some("part") {
+                    let should_remove = if path.extension().and_then(|e| e.to_str()) == Some("part")
+                    {
                         true // Orphaned partial download
                     } else if let Ok(meta) = std::fs::metadata(&path) {
                         meta.len() == 0 // Zero-size completed file
@@ -201,10 +226,7 @@ impl TranscodeManager {
     }
 
     /// Get or create a job entry. Returns (job_arc, is_new).
-    pub async fn get_or_create_job(
-        &self,
-        key: &TranscodeKey,
-    ) -> (Arc<Mutex<TranscodeJob>>, bool) {
+    pub async fn get_or_create_job(&self, key: &TranscodeKey) -> (Arc<Mutex<TranscodeJob>>, bool) {
         let mut jobs = self.jobs.lock().await;
         let job_id = key.job_id();
         if let Some(job) = jobs.get(&job_id) {
@@ -312,7 +334,8 @@ impl TranscodeManager {
 
         log::info!(
             "Transcode: LRU eviction complete. Freed {} bytes, target was {} bytes",
-            freed, target
+            freed,
+            target
         );
     }
 
@@ -325,7 +348,10 @@ impl TranscodeManager {
                 let p = entry.path();
                 if p.is_dir() {
                     Self::clean_empty_dirs(&p, depth - 1);
-                    if std::fs::read_dir(&p).map(|mut d| d.next().is_none()).unwrap_or(false) {
+                    if std::fs::read_dir(&p)
+                        .map(|mut d| d.next().is_none())
+                        .unwrap_or(false)
+                    {
                         let _ = std::fs::remove_dir(&p);
                     }
                 }
@@ -334,9 +360,17 @@ impl TranscodeManager {
     }
 
     /// Validate that a resolved path stays within the HLS cache directory.
-    pub fn validate_hls_path(&self, file_key: &str, quality: &str, segment: Option<&str>) -> Option<PathBuf> {
+    pub fn validate_hls_path(
+        &self,
+        file_key: &str,
+        quality: &str,
+        segment: Option<&str>,
+    ) -> Option<PathBuf> {
         // Sanitize inputs — only allow alphanumeric, underscores, hyphens, dots
-        if file_key.chars().any(|c| !c.is_alphanumeric() && c != '_' && c != '-') {
+        if file_key
+            .chars()
+            .any(|c| !c.is_alphanumeric() && c != '_' && c != '-')
+        {
             return None;
         }
         if quality.chars().any(|c| !c.is_alphanumeric() && c != 'p') {
@@ -366,7 +400,11 @@ impl TranscodeManager {
                 if canon.starts_with(&hls_canon) {
                     Some(canon)
                 } else {
-                    log::error!("Transcode: Path traversal attempt: {:?} not under {:?}", canon, hls_canon);
+                    log::error!(
+                        "Transcode: Path traversal attempt: {:?} not under {:?}",
+                        canon,
+                        hls_canon
+                    );
                     None
                 }
             }
@@ -383,10 +421,7 @@ impl TranscodeManager {
 
     /// Return the HLS output directory for a job.
     pub fn hls_output_dir(&self, file_key: &str, quality: &str) -> PathBuf {
-        self.cache_root
-            .join(HLS_DIR)
-            .join(file_key)
-            .join(quality)
+        self.cache_root.join(HLS_DIR).join(file_key).join(quality)
     }
 }
 
@@ -409,7 +444,10 @@ pub async fn detect_ffmpeg(app_handle: &tauri::AppHandle) -> Option<PathBuf> {
                     return Some(sidecar_path);
                 }
                 Ok(false) => {
-                    log::warn!("Transcode: FFmpeg sidecar at {:?} failed version check", sidecar_path);
+                    log::warn!(
+                        "Transcode: FFmpeg sidecar at {:?} failed version check",
+                        sidecar_path
+                    );
                 }
                 Err(e) => {
                     log::warn!("Transcode: FFmpeg sidecar check error: {}", e);
@@ -465,7 +503,8 @@ pub async fn cache_original(
 
     // Ensure parent directory exists
     if let Some(parent) = dest_path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| format!("Failed to create cache dir: {}", e))?;
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create cache dir: {}", e))?;
     }
 
     let tmp_path = dest_path.with_extension("mp4.part");
@@ -502,7 +541,9 @@ pub async fn cache_original(
         }
     }
 
-    file.flush().await.map_err(|e| format!("Flush error: {}", e))?;
+    file.flush()
+        .await
+        .map_err(|e| format!("Flush error: {}", e))?;
     drop(file);
 
     // Validate file size matches expected size
@@ -529,7 +570,11 @@ pub async fn cache_original(
         .await
         .map_err(|e| format!("Rename error: {}", e))?;
 
-    log::info!("Transcode: Cached original to {:?} ({} bytes)", dest_path, actual_size);
+    log::info!(
+        "Transcode: Cached original to {:?} ({} bytes)",
+        dest_path,
+        actual_size
+    );
     Ok(actual_size)
 }
 
@@ -554,31 +599,48 @@ pub async fn run_transcode(
 
     let mut cmd = tokio::process::Command::new(ffmpeg_path);
     cmd.arg("-y") // Overwrite
-        .arg("-i").arg(input_path)
+        .arg("-i")
+        .arg(input_path)
         // Explicit stream mapping: first video, optional audio, no subtitles/data
-        .arg("-map").arg("0:v:0")
-        .arg("-map").arg("0:a:0?")
-        .arg("-sn")  // No subtitles
-        .arg("-dn")  // No data streams
-        .arg("-vf").arg(quality.scale_filter)
-        .arg("-c:v").arg("libx264")
-        .arg("-preset").arg("veryfast")
-        .arg("-crf").arg("23")
-        .arg("-c:a").arg("aac")
-        .arg("-b:a").arg(format!("{}k", quality.audio_bitrate_k))
-        .arg("-maxrate").arg(format!("{}k", quality.video_bitrate_k))
-        .arg("-bufsize").arg(format!("{}k", quality.video_bitrate_k * 2))
-        .arg("-f").arg("hls")
-        .arg("-hls_time").arg(HLS_SEGMENT_TIME.to_string())
-        .arg("-hls_playlist_type").arg("vod")
-        .arg("-hls_segment_filename").arg(&segment_pattern)
+        .arg("-map")
+        .arg("0:v:0")
+        .arg("-map")
+        .arg("0:a:0?")
+        .arg("-sn") // No subtitles
+        .arg("-dn") // No data streams
+        .arg("-vf")
+        .arg(quality.scale_filter)
+        .arg("-c:v")
+        .arg("libx264")
+        .arg("-preset")
+        .arg("veryfast")
+        .arg("-crf")
+        .arg("23")
+        .arg("-c:a")
+        .arg("aac")
+        .arg("-b:a")
+        .arg(format!("{}k", quality.audio_bitrate_k))
+        .arg("-maxrate")
+        .arg(format!("{}k", quality.video_bitrate_k))
+        .arg("-bufsize")
+        .arg(format!("{}k", quality.video_bitrate_k * 2))
+        .arg("-f")
+        .arg("hls")
+        .arg("-hls_time")
+        .arg(HLS_SEGMENT_TIME.to_string())
+        .arg("-hls_playlist_type")
+        .arg("vod")
+        .arg("-hls_segment_filename")
+        .arg(&segment_pattern)
         .arg(&playlist_path)
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .stdin(Stdio::null())
         .kill_on_drop(true);
 
-    let mut child = cmd.spawn().map_err(|e| format!("Failed to spawn FFmpeg: {}", e))?;
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("Failed to spawn FFmpeg: {}", e))?;
     let stderr = child.stderr.take().ok_or("No stderr pipe")?;
 
     // Parse FFmpeg progress from stderr, filter error lines inline for memory efficiency
@@ -632,7 +694,10 @@ pub async fn run_transcode(
     };
 
     // Wait for the process to finish (if not cancelled)
-    let status = child.wait().await.map_err(|e| format!("FFmpeg wait error: {}", e))?;
+    let status = child
+        .wait()
+        .await
+        .map_err(|e| format!("FFmpeg wait error: {}", e))?;
 
     // Check for cancellation or earlier error
     parse_result?;
@@ -644,7 +709,11 @@ pub async fn run_transcode(
         } else {
             format!("\nFFmpeg error lines:\n{}", stderr_error_lines.join("\n"))
         };
-        return Err(format!("FFmpeg exited with code {:?}{}", status.code(), tail_msg));
+        return Err(format!(
+            "FFmpeg exited with code {:?}{}",
+            status.code(),
+            tail_msg
+        ));
     }
 
     // Verify the playlist was created
@@ -657,18 +726,24 @@ pub async fn run_transcode(
         .map_err(|e| format!("Failed to read playlist: {}", e))?;
 
     // Check for at least one #EXTINF tag
-    let has_extinf = playlist_content.lines().any(|l| l.trim().starts_with("#EXTINF:"));
+    let has_extinf = playlist_content
+        .lines()
+        .any(|l| l.trim().starts_with("#EXTINF:"));
     if !has_extinf {
         let _ = std::fs::remove_dir_all(output_dir);
         return Err("HLS playlist has no segments (no #EXTINF tags)".to_string());
     }
 
     // Check at least one .ts segment exists and is non-empty
-    let has_valid_segment = playlist_content.lines()
+    let has_valid_segment = playlist_content
+        .lines()
         .filter(|l| l.trim().ends_with(".ts"))
         .any(|l| {
             let seg_path = output_dir.join(l.trim());
-            seg_path.exists() && std::fs::metadata(&seg_path).map(|m| m.len() > 0).unwrap_or(false)
+            seg_path.exists()
+                && std::fs::metadata(&seg_path)
+                    .map(|m| m.len() > 0)
+                    .unwrap_or(false)
         });
 
     if !has_valid_segment {
@@ -722,9 +797,7 @@ pub async fn execute_transcode_pipeline(
         None => return,
     };
 
-    let ffmpeg_path = {
-        manager.ffmpeg_path.lock().await.clone()
-    };
+    let ffmpeg_path = { manager.ffmpeg_path.lock().await.clone() };
 
     let ffmpeg_path = match ffmpeg_path {
         Some(p) => p,
@@ -759,9 +832,14 @@ pub async fn execute_transcode_pipeline(
                     job.phase = JobPhase::CachingOriginal { progress };
                 });
             },
-        ).await {
+        )
+        .await
+        {
             Ok(size) => {
-                log::info!("Transcode: Cached original ({} bytes), starting transcode...", size);
+                log::info!(
+                    "Transcode: Cached original ({} bytes), starting transcode...",
+                    size
+                );
             }
             Err(e) => {
                 let mut job = job_arc.lock().await;
@@ -775,7 +853,10 @@ pub async fn execute_transcode_pipeline(
     let source_height = {
         let data = std::fs::read(&original_path).unwrap_or_default();
         if data.len() > 1024 {
-            mp4_utils::scan_video_tkhd_dimensions(&data[..std::cmp::min(2 * 1024 * 1024, data.len())]).1
+            mp4_utils::scan_video_tkhd_dimensions(
+                &data[..std::cmp::min(2 * 1024 * 1024, data.len())],
+            )
+            .1
         } else {
             None
         }
@@ -819,7 +900,8 @@ pub async fn execute_transcode_pipeline(
                 job.phase = JobPhase::Transcoding { progress };
             });
         },
-    ).await;
+    )
+    .await;
 
     match result {
         Ok(()) => {
@@ -872,7 +954,11 @@ pub async fn cmd_get_transcode_capabilities(
     Ok(TranscodeCapabilities {
         available: ffmpeg_available,
         variants,
-        mode: if ffmpeg_available { "hls".to_string() } else { "original".to_string() },
+        mode: if ffmpeg_available {
+            "hls".to_string()
+        } else {
+            "original".to_string()
+        },
     })
 }
 
@@ -958,16 +1044,19 @@ pub async fn cmd_prepare_transcoded_stream(
     }
 
     // New job — start the pipeline
-    let client = {
-        state.client.lock().await.clone()
-    };
+    let client = { state.client.lock().await.clone() };
     let client = client.ok_or_else(|| "Not connected to Telegram".to_string())?;
 
     let peer = crate::commands::utils::resolve_peer(
         &client,
-        if folder_id == 0 { None } else { Some(folder_id) },
+        if folder_id == 0 {
+            None
+        } else {
+            Some(folder_id)
+        },
         &state.peer_cache,
-    ).await?;
+    )
+    .await?;
 
     let messages = client
         .get_messages_by_id(&peer, &[message_id])
@@ -983,7 +1072,9 @@ pub async fn cmd_prepare_transcoded_stream(
     let media = msg.media().ok_or_else(|| "No media".to_string())?;
 
     // Get duration from mp4parse (quick moov chunk)
-    let duration_secs = get_duration_from_media(&client, message_id, folder_id, &state).await.ok();
+    let duration_secs = get_duration_from_media(&client, message_id, folder_id, &state)
+        .await
+        .ok();
 
     let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
 
@@ -1006,7 +1097,8 @@ pub async fn cmd_prepare_transcoded_stream(
             media,
             duration_secs,
             cancel_rx,
-        ).await;
+        )
+        .await;
 
         // LRU eviction after job completes
         manager_clone.evict_lru().await;
@@ -1028,16 +1120,24 @@ async fn get_duration_from_media(
 ) -> Result<f64, String> {
     let peer = crate::commands::utils::resolve_peer(
         client,
-        if folder_id == 0 { None } else { Some(folder_id) },
+        if folder_id == 0 {
+            None
+        } else {
+            Some(folder_id)
+        },
         &state.peer_cache,
-    ).await?;
+    )
+    .await?;
 
     let messages = client
         .get_messages_by_id(&peer, &[message_id])
         .await
         .map_err(|e| e.to_string())?;
 
-    let msg = messages.into_iter().flatten().next()
+    let msg = messages
+        .into_iter()
+        .flatten()
+        .next()
         .ok_or_else(|| "Message not found".to_string())?;
 
     let media = msg.media().ok_or_else(|| "No media".to_string())?;
@@ -1067,10 +1167,11 @@ async fn get_duration_from_media(
 
     // Parse with mp4parse
     let mut cursor = std::io::Cursor::new(&buffer);
-    let context = mp4parse::read_mp4(&mut cursor)
-        .map_err(|e| format!("MP4 parse error: {}", e))?;
+    let context = mp4parse::read_mp4(&mut cursor).map_err(|e| format!("MP4 parse error: {}", e))?;
 
-    let video_track = context.tracks.iter()
+    let video_track = context
+        .tracks
+        .iter()
         .find(|t| t.track_type == mp4parse::TrackType::Video);
 
     video_track
@@ -1101,7 +1202,11 @@ pub async fn cmd_get_transcode_status(
             "ready".to_string(),
             1.0,
             None,
-            Some(format!("/hls/{}/{}/index.m3u8", job.key.file_key(), job.key.quality)),
+            Some(format!(
+                "/hls/{}/{}/index.m3u8",
+                job.key.file_key(),
+                job.key.quality
+            )),
         ),
         JobPhase::Error(e) => ("error".to_string(), 0.0, Some(e.clone()), None),
         JobPhase::Cancelled => ("cancelled".to_string(), 0.0, None, None),
@@ -1142,7 +1247,8 @@ pub struct TranscodeCacheInfo {
     pub current_bytes: u64,
     pub max_bytes: u64,
     pub cached_variants: Vec<String>,
-}    #[tauri::command]
+}
+#[tauri::command]
 pub async fn cmd_get_transcode_cache_info(
     manager: tauri::State<'_, TranscodeManager>,
 ) -> Result<TranscodeCacheInfo, String> {
@@ -1163,7 +1269,11 @@ pub async fn cmd_set_transcode_cache_limit(
     let gb = std::cmp::max(1, std::cmp::min(50, max_gb));
     let max_bytes = (gb as u64) * 1024 * 1024 * 1024;
     manager.set_max_cache_bytes(max_bytes).await;
-    log::info!("Transcode: Cache limit set to {} GB ({} bytes)", gb, max_bytes);
+    log::info!(
+        "Transcode: Cache limit set to {} GB ({} bytes)",
+        gb,
+        max_bytes
+    );
     Ok(())
 }
 
@@ -1228,7 +1338,8 @@ pub async fn cmd_get_detailed_transcode_cache(
             if !file_path.is_dir() {
                 continue;
             }
-            let file_key = file_path.file_name()
+            let file_key = file_path
+                .file_name()
                 .and_then(|n| n.to_str())
                 .unwrap_or("")
                 .to_string();
@@ -1239,7 +1350,8 @@ pub async fn cmd_get_detailed_transcode_cache(
                     if !q_path.is_dir() {
                         continue;
                     }
-                    let quality = q_path.file_name()
+                    let quality = q_path
+                        .file_name()
                         .and_then(|n| n.to_str())
                         .unwrap_or("")
                         .to_string();
@@ -1273,9 +1385,7 @@ pub async fn cmd_get_detailed_transcode_cache(
         for of in orig_files.flatten() {
             let path = of.path();
             if path.is_file() {
-                let stem = path.file_stem()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("");
+                let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
                 let size_bytes = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
                 entries.push(CacheEntry {
                     file_key: stem.to_string(),
@@ -1330,12 +1440,18 @@ pub async fn cmd_clear_transcode_cache(
             }
 
             log::info!("Transcode: Cleared all cache ({} entries)", removed_count);
-            Ok(format!("Cleared all transcode cache ({} entries)", removed_count))
+            Ok(format!(
+                "Cleared all transcode cache ({} entries)",
+                removed_count
+            ))
         }
         // Clear all variants for a specific file
         (Some(fk), None) => {
             let hls_path = manager.cache_root.join(HLS_DIR).join(&fk);
-            let orig_path = manager.cache_root.join(ORIGINALS_DIR).join(format!("{}.mp4", fk));
+            let orig_path = manager
+                .cache_root
+                .join(ORIGINALS_DIR)
+                .join(format!("{}.mp4", fk));
 
             if hls_path.exists() {
                 let _ = std::fs::remove_dir_all(&hls_path);
@@ -1395,7 +1511,8 @@ pub async fn cmd_get_master_playlist_info(
 
         if playlist_path.exists() {
             // Try to read the playlist to get bandwidth info
-            let bandwidth = estimate_bandwidth(&output_dir).unwrap_or(preset.video_bitrate_k * 1000);
+            let bandwidth =
+                estimate_bandwidth(&output_dir).unwrap_or(preset.video_bitrate_k * 1000);
 
             variants.push(MasterVariant {
                 bandwidth,
@@ -1446,7 +1563,11 @@ fn estimate_bandwidth(output_dir: &Path) -> Option<u32> {
     for line in content.lines() {
         let line = line.trim();
         if line.starts_with("#EXTINF:") {
-            let dur_str = line.trim_start_matches("#EXTINF:").split(',').next().unwrap_or("0");
+            let dur_str = line
+                .trim_start_matches("#EXTINF:")
+                .split(',')
+                .next()
+                .unwrap_or("0");
             total_duration += dur_str.parse::<f64>().unwrap_or(0.0);
         } else if line.ends_with(".ts") {
             let seg_path = output_dir.join(line);
@@ -1588,7 +1709,16 @@ async fn hls_playlist(
     token_data: web::Data<StreamTokenData>,
 ) -> impl Responder {
     let (file_key, quality) = path.into_inner();
-    serve_hls_file(req, &file_key, &quality, None, &query, &manager, &token_data).await
+    serve_hls_file(
+        req,
+        &file_key,
+        &quality,
+        None,
+        &query,
+        &manager,
+        &token_data,
+    )
+    .await
 }
 
 /// GET /hls/{file_key}/{quality}/{segment}
@@ -1601,12 +1731,21 @@ async fn hls_segment(
     token_data: web::Data<StreamTokenData>,
 ) -> impl Responder {
     let (file_key, quality, segment) = path.into_inner();
-    serve_hls_file(req, &file_key, &quality, Some(&segment), &query, &manager, &token_data).await
+    serve_hls_file(
+        req,
+        &file_key,
+        &quality,
+        Some(&segment),
+        &query,
+        &manager,
+        &token_data,
+    )
+    .await
 }
 
 /// Register HLS routes on an Actix ServiceConfig.
 pub fn configure_hls_routes(cfg: &mut web::ServiceConfig) {
     cfg.service(hls_master_playlist)
-       .service(hls_playlist)
-       .service(hls_segment);
+        .service(hls_playlist)
+        .service(hls_segment);
 }

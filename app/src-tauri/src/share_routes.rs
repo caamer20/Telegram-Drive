@@ -1,11 +1,11 @@
-use actix_web::{get, post, web, HttpRequest, HttpResponse, Responder, cookie::Cookie};
-use crate::commands::TelegramState;
 use crate::commands::utils::resolve_peer;
+use crate::commands::TelegramState;
 use crate::db::DbConnection;
+use actix_web::{cookie::Cookie, get, post, web, HttpRequest, HttpResponse, Responder};
 use grammers_client::types::Media;
-use sha2::{Sha256, Digest};
-use std::sync::Arc;
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
+use std::sync::Arc;
 
 #[derive(Clone)]
 struct SharedLinkRow {
@@ -45,17 +45,29 @@ fn get_share_by_token(db: &DbConnection, token: &str) -> Result<Option<SharedLin
              FROM shared_links WHERE id = ?"
         )
         .map_err(|e| e.to_string())?;
-    
+
     stmt.bind((1, token)).map_err(|e| e.to_string())?;
 
     if let sqlite::State::Row = stmt.next().map_err(|e| e.to_string())? {
         let id = stmt.read::<String, _>("id").map_err(|e| e.to_string())?;
         let folder_id = stmt.read::<Option<i64>, _>("folder_id").ok().flatten();
-        let message_id = stmt.read::<i64, _>("message_id").map_err(|e| e.to_string())? as i32;
-        let file_name = stmt.read::<String, _>("file_name").map_err(|e| e.to_string())?;
-        let file_size = stmt.read::<i64, _>("file_size").map_err(|e| e.to_string())?;
-        let password_hash = stmt.read::<Option<String>, _>("password_hash").ok().flatten();
-        let _password_salt = stmt.read::<Option<String>, _>("password_salt").ok().flatten();
+        let message_id = stmt
+            .read::<i64, _>("message_id")
+            .map_err(|e| e.to_string())? as i32;
+        let file_name = stmt
+            .read::<String, _>("file_name")
+            .map_err(|e| e.to_string())?;
+        let file_size = stmt
+            .read::<i64, _>("file_size")
+            .map_err(|e| e.to_string())?;
+        let password_hash = stmt
+            .read::<Option<String>, _>("password_hash")
+            .ok()
+            .flatten();
+        let _password_salt = stmt
+            .read::<Option<String>, _>("password_salt")
+            .ok()
+            .flatten();
         let expires_at = stmt.read::<Option<i64>, _>("expires_at").ok().flatten();
         let revoked = stmt.read::<i64, _>("revoked").map_err(|e| e.to_string())? != 0;
 
@@ -87,7 +99,7 @@ fn render_password_form(file_name: &str, token: &str, error: Option<&str>) -> Ht
         Some(err) => format!("<div class=\"error\">{}</div>", err),
         None => "".to_string(),
     };
-    
+
     let html = format!(
         r#"<!DOCTYPE html>
 <html>
@@ -189,28 +201,28 @@ async fn get_shared_file(
     tg_state: web::Data<Arc<TelegramState>>,
 ) -> impl Responder {
     let token = path.into_inner();
-    
+
     let row = match get_share_by_token(&db_conn, &token) {
         Ok(Some(r)) => r,
         Ok(None) => return HttpResponse::NotFound().body("Shared link not found"),
         Err(e) => {
             log::error!("DB error resolving token {}: {}", token, e);
-            return HttpResponse::InternalServerError().body("Internal server error")
+            return HttpResponse::InternalServerError().body("Internal server error");
         }
     };
-    
+
     // Check validation (revocation and expiration)
     if row.revoked {
         return HttpResponse::NotFound().body("This shared link has been revoked");
     }
-    
+
     if let Some(expiry) = row.expires_at {
         let now = chrono::Utc::now().timestamp();
         if expiry < now {
             return HttpResponse::Gone().body("This shared link has expired");
         }
     }
-    
+
     // Check password protection
     if let Some(hash) = &row.password_hash {
         let mut authenticated = false;
@@ -220,19 +232,19 @@ async fn get_shared_file(
                 authenticated = true;
             }
         }
-        
+
         if !authenticated {
             return render_password_form(&row.file_name, &token, None);
         }
     }
-    
+
     // Retrieve and stream the file from Telegram
     let client_opt = { tg_state.client.lock().await.clone() };
     let client = match client_opt {
         Some(c) => c,
         None => return HttpResponse::ServiceUnavailable().body("Telegram client is not connected"),
     };
-    
+
     let peer = match resolve_peer(&client, row.folder_id, &tg_state.peer_cache).await {
         Ok(p) => p,
         Err(e) => {
@@ -240,19 +252,26 @@ async fn get_shared_file(
             return HttpResponse::InternalServerError().body("Failed to locate folder");
         }
     };
-    
+
     match client.get_messages_by_id(peer, &[row.message_id]).await {
         Ok(messages) => {
             if let Some(Some(msg)) = messages.first() {
                 if let Some(media) = msg.media() {
                     let mime = match &media {
-                        Media::Document(d) => d.mime_type().unwrap_or("application/octet-stream").to_string(),
+                        Media::Document(d) => d
+                            .mime_type()
+                            .unwrap_or("application/octet-stream")
+                            .to_string(),
                         _ => "application/octet-stream".to_string(),
                     };
                     let filename = &row.file_name;
 
                     return crate::server::build_media_response(
-                        &client, &media, &req, &mime, Some(filename),
+                        &client,
+                        &media,
+                        &req,
+                        &mime,
+                        Some(filename),
                         crate::server::StreamingExtras {
                             extra_headers: vec![],
                             log_label: "Share download",
@@ -276,25 +295,25 @@ async fn verify_shared_file_password(
     db_conn: web::Data<DbConnection>,
 ) -> impl Responder {
     let token = path.into_inner();
-    
+
     let row = match get_share_by_token(&db_conn, &token) {
         Ok(Some(r)) => r,
         Ok(None) => return HttpResponse::NotFound().body("Shared link not found"),
         Err(e) => {
             log::error!("DB error resolving token {}: {}", token, e);
-            return HttpResponse::InternalServerError().body("Internal server error")
+            return HttpResponse::InternalServerError().body("Internal server error");
         }
     };
-    
+
     if row.revoked {
         return HttpResponse::NotFound().body("This shared link has been revoked");
     }
-    
+
     let hash = match &row.password_hash {
         Some(h) => h,
         None => return HttpResponse::BadRequest().body("No password required for this link"),
     };
-    
+
     if verify_password(&form.password, hash) {
         // Set session cookie (30 min).
         // NOTE: The streaming share server binds to 0.0.0.0 over plain HTTP (not HTTPS),
@@ -308,17 +327,21 @@ async fn verify_shared_file_password(
             .same_site(actix_web::cookie::SameSite::Strict)
             .max_age(actix_web::cookie::time::Duration::minutes(30))
             .finish();
-            
+
         HttpResponse::Found()
             .insert_header(("Location", format!("/d/{}", token)))
             .cookie(cookie)
             .finish()
     } else {
-        render_password_form(&row.file_name, &token, Some("Incorrect password. Please try again."))
+        render_password_form(
+            &row.file_name,
+            &token,
+            Some("Incorrect password. Please try again."),
+        )
     }
 }
 
 pub fn configure_share_routes(cfg: &mut web::ServiceConfig) {
     cfg.service(get_shared_file)
-       .service(verify_shared_file_password);
+        .service(verify_shared_file_password);
 }

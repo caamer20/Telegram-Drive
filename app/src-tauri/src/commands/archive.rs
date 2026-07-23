@@ -1,12 +1,12 @@
-use std::sync::Arc;
-use std::io::{Cursor, Read};
-use serde::Serialize;
-use tauri::State;
-use tokio::io::AsyncWriteExt;
-use crate::commands::TelegramState;
 use crate::commands::utils::resolve_peer;
+use crate::commands::TelegramState;
 use crate::vpn_optimizer::NetworkConfig;
 use grammers_client::types::Media;
+use serde::Serialize;
+use std::io::{Cursor, Read};
+use std::sync::Arc;
+use tauri::State;
+use tokio::io::AsyncWriteExt;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ArchiveEntry {
@@ -206,8 +206,8 @@ async fn extract_zip_entry(
 
     let (buf, safe_name, entry_size, temp_path) = {
         let cursor = Cursor::new(data);
-        let mut archive = zip::ZipArchive::new(cursor)
-            .map_err(|e| format!("Failed to parse ZIP file: {}", e))?;
+        let mut archive =
+            zip::ZipArchive::new(cursor).map_err(|e| format!("Failed to parse ZIP file: {}", e))?;
         let mut file = archive
             .by_index(entry_index)
             .map_err(|e| format!("Failed to read ZIP entry at index {}: {}", entry_index, e))?;
@@ -217,8 +217,11 @@ async fn extract_zip_entry(
         let entry_name = file.name().to_string();
         let entry_size = file.size();
         let safe_name = sanitise_entry_name(&entry_name, entry_index);
-        let temp_path = std::env::temp_dir()
-            .join(format!("{}_{}", generate_unique_temp_prefix("extract"), safe_name));
+        let temp_path = std::env::temp_dir().join(format!(
+            "{}_{}",
+            generate_unique_temp_prefix("extract"),
+            safe_name
+        ));
         let mut buf = Vec::with_capacity(entry_size as usize);
         file.read_to_end(&mut buf)
             .map_err(|e| format!("Failed to read ZIP entry bytes: {}", e))?;
@@ -294,26 +297,28 @@ async fn list_rar_contents(
     let rar_path = archive_path.clone();
 
     // List-only mode: reads headers WITHOUT extracting (zero disk writes)
-    let entries_result: Result<Vec<ArchiveEntry>, String> = tokio::task::spawn_blocking(move || {
-        let archive = unrar::Archive::new(rar_path.to_str().unwrap_or(""))
-            .open_for_listing()
-            .map_err(|e| format!("Failed to open RAR file for listing: {}", e))?;
+    let entries_result: Result<Vec<ArchiveEntry>, String> =
+        tokio::task::spawn_blocking(move || {
+            let archive = unrar::Archive::new(rar_path.to_str().unwrap_or(""))
+                .open_for_listing()
+                .map_err(|e| format!("Failed to open RAR file for listing: {}", e))?;
 
-        let mut entries = Vec::new();
-        for result in archive {
-            let header: unrar::FileHeader = result.map_err(|e| format!("Failed to read RAR header: {}", e))?;
-            let name = header.filename.to_string_lossy().to_string();
-            entries.push(ArchiveEntry {
-                filename: name,
-                size: header.unpacked_size,
-                compressed_size: header.unpacked_size,
-                is_dir: header.is_directory(),
-            });
-        }
-        Ok(entries)
-    })
-    .await
-    .map_err(|e| format!("RAR listing task panicked: {:?}", e))?;
+            let mut entries = Vec::new();
+            for result in archive {
+                let header: unrar::FileHeader =
+                    result.map_err(|e| format!("Failed to read RAR header: {}", e))?;
+                let name = header.filename.to_string_lossy().to_string();
+                entries.push(ArchiveEntry {
+                    filename: name,
+                    size: header.unpacked_size,
+                    compressed_size: header.unpacked_size,
+                    is_dir: header.is_directory(),
+                });
+            }
+            Ok(entries)
+        })
+        .await
+        .map_err(|e| format!("RAR listing task panicked: {:?}", e))?;
 
     let _ = tokio::fs::remove_file(&archive_path).await;
     let _ = tokio::fs::remove_dir_all(&extract_dir).await;
@@ -342,14 +347,16 @@ async fn extract_rar_entry(
             .map_err(|e| format!("Failed to open RAR file for processing: {}", e))?;
 
         let mut current_index: usize = 0;
-        while let Some(header) = archive.read_header()
+        while let Some(header) = archive
+            .read_header()
             .map_err(|e| format!("Failed to read RAR header: {}", e))?
         {
             let is_target = current_index == entry_index;
             current_index += 1;
 
             if !is_target {
-                archive = header.skip()
+                archive = header
+                    .skip()
                     .map_err(|e| format!("Failed to skip RAR entry: {}", e))?;
                 continue;
             }
@@ -365,10 +372,7 @@ async fn extract_rar_entry(
             let clean_dest = raw_dest.clean();
             let clean_base = extract_dir.clean();
             if !clean_dest.starts_with(&clean_base) {
-                log::error!(
-                    "Path traversal attempt blocked in RAR: {}",
-                    entry_name
-                );
+                log::error!("Path traversal attempt blocked in RAR: {}", entry_name);
                 return Err(format!(
                     "Blocked path traversal in RAR entry: {}",
                     entry_name
@@ -376,12 +380,16 @@ async fn extract_rar_entry(
             }
 
             // Read decompressed bytes into memory (no disk write in uncontrolled location)
-            let (data, _next_archive) = header.read()
+            let (data, _next_archive) = header
+                .read()
                 .map_err(|e| format!("Failed to read RAR entry bytes: {}", e))?;
 
             let safe_name = sanitise_entry_name(&entry_name, entry_index);
-            let temp_path = std::env::temp_dir()
-                .join(format!("{}_{}", generate_unique_temp_prefix("extract"), safe_name));
+            let temp_path = std::env::temp_dir().join(format!(
+                "{}_{}",
+                generate_unique_temp_prefix("extract"),
+                safe_name
+            ));
             let data_len = data.len() as u64;
             std::fs::write(&temp_path, data)
                 .map_err(|e| format!("Failed to write extracted RAR entry: {}", e))?;
@@ -419,24 +427,25 @@ async fn list_sevenz_contents(
         download_to_temp_file(client, media, max_bytes, "7z", "7z").await?;
     let path = archive_path.clone();
 
-    let entries_result: Result<Vec<ArchiveEntry>, String> = tokio::task::spawn_blocking(move || {
-        let archive =
-            sevenz_rust2::Archive::open(&path).map_err(|e| format!("Failed to open 7z file: {}", e))?;
-        let entries = archive
-            .files
-            .iter()
-            .map(|e| ArchiveEntry {
-                filename: e.name().to_string(),
-                size: e.size,
-                compressed_size: e.compressed_size,
-                is_dir: e.is_directory,
-            })
-            .collect::<Vec<_>>();
-        drop(archive);
-        Ok(entries)
-    })
-    .await
-    .map_err(|e| format!("7z listing task panicked: {:?}", e))?;
+    let entries_result: Result<Vec<ArchiveEntry>, String> =
+        tokio::task::spawn_blocking(move || {
+            let archive = sevenz_rust2::Archive::open(&path)
+                .map_err(|e| format!("Failed to open 7z file: {}", e))?;
+            let entries = archive
+                .files
+                .iter()
+                .map(|e| ArchiveEntry {
+                    filename: e.name().to_string(),
+                    size: e.size,
+                    compressed_size: e.compressed_size,
+                    is_dir: e.is_directory,
+                })
+                .collect::<Vec<_>>();
+            drop(archive);
+            Ok(entries)
+        })
+        .await
+        .map_err(|e| format!("7z listing task panicked: {:?}", e))?;
 
     let _ = tokio::fs::remove_file(&archive_path).await;
     // 7z listing doesn't extract, so extract_dir is empty — clean it up.
@@ -478,13 +487,15 @@ async fn extract_sevenz_entry(
                     return Ok(true); // continue
                 }
                 if entry.is_directory {
-                    return Err(sevenz_rust2::Error::other("Cannot extract a directory entry"));
+                    return Err(sevenz_rust2::Error::other(
+                        "Cannot extract a directory entry",
+                    ));
                 }
                 let safe_name = sanitise_entry_name(entry.name(), entry_index);
                 let mut buf = Vec::new();
-                entry_reader
-                    .read_to_end(&mut buf)
-                    .map_err(|e| sevenz_rust2::Error::other(format!("Failed to read 7z entry bytes: {}", e)))?;
+                entry_reader.read_to_end(&mut buf).map_err(|e| {
+                    sevenz_rust2::Error::other(format!("Failed to read 7z entry bytes: {}", e))
+                })?;
                 found = Some((safe_name, entry.size, buf));
                 Ok(false) // stop iteration
             })
@@ -493,8 +504,11 @@ async fn extract_sevenz_entry(
         let (safe_name, size, buf) =
             found.ok_or_else(|| format!("Entry index {} not found in 7z archive", entry_index))?;
 
-        let temp_path = std::env::temp_dir()
-            .join(format!("{}_{}", generate_unique_temp_prefix("extract"), safe_name));
+        let temp_path = std::env::temp_dir().join(format!(
+            "{}_{}",
+            generate_unique_temp_prefix("extract"),
+            safe_name
+        ));
         std::fs::write(&temp_path, &buf)
             .map_err(|e| format!("Failed to write extracted 7z entry: {}", e))?;
 

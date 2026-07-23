@@ -1,9 +1,9 @@
+use base64::{prelude::BASE64_STANDARD, Engine};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::task::JoinHandle;
-use base64::{prelude::BASE64_STANDARD, Engine};
 
 pub trait AsyncReadWrite: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send {}
 impl<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send> AsyncReadWrite for T {}
@@ -23,8 +23,9 @@ pub async fn start_bridge(
     let listener = TcpListener::bind("127.0.0.1:0")
         .await
         .map_err(|e| format!("Failed to bind local SOCKS5 bridge: {}", e))?;
-    
-    let local_port = listener.local_addr()
+
+    let local_port = listener
+        .local_addr()
         .map_err(|e| format!("Failed to get local address: {}", e))?
         .port();
 
@@ -33,7 +34,13 @@ pub async fn start_bridge(
     let upstream_username = Arc::new(upstream_username);
     let upstream_password = Arc::new(upstream_password);
 
-    log::info!("SOCKS5 bridge listening on 127.0.0.1:{} tunneling to {}://{}:{}", local_port, upstream_scheme, upstream_host, upstream_port);
+    log::info!(
+        "SOCKS5 bridge listening on 127.0.0.1:{} tunneling to {}://{}:{}",
+        local_port,
+        upstream_scheme,
+        upstream_host,
+        upstream_port
+    );
 
     let handle = tokio::spawn(async move {
         loop {
@@ -43,7 +50,7 @@ pub async fn start_bridge(
                     let upstream_scheme = upstream_scheme.clone();
                     let upstream_username = upstream_username.clone();
                     let upstream_password = upstream_password.clone();
-                    
+
                     tokio::spawn(async move {
                         if let Err(e) = handle_client(
                             client_stream,
@@ -53,7 +60,9 @@ pub async fn start_bridge(
                             &upstream_scheme,
                             &upstream_username,
                             &upstream_password,
-                        ).await {
+                        )
+                        .await
+                        {
                             log::debug!("Bridge connection error for {}: {}", client_addr, e);
                         }
                     });
@@ -80,17 +89,19 @@ async fn handle_client(
 ) -> Result<(), String> {
     // 1. SOCKS5 greeting
     let mut greeting = [0u8; 2];
-    client_stream.read_exact(&mut greeting)
+    client_stream
+        .read_exact(&mut greeting)
         .await
         .map_err(|e| format!("Failed reading greeting: {}", e))?;
 
     if greeting[0] != 0x05 {
         return Err(format!("Unsupported SOCKS version: {}", greeting[0]));
     }
-    
+
     let num_methods = greeting[1] as usize;
     let mut methods = vec![0u8; num_methods];
-    client_stream.read_exact(&mut methods)
+    client_stream
+        .read_exact(&mut methods)
         .await
         .map_err(|e| format!("Failed reading methods: {}", e))?;
 
@@ -101,13 +112,15 @@ async fn handle_client(
     }
 
     // Accept No-Auth
-    client_stream.write_all(&[0x05, 0x00])
+    client_stream
+        .write_all(&[0x05, 0x00])
         .await
         .map_err(|e| format!("Failed writing auth selection: {}", e))?;
 
     // 2. SOCKS5 Request
     let mut req_header = [0u8; 4];
-    client_stream.read_exact(&mut req_header)
+    client_stream
+        .read_exact(&mut req_header)
         .await
         .map_err(|e| format!("Failed reading request header: {}", e))?;
 
@@ -117,34 +130,44 @@ async fn handle_client(
 
     if req_header[1] != 0x01 {
         // We only support CONNECT (0x01)
-        client_stream.write_all(&[0x05, 0x07, 0x00, 0x01, 0, 0, 0, 0, 0, 0]).await.ok();
+        client_stream
+            .write_all(&[0x05, 0x07, 0x00, 0x01, 0, 0, 0, 0, 0, 0])
+            .await
+            .ok();
         return Err(format!("Unsupported SOCKS command: {}", req_header[1]));
     }
 
     // Parse target address
     let target_host = match req_header[3] {
-        0x01 => { // IPv4
+        0x01 => {
+            // IPv4
             let mut ip = [0u8; 4];
-            client_stream.read_exact(&mut ip)
+            client_stream
+                .read_exact(&mut ip)
                 .await
                 .map_err(|e| format!("Failed reading IPv4: {}", e))?;
             format!("{}.{}.{}.{}", ip[0], ip[1], ip[2], ip[3])
         }
-        0x03 => { // Domain
+        0x03 => {
+            // Domain
             let mut len_buf = [0u8; 1];
-            client_stream.read_exact(&mut len_buf)
+            client_stream
+                .read_exact(&mut len_buf)
                 .await
                 .map_err(|e| format!("Failed reading domain length: {}", e))?;
             let len = len_buf[0] as usize;
             let mut domain = vec![0u8; len];
-            client_stream.read_exact(&mut domain)
+            client_stream
+                .read_exact(&mut domain)
                 .await
                 .map_err(|e| format!("Failed reading domain name: {}", e))?;
             String::from_utf8(domain).map_err(|e| format!("Invalid domain UTF-8: {}", e))?
         }
-        0x04 => { // IPv6
+        0x04 => {
+            // IPv6
             let mut ip = [0u8; 16];
-            client_stream.read_exact(&mut ip)
+            client_stream
+                .read_exact(&mut ip)
                 .await
                 .map_err(|e| format!("Failed reading IPv6: {}", e))?;
             // Format IPv6 cleanly
@@ -155,18 +178,27 @@ async fn handle_client(
             format!("[{}]", parts.join(":"))
         }
         _ => {
-            client_stream.write_all(&[0x05, 0x08, 0x00, 0x01, 0, 0, 0, 0, 0, 0]).await.ok();
+            client_stream
+                .write_all(&[0x05, 0x08, 0x00, 0x01, 0, 0, 0, 0, 0, 0])
+                .await
+                .ok();
             return Err(format!("Unsupported SOCKS address type: {}", req_header[3]));
         }
     };
 
     let mut port_buf = [0u8; 2];
-    client_stream.read_exact(&mut port_buf)
+    client_stream
+        .read_exact(&mut port_buf)
         .await
         .map_err(|e| format!("Failed reading target port: {}", e))?;
     let target_port = u16::from_be_bytes(port_buf);
 
-    log::debug!("Client {} requesting connection to {}:{}", client_addr, target_host, target_port);
+    log::debug!(
+        "Client {} requesting connection to {}:{}",
+        client_addr,
+        target_host,
+        target_port
+    );
 
     // 3. Connect to upstream HTTP/HTTPS proxy
     let upstream_stream = TcpStream::connect((upstream_host, upstream_port))
@@ -176,11 +208,7 @@ async fn handle_client(
     let mut upstream_boxed: BoxedStream = if upstream_scheme == "https" {
         // HTTPS connection to the proxy: wrap in rustls
         let mut root_store = rustls::RootCertStore::empty();
-        root_store.extend(
-            webpki_roots::TLS_SERVER_ROOTS
-                .iter()
-                .cloned(),
-        );
+        root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
 
         let config = rustls::ClientConfig::builder()
             .with_root_certificates(root_store)
@@ -191,7 +219,8 @@ async fn handle_client(
             .map_err(|e| format!("Invalid DNS name: {}", e))?
             .to_owned();
 
-        let tls_stream = connector.connect(server_name, upstream_stream)
+        let tls_stream = connector
+            .connect(server_name, upstream_stream)
             .await
             .map_err(|e| format!("TLS handshake with upstream proxy failed: {}", e))?;
 
@@ -213,10 +242,12 @@ async fn handle_client(
     }
     connect_req.push_str("\r\n");
 
-    upstream_boxed.write_all(connect_req.as_bytes())
+    upstream_boxed
+        .write_all(connect_req.as_bytes())
         .await
         .map_err(|e| format!("Failed to send CONNECT request: {}", e))?;
-    upstream_boxed.flush()
+    upstream_boxed
+        .flush()
         .await
         .map_err(|e| format!("Failed to flush CONNECT request: {}", e))?;
 
@@ -224,7 +255,8 @@ async fn handle_client(
     let mut response_headers = Vec::new();
     let mut buf = [0u8; 1];
     loop {
-        upstream_boxed.read_exact(&mut buf)
+        upstream_boxed
+            .read_exact(&mut buf)
             .await
             .map_err(|e| format!("Error reading CONNECT response: {}", e))?;
         response_headers.push(buf[0]);
@@ -239,15 +271,20 @@ async fn handle_client(
     let response_str = String::from_utf8_lossy(&response_headers);
     if !response_str.starts_with("HTTP/1.1 200") && !response_str.starts_with("HTTP/1.0 200") {
         let status = response_str.lines().next().unwrap_or("Unknown status");
-        client_stream.write_all(&[0x05, 0x05, 0x00, 0x01, 0, 0, 0, 0, 0, 0]).await.ok();
+        client_stream
+            .write_all(&[0x05, 0x05, 0x00, 0x01, 0, 0, 0, 0, 0, 0])
+            .await
+            .ok();
         return Err(format!("Proxy connection rejected: {}", status));
     }
 
     // 5. Send SOCKS5 success reply to client
-    client_stream.write_all(&[0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0])
+    client_stream
+        .write_all(&[0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0])
         .await
         .map_err(|e| format!("Failed to send SOCKS5 success reply: {}", e))?;
-    client_stream.flush()
+    client_stream
+        .flush()
         .await
         .map_err(|e| format!("Failed to flush client stream: {}", e))?;
 

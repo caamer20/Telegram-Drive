@@ -1,8 +1,8 @@
-use tauri::State;
-use grammers_client::types::Media;
-use crate::TelegramState;
 use crate::commands::utils::resolve_peer;
 use crate::mp4_utils;
+use crate::TelegramState;
+use grammers_client::types::Media;
+use tauri::State;
 
 #[derive(serde::Serialize)]
 pub struct VideoMetadata {
@@ -34,9 +34,7 @@ pub async fn cmd_get_video_metadata(
     folder_id: Option<i64>,
     state: State<'_, TelegramState>,
 ) -> Result<VideoMetadata, String> {
-    let client = {
-        state.client.lock().await.clone()
-    };
+    let client = { state.client.lock().await.clone() };
     let client = client.ok_or_else(|| "Not connected to Telegram".to_string())?;
 
     let buffer = download_moov_chunk(&client, message_id, folder_id, &state).await?;
@@ -59,9 +57,7 @@ pub async fn cmd_get_video_metadata_batch(
     folder_id: Option<i64>,
     state: State<'_, TelegramState>,
 ) -> Result<Vec<BatchMetadataEntry>, String> {
-    let client = {
-        state.client.lock().await.clone()
-    };
+    let client = { state.client.lock().await.clone() };
     let client = client.ok_or_else(|| "Not connected to Telegram".to_string())?;
     let peer = resolve_peer(&client, folder_id, &state.peer_cache).await?;
 
@@ -104,7 +100,10 @@ async fn download_and_process(
         .get_messages_by_id(peer, &[req.message_id])
         .await
         .map_err(|e| e.to_string())?;
-    let msg = messages.into_iter().flatten().next()
+    let msg = messages
+        .into_iter()
+        .flatten()
+        .next()
         .ok_or_else(|| format!("Message {} not found", req.message_id))?;
     let media = msg.media().ok_or_else(|| "No media".to_string())?;
 
@@ -136,7 +135,10 @@ async fn download_moov_chunk(
         .get_messages_by_id(&peer, &[message_id])
         .await
         .map_err(|e| e.to_string())?;
-    let msg = messages.into_iter().flatten().next()
+    let msg = messages
+        .into_iter()
+        .flatten()
+        .next()
         .ok_or_else(|| format!("Message {message_id} not found"))?;
     let media = msg.media().ok_or_else(|| "No media".to_string())?;
     let size = match &media {
@@ -176,13 +178,16 @@ async fn download_bytes(
 
 fn parse_mp4_metadata(buffer: &[u8]) -> Result<ParsedMetadata, String> {
     let mut cursor = std::io::Cursor::new(buffer);
-    let context = mp4parse::read_mp4(&mut cursor)
-        .map_err(|e| format!("MP4 parse error: {e}"))?;
+    let context = mp4parse::read_mp4(&mut cursor).map_err(|e| format!("MP4 parse error: {e}"))?;
 
-    let video_track = context.tracks.iter()
+    let video_track = context
+        .tracks
+        .iter()
         .find(|t| t.track_type == mp4parse::TrackType::Video);
 
-    let has_audio = context.tracks.iter()
+    let has_audio = context
+        .tracks
+        .iter()
         .any(|t| t.track_type == mp4parse::TrackType::Audio);
 
     let duration_secs = video_track.and_then(|t| {

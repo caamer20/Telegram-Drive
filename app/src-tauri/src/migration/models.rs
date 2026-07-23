@@ -21,6 +21,15 @@ pub struct OneDriveItem {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScanProgressPayload {
+    pub phase: String,
+    pub pages_scanned: usize,
+    pub discovered_files: usize,
+    pub discovered_folders: usize,
+    pub elapsed_ms: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OneDriveFolder {
     pub id: String,
     pub name: String,
@@ -116,6 +125,8 @@ pub struct MigrationJob {
     pub started_at: Option<i64>,
     pub completed_at: Option<i64>,
     pub updated_at: i64,
+    pub job_origin: String,
+    pub pause_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -169,6 +180,7 @@ pub struct MigrationItem {
     pub telegram_message_id: Option<i64>,
     pub created_at: i64,
     pub completed_at: Option<i64>,
+    pub queue_position: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -190,6 +202,16 @@ pub struct AutoMigrationProfile {
     pub last_auto_scan_at: Option<i64>,
     pub created_at: i64,
     pub updated_at: i64,
+    pub active_job_id: Option<i64>,
+    pub pause_reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AutoMigrationStatus {
+    pub profile: Option<AutoMigrationProfile>,
+    pub account: Option<MsAccountInfo>,
+    pub active_job: Option<MigrationJobDetail>,
+    pub scan_progress: Option<ScanProgressPayload>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -197,5 +219,20 @@ pub struct DailyMigrationQuota {
     pub date_string: String,
     pub uploaded_bytes: u64,
     pub limit_bytes: u64,
+    pub remaining_bytes: u64,
+    pub resets_at: i64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MigrationActivity {
+    pub id: i64,
+    pub job_id: i64,
+    pub item_id: Option<i64>,
+    pub item_name: Option<String>,
+    pub phase: String,
+    pub status: String,
+    pub attempt: i64,
+    pub revision: i64,
+    pub message: Option<String>,
+    pub created_at: i64,
+}

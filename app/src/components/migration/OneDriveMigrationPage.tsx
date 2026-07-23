@@ -1,51 +1,55 @@
 import React, { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useMigration } from '../../hooks/useMigration';
+import { useMigrationContext } from '../../context/MigrationContext';
 import { AutoMigrationCenter } from './AutoMigrationCenter';
 import { AdvancedSettingsDrawer } from './AdvancedSettingsDrawer';
-import { SetupSection } from './SetupSection';
-import { ProgressPanel } from './ProgressPanel';
-import { FileTable } from './FileTable';
-import { Cloud, Plus, FolderKanban, SlidersHorizontal } from 'lucide-react';
+import { Cloud, Settings } from 'lucide-react';
 
-export const OneDriveMigrationPage: React.FC = () => {
+const OneDriveMigrationContent: React.FC = () => {
     const { t } = useTranslation();
     const [isSettingsDrawerOpen, setIsSettingsDrawerOpen] = useState<boolean>(false);
-    const [showManualMode, setShowManualMode] = useState<boolean>(false);
 
     const {
         msAccount,
-        jobs,
         currentJobDetail,
         itemProgress,
-        cooldown,
         loading,
+        snapshotLoading,
+        scanProgress,
+        scanSnapshotItems,
         autoProfile,
         dailyQuota,
+        migrationActivity,
+        processingLogs,
         connectMicrosoft,
-        disconnectMicrosoft,
-        listOneDriveFolders,
-        loadJob,
-        createJob,
-        setOneDriveFolder,
-        setTelegramDestination,
-        setLocalDir,
-        scan,
-        startMigration,
-        pauseMigration,
-        resumeMigration,
-        cancelMigration,
-        retryItem,
-        retryAllFailed,
-        toggleAuto,
+        switchMicrosoftAccount,
         updateAutoSettings,
-        getDailyQuota,
-        getAutoStatus,
-    } = useMigration();
+        rescanAuto,
+        resetAndRescanAuto,
+        stopAutoScan,
+        deleteMigrationItem,
+        renameMigrationItem,
+        syncSingleItem,
+        syncScanSnapshotItem,
+        clearProcessingLogs,
+    } = useMigrationContext();
 
     const handleRefresh = () => {
-        getAutoStatus();
-        getDailyQuota();
+        void rescanAuto();
+    };
+
+    const handleResetScan = () => {
+        const confirmed = window.confirm(t(
+            'migration.reset_scan_confirm',
+            'Xóa toàn bộ kết quả đã quét và bắt đầu lại từ đầu?',
+        ));
+        if (confirmed) {
+            void resetAndRescanAuto();
+        }
+    };
+
+    const handleSwitchAccount = () => {
+        void switchMicrosoftAccount().catch(() => undefined);
     };
 
     return (
@@ -61,103 +65,61 @@ export const OneDriveMigrationPage: React.FC = () => {
                             {t('migration.page_title', 'OneDrive Migration')}
                         </h1>
                         <p className="text-xs text-slate-400">
-                            {t('migration.page_subtitle', 'Tự động quét và đồng bộ dữ liệu từ Microsoft OneDrive sang Telegram')}
+                            {t('migration.page_subtitle', 'Tự động quét và đồng bộ dữ liệu từ Microsoft OneDrive sang Telegram Drive')}
                         </p>
                     </div>
                 </div>
 
-                <div className="flex items-center gap-3">
+                {msAccount && (
                     <button
-                        onClick={() => setShowManualMode(!showManualMode)}
-                        className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${
-                            showManualMode
-                                ? 'bg-blue-600/10 border-blue-500/30 text-blue-400'
-                                : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
-                        }`}
+                        onClick={() => setIsSettingsDrawerOpen(true)}
+                        className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-900 border border-slate-800 text-slate-300 hover:text-white hover:bg-slate-800 transition-colors"
                     >
-                        <SlidersHorizontal className="w-4 h-4" />
-                        {showManualMode ? 'Chế độ Tự Động (Auto)' : 'Chế độ Thủ Công (Manual)'}
+                        <Settings className="w-4 h-4" />
+                        {t('migration.advanced_settings', 'Tùy chọn Nâng cao')}
                     </button>
-
-                    {showManualMode && (
-                        <button
-                            onClick={createJob}
-                            disabled={loading}
-                            className="inline-flex items-center gap-2 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-lg text-xs font-semibold shadow transition-colors"
-                        >
-                            <Plus className="w-4 h-4" />
-                            {t('migration.btn_new_job', 'New Job')}
-                        </button>
-                    )}
-                </div>
+                )}
             </div>
 
-            {/* Smart Auto Migration Center (Default View) */}
-            {!showManualMode ? (
-                <AutoMigrationCenter
-                    msAccount={msAccount}
-                    autoProfile={autoProfile}
-                    dailyQuota={dailyQuota}
-                    currentJobDetail={currentJobDetail}
-                    itemProgress={itemProgress}
-                    loading={loading}
-                    onToggleAuto={toggleAuto}
-                    onConnectMs={() => connectMicrosoft()}
-                    onOpenSettings={() => setIsSettingsDrawerOpen(true)}
-                    onRefresh={handleRefresh}
-                />
-            ) : (
-                <>
-                    {/* Manual Mode Setup Section */}
-                    <SetupSection
-                        msAccount={msAccount}
-                        currentDetail={currentJobDetail}
-                        loading={loading}
-                        onConnectMs={connectMicrosoft}
-                        onDisconnectMs={disconnectMicrosoft}
-                        onListOneDriveFolders={listOneDriveFolders}
-                        onCreateJob={createJob}
-                        onSetOneDriveFolder={(jobId, fId, fPath) => setOneDriveFolder(jobId, fId, fPath)}
-                        onSetTelegramDest={(jobId, dId, dName) => setTelegramDestination(jobId, dId, dName)}
-                        onSetLocalDir={(jobId, dir) => setLocalDir(jobId, dir)}
-                        onScan={(jobId) => scan(jobId)}
-                    />
+            {/* Smart Auto Migration Center Only */}
+            <AutoMigrationCenter
+                msAccount={msAccount}
+                autoProfile={autoProfile}
+                dailyQuota={dailyQuota}
+                currentJobDetail={currentJobDetail}
+                itemProgress={itemProgress}
+                migrationActivity={migrationActivity}
+                processingLogs={processingLogs}
+                loading={loading}
+                snapshotLoading={snapshotLoading}
+                scanProgress={scanProgress}
+                scanSnapshotItems={scanSnapshotItems}
+                onConnectMs={() => { void connectMicrosoft(); }}
+                onSwitchMs={handleSwitchAccount}
+                onOpenSettings={() => setIsSettingsDrawerOpen(true)}
+                onRefresh={handleRefresh}
+                onResetScan={handleResetScan}
+                onStopScan={() => { void stopAutoScan(); }}
+                onClearProcessingLogs={clearProcessingLogs}
+                onDeleteItem={(jId, iId) => { void deleteMigrationItem(jId, iId); }}
+                onRenameItem={(jId, iId, nName) => { void renameMigrationItem(jId, iId, nName); }}
+                onSyncSingleItem={(jId, iId) => { void syncSingleItem(jId, iId); }}
+                onSyncCheckpointItem={(sourceItemId) => { void syncScanSnapshotItem(sourceItemId); }}
+            />
 
-                    {/* Progress Panel */}
-                    {currentJobDetail && (
-                        <ProgressPanel
-                            detail={currentJobDetail}
-                            itemProgress={itemProgress}
-                            cooldown={cooldown}
-                            loading={loading}
-                            onStart={(jobId) => startMigration(jobId)}
-                            onPause={(jobId) => pauseMigration(jobId)}
-                            onResume={(jobId) => resumeMigration(jobId)}
-                            onCancel={(jobId) => cancelMigration(jobId)}
-                        />
-                    )}
-
-                    {/* File Table */}
-                    {currentJobDetail && (
-                        <FileTable
-                            detail={currentJobDetail}
-                            itemProgress={itemProgress}
-                            loading={loading}
-                            onRetryItem={(jobId, itemId) => retryItem(jobId, itemId)}
-                            onRetryAllFailed={(jobId) => retryAllFailed(jobId)}
-                        />
-                    )}
-                </>
-            )}
 
             {/* Advanced Settings Drawer */}
-            <AdvancedSettingsDrawer
-                isOpen={isSettingsDrawerOpen}
-                autoProfile={autoProfile}
-                loading={loading}
-                onClose={() => setIsSettingsDrawerOpen(false)}
-                onSaveSettings={updateAutoSettings}
-            />
+            {msAccount && (
+                <AdvancedSettingsDrawer
+                    isOpen={isSettingsDrawerOpen}
+                    autoProfile={autoProfile}
+                    loading={loading}
+                    onClose={() => setIsSettingsDrawerOpen(false)}
+                    onSaveSettings={(dId, dName, tDir) => { void updateAutoSettings(dId, dName, tDir); }}
+                />
+            )}
         </div>
     );
 };
+
+export const OneDriveMigrationPage: React.FC = () => <OneDriveMigrationContent />;

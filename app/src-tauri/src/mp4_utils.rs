@@ -39,7 +39,11 @@ pub fn find_box_in_range(
 /// Read the size of the box whose end is at `box_end`.
 pub fn box_size_at(buffer: &[u8], box_end: usize) -> Option<usize> {
     let sz = read_u32_be(buffer, box_end.saturating_sub(8))?;
-    if sz < 8 { None } else { Some(sz as usize) }
+    if sz < 8 {
+        None
+    } else {
+        Some(sz as usize)
+    }
 }
 
 /// Check whether a trak box contains `vmhd` (walk trak → mdia → minf → vmhd).
@@ -48,17 +52,13 @@ pub fn trak_contains_vmhd(buffer: &[u8], trak_data_start: usize, trak_data_end: 
         Some(end) => end,
         None => return false,
     };
-    let mdia_data_start = mdia_end
-        .saturating_sub(box_size_at(buffer, mdia_end).unwrap_or(8))
-        + 8;
+    let mdia_data_start = mdia_end.saturating_sub(box_size_at(buffer, mdia_end).unwrap_or(8)) + 8;
 
     let minf_end = match find_box_in_range(buffer, mdia_data_start, mdia_end, b"minf") {
         Some(end) => end,
         None => return false,
     };
-    let minf_data_start = minf_end
-        .saturating_sub(box_size_at(buffer, minf_end).unwrap_or(8))
-        + 8;
+    let minf_data_start = minf_end.saturating_sub(box_size_at(buffer, minf_end).unwrap_or(8)) + 8;
 
     find_box_in_range(buffer, minf_data_start, minf_end, b"vmhd").is_some()
 }

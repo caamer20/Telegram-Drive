@@ -1,7 +1,10 @@
-use std::sync::atomic::Ordering;
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager};
 
+use crate::bandwidth::BandwidthManager;
+use crate::commands::create_folder_inner;
 use crate::commands::TelegramState;
 use crate::migration::db::*;
 use crate::migration::microsoft::*;
@@ -55,22 +58,99 @@ fn record_job_failed(db: &MigrationDb, job_id: i64, _err_msg: &str) -> Result<()
     Ok(())
 }
 
+fn emit_activity(
+    db: &MigrationDb,
+    app_handle: &AppHandle,
+    job_id: i64,
+    item_id: Option<i64>,
+    item_name: Option<&str>,
+    phase: &str,
+    status: &str,
+    message: Option<&str>,
+) {
+    if let Ok(activity) = record_activity(db, job_id, item_id, item_name, phase, status, message) {
+        let _ = app_handle.emit("migration:activity", activity);
+    }
+}
+
+fn auto_folder_name(file_name: &str) -> &'static str {
+    let extension = std::path::Path::new(file_name)
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    match extension.as_str() {
+        "png" | "jpg" | "jpeg" | "webp" | "gif" | "bmp" | "svg" | "heic" => "Auto Images",
+        "mp4" | "mkv" | "avi" | "mov" | "webm" | "flv" | "wmv" | "m4v" | "3gp" => "Auto Videos",
+        "pdf" | "doc" | "docx" | "xls" | "xlsx" | "ppt" | "pptx" | "txt" | "csv" | "md" => {
+            "Auto Documents"
+        }
+        "zip" | "rar" | "7z" | "tar" | "gz" | "bz2" | "iso" => "Auto Archives",
+        _ => "Auto Other",
+    }
+}
+
+async fn ensure_auto_type_destination(
+    app_handle: &AppHandle,
+    folder_name: &str,
+) -> Result<i64, String> {
+    let db = app_handle
+        .state::<crate::db::DbConnection>()
+        .inner()
+        .clone();
+    {
+        let conn = db.lock().map_err(|e| e.to_string())?;
+        let mut stmt = conn
+            .prepare("SELECT channel_id FROM folder_metadata WHERE name = ? LIMIT 1;")
+            .map_err(|e| e.to_string())?;
+        stmt.bind((1, folder_name)).map_err(|e| e.to_string())?;
+        if let Ok(sqlite::State::Row) = stmt.next() {
+            return stmt.read(0).map_err(|e| e.to_string());
+        }
+    }
+
+    let tg_state = app_handle.state::<TelegramState>();
+    let client = tg_state
+        .client
+        .lock()
+        .await
+        .clone()
+        .ok_or_else(|| "Telegram client not connected".to_string())?;
+    let folder = create_folder_inner(folder_name, &client, &tg_state.peer_cache).await?;
+    let conn = db.lock().map_err(|e| e.to_string())?;
+    let mut stmt = conn
+        .prepare("INSERT OR IGNORE INTO folder_metadata (channel_id, name, username, is_public, display_order, group_id) VALUES (?, ?, ?, ?, 0, NULL);")
+        .map_err(|e| e.to_string())?;
+    stmt.bind((1, folder.id)).map_err(|e| e.to_string())?;
+    stmt.bind((2, folder.name.as_str()))
+        .map_err(|e| e.to_string())?;
+    stmt.bind((3, folder.username.as_deref()))
+        .map_err(|e| e.to_string())?;
+    stmt.bind((4, if folder.is_public { 1 } else { 0 }))
+        .map_err(|e| e.to_string())?;
+    stmt.next().map_err(|e| e.to_string())?;
+    Ok(folder.id)
+}
+
 async fn worker_loop_inner(
     mig_state: Arc<MigrationState>,
     job_id: i64,
     app_handle: AppHandle,
 ) -> Result<(), String> {
+    let auto_job = is_auto_job(&mig_state.db, job_id)?;
+    let bandwidth = app_handle.state::<Arc<BandwidthManager>>().inner().clone();
     let http = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(60))
         .build()
         .map_err(|e| e.to_string())?;
+    let mut auto_destinations: HashMap<String, i64> = HashMap::new();
 
     // Mark job running
     {
         let conn = mig_state.db.lock().map_err(|e| e.to_string())?;
         let now = chrono::Utc::now().timestamp();
         conn.execute(format!(
-            "UPDATE migration_jobs SET state = 'running', started_at = COALESCE(started_at, {}), updated_at = {} WHERE id = {};",
+            "UPDATE migration_jobs SET state = 'running', pause_reason = NULL, started_at = COALESCE(started_at, {}), updated_at = {} WHERE id = {};",
             now, now, job_id
         ))
         .map_err(|e| e.to_string())?;
@@ -128,7 +208,9 @@ async fn worker_loop_inner(
         }
 
         let job = get_job(&mig_state.db, job_id)?;
-        let local_dir_str = job.local_dir.ok_or_else(|| "Local working directory not set".to_string())?;
+        let local_dir_str = job
+            .local_dir
+            .ok_or_else(|| "Local working directory not set".to_string())?;
         let local_dir = std::path::Path::new(&local_dir_str);
 
         if !local_dir.exists() {
@@ -170,36 +252,27 @@ async fn worker_loop_inner(
             }
         }
 
-        // Fetch next pending item
-        let items = get_items_by_job(&mig_state.db, job_id)?;
-        let next_item = items.into_iter().find(|i| i.state == "pending" && i.item_type == "file");
-
-        // Check daily upload quota limit (250GB)
-        if let Ok(quota) = get_daily_quota(&mig_state.db) {
-            if quota.uploaded_bytes >= quota.limit_bytes {
-                log::warn!("Daily upload quota limit of 250GB reached. Pausing migration job.");
-                let conn = mig_state.db.lock().map_err(|e| e.to_string())?;
-                let now = chrono::Utc::now().timestamp();
-                let _ = conn.execute(format!(
-                    "UPDATE migration_jobs SET state = 'paused', updated_at = {} WHERE id = {};",
-                    now, job_id
-                ));
-                let _ = app_handle.emit(
-                    "migration:job-state",
-                    serde_json::json!({
-                        "job_id": job_id,
-                        "state": "paused",
-                        "reason": "daily_quota_reached"
-                    }),
-                );
-                break;
-            }
-        }
+        // Fetch next pending item (LIMIT 1 for maximum speed and zero memory overhead)
+        let next_item = get_next_pending_item(&mig_state.db, job_id)?;
 
         let item = match next_item {
             Some(i) => i,
             None => {
-
+                // Streaming auto scans append pages into this same queue. Keep
+                // the worker alive while enumeration is still in progress.
+                if auto_job && mig_state.scan_running.load(Ordering::Relaxed) {
+                    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+                    continue;
+                }
+                if auto_job && mig_state.scan_stop_requested.load(Ordering::Relaxed) {
+                    let conn = mig_state.db.lock().map_err(|e| e.to_string())?;
+                    conn.execute(format!(
+                        "UPDATE migration_jobs SET state = 'ready', updated_at = strftime('%s','now') WHERE id = {};",
+                        job_id
+                    ))
+                    .map_err(|e| e.to_string())?;
+                    break;
+                }
                 // All items completed or skipped or failed
                 let stats = get_job_stats(&mig_state.db, job_id)?;
                 let final_state = if stats.pending_files == 0 {
@@ -232,6 +305,48 @@ async fn worker_loop_inner(
             }
         };
 
+        if auto_job {
+            let quota = get_daily_quota(&mig_state.db)?;
+            if would_exceed_daily_quota(quota.uploaded_bytes, item.size_bytes) {
+                let conn = mig_state.db.lock().map_err(|e| e.to_string())?;
+                let now = chrono::Utc::now().timestamp();
+                conn.execute(format!(
+                    "UPDATE migration_jobs SET state = 'paused', pause_reason = 'daily_quota',
+                     updated_at = {now} WHERE id = {job_id};"
+                ))
+                .map_err(|e| e.to_string())?;
+                drop(conn);
+                emit_activity(
+                    &mig_state.db,
+                    &app_handle,
+                    job_id,
+                    Some(item.id),
+                    Some(&item.name),
+                    "quota",
+                    "paused",
+                    Some("File tiếp theo vượt quota Auto Migration hôm nay"),
+                );
+                let _ = app_handle.emit(
+                    "migration:job-state",
+                    serde_json::json!({
+                        "job_id": job_id,
+                        "state": "paused",
+                        "reason": "daily_quota"
+                    }),
+                );
+                let resume_handle = app_handle.clone();
+                let wait_seconds = quota
+                    .resets_at
+                    .saturating_sub(chrono::Utc::now().timestamp())
+                    .max(1) as u64;
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(std::time::Duration::from_secs(wait_seconds)).await;
+                    let _ = crate::migration::auto_engine::start_auto_engine(resume_handle).await;
+                });
+                break;
+            }
+        }
+
         // Pre-download duplicate check
         if let (Some(fp_type), Some(fp_val)) = (
             &item.source_fingerprint_type,
@@ -240,6 +355,16 @@ async fn worker_loop_inner(
             if check_fingerprint(&mig_state.db, fp_type, fp_val, item.size_bytes)? {
                 log::info!("Pre-download duplicate skip for item: {}", item.name);
                 record_item_skipped_duplicate(&mig_state.db, job_id, item.id, None)?;
+                emit_activity(
+                    &mig_state.db,
+                    &app_handle,
+                    job_id,
+                    Some(item.id),
+                    Some(&item.name),
+                    "completed",
+                    "skipped_duplicate",
+                    None,
+                );
                 let _ = app_handle.emit(
                     "migration:item-complete",
                     serde_json::json!({
@@ -258,7 +383,8 @@ async fn worker_loop_inner(
             let mut session_guard = mig_state.ms_session.lock().await;
             if let Some(ref mut session) = *session_guard {
                 if session.is_expired() {
-                    refresh_access_token(DEFAULT_MS_CLIENT_ID, session).await?;
+                    refresh_access_token(session).await?;
+                    crate::migration::session_store::save(&app_handle, session)?;
                 }
                 session.access_token.clone()
             } else {
@@ -284,15 +410,46 @@ async fn worker_loop_inner(
             ))
             .map_err(|e| e.to_string())?;
         }
+        emit_activity(
+            &mig_state.db,
+            &app_handle,
+            job_id,
+            Some(item.id),
+            Some(&item.name),
+            "downloading",
+            "started",
+            None,
+        );
+        let _ = app_handle.emit(
+            "migration:item-progress",
+            serde_json::json!({
+                "job_id": job_id,
+                "item_id": item.id,
+                "item_name": item.name.clone(),
+                "phase": "downloading",
+                "event_id": format!("{}:{}:{}:downloading:0", job_id, item.id, item.attempt_count),
+                "attempt": item.attempt_count,
+                "revision": 0,
+                "percent": 0,
+                "bytes_done": 0,
+                "bytes_total": item.size_bytes.max(0),
+                "speed_bytes_per_sec": 0,
+                "timestamp": chrono::Utc::now().timestamp_millis()
+            }),
+        );
 
         let app_handle_dl = app_handle.clone();
         let item_name_dl = item.name.clone();
+        let dl_revision = Arc::new(AtomicU64::new(0));
+        let dl_revision_cb = dl_revision.clone();
+        let attempt = item.attempt_count;
         let dl_res = download_item(
             &http,
             &access_token,
             source_item_id,
             &part_path_str,
             Some(move |bytes_done, bytes_total| {
+                let revision = dl_revision_cb.fetch_add(1, Ordering::Relaxed) + 1;
                 let percent = if bytes_total > 0 {
                     ((bytes_done as f64 / bytes_total as f64) * 100.0) as u8
                 } else {
@@ -305,10 +462,14 @@ async fn worker_loop_inner(
                         "item_id": item.id,
                         "item_name": item_name_dl,
                         "phase": "downloading",
+                        "event_id": format!("{}:{}:{}:downloading:{}", job_id, item.id, attempt, revision),
+                        "attempt": attempt,
+                        "revision": revision,
                         "percent": percent,
                         "bytes_done": bytes_done,
                         "bytes_total": bytes_total,
                         "speed_bytes_per_sec": 0
+                        ,"timestamp": chrono::Utc::now().timestamp_millis()
                     }),
                 );
             }),
@@ -319,7 +480,21 @@ async fn worker_loop_inner(
             Ok(hash) => hash,
             Err(e) => {
                 let _ = tokio::fs::remove_file(&part_path).await;
-                record_item_failed(&mig_state.db, job_id, item.id, "download_failed", &e, true)?;
+                let is_not_found = e.contains("itemNotFound")
+                    || e.contains("could not be found")
+                    || e.contains("404");
+                let err_code = "download_failed";
+                record_item_failed(&mig_state.db, job_id, item.id, err_code, &e, !is_not_found)?;
+                emit_activity(
+                    &mig_state.db,
+                    &app_handle,
+                    job_id,
+                    Some(item.id),
+                    Some(&item.name),
+                    "downloading",
+                    "failed",
+                    Some(&e),
+                );
                 let _ = app_handle.emit(
                     "migration:item-complete",
                     serde_json::json!({
@@ -327,19 +502,34 @@ async fn worker_loop_inner(
                         "item_id": item.id,
                         "item_name": item.name,
                         "status": "failed",
-                        "error_type": "download_failed",
-                        "error_message": e
+                        "error_type": err_code,
+                        "error_message": if is_not_found { "File no longer exists on OneDrive (404 itemNotFound)".into() } else { e }
                     }),
                 );
                 continue;
             }
         };
+        let downloaded_bytes = tokio::fs::metadata(&part_path)
+            .await
+            .map(|metadata| metadata.len())
+            .unwrap_or(item.size_bytes.max(0) as u64);
+        bandwidth.add_down(downloaded_bytes);
 
         // Post-download SHA-256 duplicate check
         if check_fingerprint(&mig_state.db, "sha256", &sha256_hash, item.size_bytes)? {
             log::info!("Post-download duplicate skip for item: {}", item.name);
             let _ = tokio::fs::remove_file(&part_path).await;
             record_item_skipped_duplicate(&mig_state.db, job_id, item.id, Some(&sha256_hash))?;
+            emit_activity(
+                &mig_state.db,
+                &app_handle,
+                job_id,
+                Some(item.id),
+                Some(&item.name),
+                "completed",
+                "skipped_duplicate",
+                None,
+            );
             let _ = app_handle.emit(
                 "migration:item-complete",
                 serde_json::json!({
@@ -352,6 +542,31 @@ async fn worker_loop_inner(
             continue;
         }
 
+        // Auto jobs are routed into one Telegram Drive channel per file type.
+        let destination_id = if auto_job {
+            let folder_name = auto_folder_name(&item.name).to_string();
+            if let Some(id) = auto_destinations.get(&folder_name) {
+                Some(*id)
+            } else {
+                match ensure_auto_type_destination(&app_handle, &folder_name).await {
+                    Ok(id) => {
+                        auto_destinations.insert(folder_name, id);
+                        Some(id)
+                    }
+                    Err(error) => {
+                        log::error!(
+                            "Could not prepare auto destination '{}': {}",
+                            folder_name,
+                            error
+                        );
+                        job.telegram_destination_id
+                    }
+                }
+            }
+        } else {
+            job.telegram_destination_id
+        };
+
         // Mark uploading
         {
             let conn = mig_state.db.lock().map_err(|e| e.to_string())?;
@@ -361,6 +576,33 @@ async fn worker_loop_inner(
             ))
             .map_err(|e| e.to_string())?;
         }
+        emit_activity(
+            &mig_state.db,
+            &app_handle,
+            job_id,
+            Some(item.id),
+            Some(&item.name),
+            "uploading",
+            "started",
+            None,
+        );
+        let _ = app_handle.emit(
+            "migration:item-progress",
+            serde_json::json!({
+                "job_id": job_id,
+                "item_id": item.id,
+                "item_name": item.name.clone(),
+                "phase": "uploading",
+                "event_id": format!("{}:{}:{}:uploading:0", job_id, item.id, item.attempt_count),
+                "attempt": item.attempt_count,
+                "revision": 0,
+                "percent": 0,
+                "bytes_done": 0,
+                "bytes_total": item.size_bytes.max(0),
+                "speed_bytes_per_sec": 0,
+                "timestamp": chrono::Utc::now().timestamp_millis()
+            }),
+        );
 
         // Upload through Telegram
         let tg_state = app_handle.state::<TelegramState>();
@@ -383,13 +625,18 @@ async fn worker_loop_inner(
 
         let app_handle_ul = app_handle.clone();
         let item_name_ul = item.name.clone();
+        let ul_revision = Arc::new(AtomicU64::new(0));
+        let ul_revision_cb = ul_revision.clone();
+        let attempt = item.attempt_count;
         let ul_res = upload_core(
             &client,
             &tg_state.peer_cache,
             &part_path_str,
-            job.telegram_destination_id,
+            &item.name,
+            destination_id,
             &mig_state.cancel_token,
             Some(move |bytes_done, bytes_total| {
+                let revision = ul_revision_cb.fetch_add(1, Ordering::Relaxed) + 1;
                 let percent = if bytes_total > 0 {
                     ((bytes_done as f64 / bytes_total as f64) * 100.0) as u8
                 } else {
@@ -402,10 +649,14 @@ async fn worker_loop_inner(
                         "item_id": item.id,
                         "item_name": item_name_ul,
                         "phase": "uploading",
+                        "event_id": format!("{}:{}:{}:uploading:{}", job_id, item.id, attempt, revision),
+                        "attempt": attempt,
+                        "revision": revision,
                         "percent": percent,
                         "bytes_done": bytes_done,
                         "bytes_total": bytes_total,
                         "speed_bytes_per_sec": 0
+                        ,"timestamp": chrono::Utc::now().timestamp_millis()
                     }),
                 );
             }),
@@ -414,6 +665,7 @@ async fn worker_loop_inner(
 
         match ul_res {
             Ok(res) => {
+                bandwidth.add_up(res.file_size.max(0) as u64);
                 // Success transaction
                 let provider_fp = match (
                     item.source_fingerprint_type.as_deref(),
@@ -430,11 +682,50 @@ async fn worker_loop_inner(
                     &sha256_hash,
                     provider_fp,
                     item.size_bytes,
-                    job.telegram_destination_id,
+                    destination_id,
                     res.message_id,
+                    auto_job,
                 )?;
+                emit_activity(
+                    &mig_state.db,
+                    &app_handle,
+                    job_id,
+                    Some(item.id),
+                    Some(&item.name),
+                    "completed",
+                    "completed",
+                    None,
+                );
 
-                let _ = add_daily_uploaded_bytes(&mig_state.db, item.size_bytes as u64);
+                // Remove the OneDrive source only after Telegram confirms the upload.
+                if auto_job {
+                    if let Some(source_id) = item.source_item_id.as_deref() {
+                        if let Err(error) =
+                            delete_onedrive_item(&http, &access_token, source_id).await
+                        {
+                            log::warn!(
+                                "Uploaded '{}' but failed to delete OneDrive source: {}",
+                                item.name,
+                                error
+                            );
+                            emit_activity(
+                                &mig_state.db,
+                                &app_handle,
+                                job_id,
+                                Some(item.id),
+                                Some(&item.name),
+                                "cleanup",
+                                "failed",
+                                Some(&error),
+                            );
+                        } else {
+                            log::info!(
+                                "Deleted OneDrive source after successful upload: {}",
+                                item.name
+                            );
+                        }
+                    }
+                }
 
                 let _ = tokio::fs::remove_file(&part_path).await;
 
@@ -484,6 +775,16 @@ async fn worker_loop_inner(
                     &msg,
                     false, // Do not auto-retry file too large
                 )?;
+                emit_activity(
+                    &mig_state.db,
+                    &app_handle,
+                    job_id,
+                    Some(item.id),
+                    Some(&item.name),
+                    "uploading",
+                    "failed",
+                    Some(&msg),
+                );
                 let _ = app_handle.emit(
                     "migration:item-complete",
                     serde_json::json!({
@@ -514,6 +815,16 @@ async fn worker_loop_inner(
                     &err_str,
                     should_increment,
                 )?;
+                emit_activity(
+                    &mig_state.db,
+                    &app_handle,
+                    job_id,
+                    Some(item.id),
+                    Some(&item.name),
+                    "uploading",
+                    "failed",
+                    Some(&err_str),
+                );
 
                 let _ = app_handle.emit(
                     "migration:item-complete",

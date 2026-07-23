@@ -19,7 +19,10 @@ fn init_com_on_worker_thread() {
     let hr = unsafe { CoInitializeEx(std::ptr::null(), COINIT_MULTITHREADED) };
     match hr {
         S_OK | S_FALSE => {
-            log::info!("COM MTA initialized on worker thread (hr=0x{:x})", hr as u32);
+            log::info!(
+                "COM MTA initialized on worker thread (hr=0x{:x})",
+                hr as u32
+            );
         }
         RPC_E_CHANGED_MODE => {
             // Thread was already initialized with a different apartment model.
@@ -38,34 +41,30 @@ fn init_com_on_worker_thread() {
     }
 }
 
-pub mod commands;
 pub mod bandwidth;
-pub mod vpn_optimizer;
+pub mod commands;
 pub mod socks5_bridge;
+pub mod vpn_optimizer;
 
 use tauri::Manager;
 
-
-use tokio::sync::Mutex;
-use std::sync::Arc;
-use std::collections::{HashMap, HashSet};
-use commands::TelegramState;
 use commands::streaming::StreamConfig;
+use commands::TelegramState;
 use rand::Rng;
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
-
-pub mod server;
 pub mod api_routes;
 pub mod db;
-pub mod share_routes;
-pub mod upload_service;
-pub mod jni_cache;
-pub mod transcode;
 pub mod fmp4_remux;
-pub mod mp4_utils;
+pub mod jni_cache;
 pub mod migration;
-
-
+pub mod mp4_utils;
+pub mod server;
+pub mod share_routes;
+pub mod transcode;
+pub mod upload_service;
 
 /// Single source of truth for the Actix streaming server port.
 /// Referenced in lib.rs (server startup) and exposed to the frontend
@@ -114,16 +113,30 @@ pub fn restart_api_server(app: &tauri::AppHandle) {
 
     // Need TelegramState to share with the API server
     let tg_state = Arc::new(app.state::<TelegramState>().inner().clone());
-    let bw_manager = app.state::<Arc<bandwidth::BandwidthManager>>().inner().clone();
-    let net_config = app.state::<Arc<vpn_optimizer::NetworkConfig>>().inner().clone();
+    let bw_manager = app
+        .state::<Arc<bandwidth::BandwidthManager>>()
+        .inner()
+        .clone();
+    let net_config = app
+        .state::<Arc<vpn_optimizer::NetworkConfig>>()
+        .inner()
+        .clone();
     let db_pool = app.state::<db::DbConnection>().inner().clone();
     let api_port = settings.port;
     let key_hash = settings.key_hash.clone();
     let handle_for_thread = api_handle_arc.clone();
 
     // Resolve cache dirs before the thread spawn since app is a reference
-    let preview_dir = app.path().app_cache_dir().unwrap_or_default().join("previews");
-    let thumbnail_dir = app.path().app_data_dir().unwrap_or_default().join("thumbnails");
+    let preview_dir = app
+        .path()
+        .app_cache_dir()
+        .unwrap_or_default()
+        .join("previews");
+    let thumbnail_dir = app
+        .path()
+        .app_data_dir()
+        .unwrap_or_default()
+        .join("thumbnails");
 
     std::thread::spawn(move || {
         #[cfg(target_os = "windows")]
@@ -131,9 +144,7 @@ pub fn restart_api_server(app: &tauri::AppHandle) {
         let sys = actix_rt::System::new();
         sys.block_on(async move {
             let api_state_data = actix_web::web::Data::new(tg_state);
-            let api_state = actix_web::web::Data::new(api_routes::ApiState {
-                key_hash,
-            });
+            let api_state = actix_web::web::Data::new(api_routes::ApiState { key_hash });
             let cache_dirs = actix_web::web::Data::new(api_routes::CacheDirs {
                 thumbnail_dir,
                 preview_dir,
@@ -170,7 +181,8 @@ pub fn restart_api_server(app: &tauri::AppHandle) {
                     .app_data(api_db.clone())
                     .configure(api_routes::configure_api)
             })
-            .bind(("127.0.0.1", api_port)) {
+            .bind(("127.0.0.1", api_port))
+            {
                 Ok(bound) => {
                     let server = bound.run();
                     *handle_for_thread.lock().unwrap() = Some(server.handle());
@@ -201,19 +213,21 @@ fn cmd_open_file_externally(path: String, app_handle: tauri::AppHandle) -> Resul
         let ctx = ndk_context::android_context();
         let vm = unsafe { jni::JavaVM::from_raw(ctx.vm().cast()) }
             .map_err(|e| format!("Failed to resolve JVM: {}", e))?;
-        let mut env = vm.attach_current_thread()
+        let mut env = vm
+            .attach_current_thread()
             .map_err(|e| format!("Failed to attach thread: {}", e))?;
-        
+
         if let Some(main_class) = crate::jni_cache::get_main_activity_jclass() {
-            let path_jstr = env.new_string(&path)
+            let path_jstr = env
+                .new_string(&path)
                 .map_err(|e| format!("Failed to create path JString: {}", e))?;
-            
+
             let lower_ext = std::path::Path::new(&path)
                 .extension()
                 .and_then(|ext| ext.to_str())
                 .unwrap_or("")
                 .to_lowercase();
-                
+
             let mime_type = match lower_ext.as_str() {
                 "jpg" | "jpeg" => "image/jpeg",
                 "png" => "image/png",
@@ -224,21 +238,28 @@ fn cmd_open_file_externally(path: String, app_handle: tauri::AppHandle) -> Resul
                 "zip" => "application/zip",
                 _ => "application/octet-stream",
             };
-            
-            let mime_jstr = env.new_string(mime_type)
+
+            let mime_jstr = env
+                .new_string(mime_type)
                 .map_err(|e| format!("Failed to create mime JString: {}", e))?;
 
-            let success = env.call_static_method(
-                &main_class,
-                "openFileExternally",
-                "(Ljava/lang/String;Ljava/lang/String;)Z",
-                &[
-                    jni::objects::JValue::from(&path_jstr),
-                    jni::objects::JValue::from(&mime_jstr),
-                ],
-            ).map_err(|e| format!("Failed to call static JNI method openFileExternally: {}", e))?;
+            let success = env
+                .call_static_method(
+                    &main_class,
+                    "openFileExternally",
+                    "(Ljava/lang/String;Ljava/lang/String;)Z",
+                    &[
+                        jni::objects::JValue::from(&path_jstr),
+                        jni::objects::JValue::from(&mime_jstr),
+                    ],
+                )
+                .map_err(|e| {
+                    format!("Failed to call static JNI method openFileExternally: {}", e)
+                })?;
 
-            let success_bool = success.z().map_err(|e| format!("Failed to parse boolean result: {}", e))?;
+            let success_bool = success
+                .z()
+                .map_err(|e| format!("Failed to parse boolean result: {}", e))?;
             if !success_bool {
                 return Err("Failed to launch intent from Kotlin".to_string());
             }
@@ -250,7 +271,9 @@ fn cmd_open_file_externally(path: String, app_handle: tauri::AppHandle) -> Resul
     #[cfg(not(target_os = "android"))]
     {
         use tauri_plugin_opener::OpenerExt;
-        app_handle.opener().open_path(&path, None::<&str>)
+        app_handle
+            .opener()
+            .open_path(&path, None::<&str>)
             .map_err(|e| e.to_string())
     }
 }
@@ -264,17 +287,17 @@ fn cmd_get_pending_share_count() -> Result<i32, String> {
     let ctx = ndk_context::android_context();
     let vm = unsafe { jni::JavaVM::from_raw(ctx.vm().cast()) }
         .map_err(|e| format!("Failed to resolve JVM: {}", e))?;
-    let mut env = vm.attach_current_thread()
+    let mut env = vm
+        .attach_current_thread()
         .map_err(|e| format!("Failed to attach thread: {}", e))?;
 
     if let Some(main_class) = crate::jni_cache::get_main_activity_jclass() {
-        let count = env.call_static_method(
-            &main_class,
-            "getAndClearShareCount",
-            "()I",
-            &[],
-        ).map_err(|e| format!("Failed to call getAndClearShareCount: {}", e))?;
-        let count_int = count.i().map_err(|e| format!("Failed to parse share count: {}", e))?;
+        let count = env
+            .call_static_method(&main_class, "getAndClearShareCount", "()I", &[])
+            .map_err(|e| format!("Failed to call getAndClearShareCount: {}", e))?;
+        let count_int = count
+            .i()
+            .map_err(|e| format!("Failed to parse share count: {}", e))?;
         Ok(count_int)
     } else {
         Err("MainActivity reference not cached".to_string())
@@ -303,21 +326,21 @@ fn cmd_list_cached_files() -> Result<Vec<CachedFileEntry>, String> {
     let ctx = ndk_context::android_context();
     let vm = unsafe { jni::JavaVM::from_raw(ctx.vm().cast()) }
         .map_err(|e| format!("Failed to resolve JVM: {}", e))?;
-    let mut env = vm.attach_current_thread()
+    let mut env = vm
+        .attach_current_thread()
         .map_err(|e| format!("Failed to attach thread: {}", e))?;
 
     if let Some(main_class) = crate::jni_cache::get_main_activity_jclass() {
-        let json_val = env.call_static_method(
-            &main_class,
-            "listCachedFiles",
-            "()Ljava/lang/String;",
-            &[],
-        ).map_err(|e| format!("Failed to call listCachedFiles: {}", e))?;
+        let json_val = env
+            .call_static_method(&main_class, "listCachedFiles", "()Ljava/lang/String;", &[])
+            .map_err(|e| format!("Failed to call listCachedFiles: {}", e))?;
 
-        let json_jstr: jni::objects::JString = json_val.l()
+        let json_jstr: jni::objects::JString = json_val
+            .l()
             .map_err(|e| format!("listCachedFiles result is not a string: {}", e))?
             .into();
-        let json_str: String = env.get_string(&json_jstr)
+        let json_str: String = env
+            .get_string(&json_jstr)
             .map_err(|e| format!("Failed to read listCachedFiles result: {}", e))?
             .into();
 
@@ -343,18 +366,21 @@ fn cmd_remove_cached_path(uri: String) -> Result<(), String> {
     let ctx = ndk_context::android_context();
     let vm = unsafe { jni::JavaVM::from_raw(ctx.vm().cast()) }
         .map_err(|e| format!("Failed to resolve JVM: {}", e))?;
-    let mut env = vm.attach_current_thread()
+    let mut env = vm
+        .attach_current_thread()
         .map_err(|e| format!("Failed to attach thread: {}", e))?;
 
     if let Some(main_class) = crate::jni_cache::get_main_activity_jclass() {
-        let j_uri = env.new_string(&uri)
+        let j_uri = env
+            .new_string(&uri)
             .map_err(|e| format!("Failed to create URI string: {}", e))?;
         env.call_static_method(
             &main_class,
             "removeCachedPath",
             "(Ljava/lang/String;)V",
             &[jni::objects::JValue::from(&j_uri)],
-        ).map_err(|e| format!("Failed to call removeCachedPath: {}", e))?;
+        )
+        .map_err(|e| format!("Failed to call removeCachedPath: {}", e))?;
         let _ = env.exception_clear();
         Ok(())
     } else {
@@ -371,9 +397,7 @@ fn cmd_remove_cached_path(_uri: String) -> Result<(), String> {
 /// Gather system diagnostics and environment info for debugging.
 /// Returns a formatted string suitable for copying to clipboard.
 #[tauri::command]
-fn cmd_get_system_diagnostics(
-    app: tauri::AppHandle,
-) -> Result<String, String> {
+fn cmd_get_system_diagnostics(app: tauri::AppHandle) -> Result<String, String> {
     let mut lines: Vec<String> = Vec::new();
 
     lines.push("=== Telegram Drive Diagnostics ===".into());
@@ -381,16 +405,26 @@ fn cmd_get_system_diagnostics(
     lines.push(format!("Version: {}", env!("CARGO_PKG_VERSION")));
 
     // OS info
-    lines.push(format!("OS: {} {}", std::env::consts::OS, std::env::consts::ARCH));
+    lines.push(format!(
+        "OS: {} {}",
+        std::env::consts::OS,
+        std::env::consts::ARCH
+    ));
 
     #[cfg(target_os = "linux")]
     {
-        lines.push(format!("XDG_SESSION_TYPE: {}",
-            std::env::var("XDG_SESSION_TYPE").unwrap_or_else(|_| "unknown".into())));
-        lines.push(format!("XDG_CURRENT_DESKTOP: {}",
-            std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_else(|_| "unknown".into())));
-        lines.push(format!("WEBKIT_DISABLE_DMABUF_RENDERER: {}",
-            std::env::var("WEBKIT_DISABLE_DMABUF_RENDERER").unwrap_or_else(|_| "unset".into())));
+        lines.push(format!(
+            "XDG_SESSION_TYPE: {}",
+            std::env::var("XDG_SESSION_TYPE").unwrap_or_else(|_| "unknown".into())
+        ));
+        lines.push(format!(
+            "XDG_CURRENT_DESKTOP: {}",
+            std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_else(|_| "unknown".into())
+        ));
+        lines.push(format!(
+            "WEBKIT_DISABLE_DMABUF_RENDERER: {}",
+            std::env::var("WEBKIT_DISABLE_DMABUF_RENDERER").unwrap_or_else(|_| "unset".into())
+        ));
     }
 
     #[cfg(target_os = "macos")]
@@ -416,7 +450,10 @@ fn cmd_get_system_diagnostics(
             .output()
             .ok()
             .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
-        lines.push(format!("FFmpeg: {}", which.unwrap_or_else(|| "not found".into())));
+        lines.push(format!(
+            "FFmpeg: {}",
+            which.unwrap_or_else(|| "not found".into())
+        ));
     }
 
     lines.push("==================================".into());
@@ -426,8 +463,6 @@ fn cmd_get_system_diagnostics(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    env_logger::init();
-
     let stream_token = generate_stream_token();
 
     // Shared handle for stopping the Actix streaming server during shutdown
@@ -436,6 +471,18 @@ pub fn run() {
     let server_handle_for_setup = server_handle.clone();
 
     let builder = tauri::Builder::default()
+        .plugin(
+            tauri_plugin_log::Builder::new()
+                .targets([
+                    tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout),
+                    tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::LogDir {
+                        file_name: Some("telegram-drive".into()),
+                    }),
+                    tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Webview),
+                ])
+                .level(log::LevelFilter::Info)
+                .build(),
+        )
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_store::Builder::default().build())
@@ -599,7 +646,17 @@ pub fn run() {
                 log::error!("Failed to initialize Migration SQLite database: {}", e);
                 e
             })?;
-            app.manage(migration::MigrationState::new(migration_db));
+            let restored_ms_session = match migration::session_store::load(app.handle()) {
+                Ok(session) => session,
+                Err(error) => {
+                    log::warn!("Không thể khôi phục Microsoft session: {}", error);
+                    None
+                }
+            };
+            app.manage(migration::MigrationState::new_with_session(
+                migration_db,
+                restored_ms_session,
+            ));
             
             // Start Streaming Server on dedicated thread (Actix needs its own runtime)
             // Disabled on Android: actix_rt::System creates a second Tokio runtime that
@@ -672,10 +729,18 @@ pub fn run() {
             }
 
             // Auto Migration Engine trigger
-            let handle_auto = app.handle().clone();
-            tauri::async_runtime::spawn(async move {
-                let _ = migration::auto_engine::start_auto_engine(handle_auto).await;
-            });
+            if let Ok(log_dir) = app.path().app_log_dir() {
+                log::info!("==================================================");
+                log::info!(
+                    "TELEGRAM DRIVE LOG FILE: {:?}",
+                    log_dir.join("telegram-drive.log")
+                );
+                log::info!("==================================================");
+            }
+
+            // Auto Migration is explicitly started from the Smart Auto-Migration
+            // Center. Do not launch a scan implicitly during app startup; this
+            // keeps the pipeline button and its logs authoritative.
 
             Ok(())
         })
@@ -785,10 +850,17 @@ pub fn run() {
             migration::commands::cmd_migration_toggle_auto,
             migration::commands::cmd_migration_update_auto_settings,
             migration::commands::cmd_migration_get_daily_quota,
+            migration::commands::cmd_migration_rescan_auto,
+            migration::commands::cmd_migration_stop_auto_scan,
+            migration::commands::cmd_migration_get_scan_snapshot,
+            migration::commands::cmd_migration_sync_scan_snapshot_item,
+            migration::commands::cmd_migration_get_activity,
+            migration::commands::cmd_migration_delete_item,
+            migration::commands::cmd_migration_rename_item,
+            migration::commands::cmd_migration_sync_single_item,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
-
 
     app.run(|app_handle, event| {
         if let tauri::RunEvent::Exit = event {
@@ -826,4 +898,3 @@ pub fn run() {
         }
     });
 }
-

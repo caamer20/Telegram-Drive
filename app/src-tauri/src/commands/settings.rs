@@ -1,8 +1,8 @@
 //! Tauri commands for applying proxy and VPN optimizer settings.
 //! These are called from the frontend when the user changes network configuration.
 
+use crate::vpn_optimizer::{NetworkConfig, NetworkConfigSnapshot, ProxyConfig, VpnConfig};
 use tauri::State;
-use crate::vpn_optimizer::{NetworkConfig, ProxyConfig, VpnConfig, NetworkConfigSnapshot};
 
 #[derive(Debug, serde::Deserialize)]
 pub struct ProxySettingsRequest {
@@ -33,7 +33,10 @@ pub async fn cmd_apply_proxy_settings(
 
     log::info!(
         "Applying proxy settings: enabled={}, type={}, host={}:{}",
-        config.enabled, config.proxy_type, config.host, config.port
+        config.enabled,
+        config.proxy_type,
+        config.host,
+        config.port
     );
 
     *net_config.proxy.write().map_err(|e| e.to_string())? = config.clone();
@@ -102,14 +105,21 @@ pub async fn cmd_apply_vpn_settings(
         bandwidth_limit_up_kbs: req.bandwidth_limit_up_kbs,
         bandwidth_limit_down_kbs: req.bandwidth_limit_down_kbs,
         chunk_size_kb: req.chunk_size_kb.clamp(64, 512),
-        keep_alive_interval_sec: if req.keep_alive_interval_sec == 0 { 0 } else { req.keep_alive_interval_sec.clamp(30, 120) },
+        keep_alive_interval_sec: if req.keep_alive_interval_sec == 0 {
+            0
+        } else {
+            req.keep_alive_interval_sec.clamp(30, 120)
+        },
         auto_detect_vpn: req.auto_detect_vpn,
         archive_max_bytes: req.archive_max_bytes,
     };
 
     log::info!(
         "Applying VPN settings: enabled={}, timeout={}x, retries={}, flood_wait={}",
-        config.enabled, config.timeout_multiplier, config.retry_attempts, config.flood_wait_respect
+        config.enabled,
+        config.timeout_multiplier,
+        config.retry_attempts,
+        config.flood_wait_respect
     );
 
     *net_config.vpn.write().map_err(|e| e.to_string())? = config;

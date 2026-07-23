@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
-use sha2::{Sha256, Digest};
-use tauri::{AppHandle, Manager};
+use sha2::{Digest, Sha256};
 use std::path::PathBuf;
+use tauri::{AppHandle, Manager};
 
 /// Persisted API settings (written to api_settings.json in the app data dir)
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -67,13 +67,13 @@ pub fn verify_key(plaintext: &str, stored_hash: &str) -> bool {
 }
 
 #[tauri::command]
-pub async fn cmd_get_api_settings(
-    app: AppHandle,
-) -> Result<ApiSettingsResponse, String> {
+pub async fn cmd_get_api_settings(app: AppHandle) -> Result<ApiSettingsResponse, String> {
     let settings = load_settings(&app);
     let running = {
         let state = app.try_state::<crate::ApiServerRunning>();
-        state.map(|s| s.0.load(std::sync::atomic::Ordering::Relaxed)).unwrap_or(false)
+        state
+            .map(|s| s.0.load(std::sync::atomic::Ordering::Relaxed))
+            .unwrap_or(false)
     };
     Ok(ApiSettingsResponse {
         enabled: settings.enabled,
@@ -96,7 +96,10 @@ pub async fn cmd_update_api_settings(
 
     // Prevent collision with streaming server
     if port == crate::STREAM_PORT {
-        return Err(format!("Port {} is used by the media streaming server", port));
+        return Err(format!(
+            "Port {} is used by the media streaming server",
+            port
+        ));
     }
 
     let mut settings = load_settings(&app);
@@ -114,7 +117,9 @@ pub async fn cmd_update_api_settings(
 
     let running = {
         let state = app.try_state::<crate::ApiServerRunning>();
-        state.map(|s| s.0.load(std::sync::atomic::Ordering::Relaxed)).unwrap_or(false)
+        state
+            .map(|s| s.0.load(std::sync::atomic::Ordering::Relaxed))
+            .unwrap_or(false)
     };
 
     Ok(ApiSettingsResponse {
@@ -126,9 +131,7 @@ pub async fn cmd_update_api_settings(
 }
 
 #[tauri::command]
-pub async fn cmd_regenerate_api_key(
-    app: AppHandle,
-) -> Result<String, String> {
+pub async fn cmd_regenerate_api_key(app: AppHandle) -> Result<String, String> {
     let mut settings = load_settings(&app);
 
     // Generate a secure 32-byte random key as hex

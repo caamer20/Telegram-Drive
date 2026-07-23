@@ -14,10 +14,10 @@ use std::sync::Arc;
 
 use tokio::sync::Mutex;
 
-use actix_web::{web, HttpRequest, HttpResponse, Responder};
 use crate::commands::TelegramState;
 use crate::server::StreamTokenData;
 use crate::transcode::TranscodeManager;
+use actix_web::{web, HttpRequest, HttpResponse, Responder};
 
 // ── Constants ────────────────────────────────────────────────────────
 
@@ -111,9 +111,7 @@ pub async fn run_fmp4_remux(
     // Read stderr lines for progress (best-effort) and error collection
     let stderr_reader = tokio::io::BufReader::new(stderr);
     let mut lines = tokio::io::AsyncBufReadExt::lines(stderr_reader);
-    let input_size = std::fs::metadata(input_path)
-        .map(|m| m.len())
-        .unwrap_or(0);
+    let input_size = std::fs::metadata(input_path).map(|m| m.len()).unwrap_or(0);
 
     let parse_result: Result<(), String> = loop {
         tokio::select! {
@@ -170,9 +168,7 @@ pub async fn run_fmp4_remux(
         return Err("FFmpeg fMP4 remux completed but no output file was produced".to_string());
     }
 
-    let output_size = std::fs::metadata(output_path)
-        .map(|m| m.len())
-        .unwrap_or(0);
+    let output_size = std::fs::metadata(output_path).map(|m| m.len()).unwrap_or(0);
     if output_size == 0 {
         let _ = std::fs::remove_file(output_path);
         return Err("FFmpeg fMP4 remux produced an empty output file".to_string());
@@ -227,7 +223,10 @@ pub async fn cmd_prepare_fmp4_stream(
             .map(|m| m.len())
             .unwrap_or(0);
         if size > 0 {
-            log::info!("fMP4 remux: cached output already exists at {:?}", output_path);
+            log::info!(
+                "fMP4 remux: cached output already exists at {:?}",
+                output_path
+            );
             return Ok(Fmp4StreamInfo {
                 url,
                 output_file_key: file_key,
@@ -258,28 +257,34 @@ pub async fn cmd_prepare_fmp4_stream(
     }
 
     // Get Telegram client
-    let client = {
-        state.client.lock().await.clone()
-    };
+    let client = { state.client.lock().await.clone() };
     let client = client.ok_or_else(|| {
         // Clean up job state on error
         let rs = remux_state.inner().clone();
         let fk = file_key.clone();
-        tokio::spawn(async move { rs.jobs.lock().await.remove(&fk); });
+        tokio::spawn(async move {
+            rs.jobs.lock().await.remove(&fk);
+        });
         "Not connected to Telegram".to_string()
     })?;
 
     // Resolve peer and get media
     let peer = crate::commands::utils::resolve_peer(
         &client,
-        if folder_id == 0 { None } else { Some(folder_id) },
+        if folder_id == 0 {
+            None
+        } else {
+            Some(folder_id)
+        },
         &state.peer_cache,
     )
     .await
     .map_err(|e| {
         let rs = remux_state.inner().clone();
         let fk = file_key.clone();
-        tokio::spawn(async move { rs.jobs.lock().await.remove(&fk); });
+        tokio::spawn(async move {
+            rs.jobs.lock().await.remove(&fk);
+        });
         e
     })?;
 
@@ -289,36 +294,38 @@ pub async fn cmd_prepare_fmp4_stream(
         .map_err(|e| {
             let rs = remux_state.inner().clone();
             let fk = file_key.clone();
-            tokio::spawn(async move { rs.jobs.lock().await.remove(&fk); });
+            tokio::spawn(async move {
+                rs.jobs.lock().await.remove(&fk);
+            });
             e.to_string()
         })?;
 
-    let msg = messages
-        .into_iter()
-        .flatten()
-        .next()
-        .ok_or_else(|| {
-            let rs = remux_state.inner().clone();
-            let fk = file_key.clone();
-            tokio::spawn(async move { rs.jobs.lock().await.remove(&fk); });
-            format!("Message {} not found", message_id)
-        })?;
+    let msg = messages.into_iter().flatten().next().ok_or_else(|| {
+        let rs = remux_state.inner().clone();
+        let fk = file_key.clone();
+        tokio::spawn(async move {
+            rs.jobs.lock().await.remove(&fk);
+        });
+        format!("Message {} not found", message_id)
+    })?;
 
     let media = msg.media().ok_or_else(|| {
         let rs = remux_state.inner().clone();
         let fk = file_key.clone();
-        tokio::spawn(async move { rs.jobs.lock().await.remove(&fk); });
+        tokio::spawn(async move {
+            rs.jobs.lock().await.remove(&fk);
+        });
         "No media".to_string()
     })?;
 
     // Get FFmpeg path
-    let ffmpeg_path = {
-        manager.ffmpeg_path.lock().await.clone()
-    };
+    let ffmpeg_path = { manager.ffmpeg_path.lock().await.clone() };
     let ffmpeg_path = ffmpeg_path.ok_or_else(|| {
         let rs = remux_state.inner().clone();
         let fk = file_key.clone();
-        tokio::spawn(async move { rs.jobs.lock().await.remove(&fk); });
+        tokio::spawn(async move {
+            rs.jobs.lock().await.remove(&fk);
+        });
         "FFmpeg is not available. Install FFmpeg to enable fMP4 streaming.".to_string()
     })?;
 
@@ -329,7 +336,11 @@ pub async fn cmd_prepare_fmp4_stream(
 
     tokio::spawn(async move {
         let original_path = manager_clone.original_path(&file_key_clone);
-        let output_path = manager_clone.cache_root.join(FMP4_DIR).join(&file_key_clone).join("output.mp4");
+        let output_path = manager_clone
+            .cache_root
+            .join(FMP4_DIR)
+            .join(&file_key_clone)
+            .join("output.mp4");
 
         let result: Result<(), String> = async {
             // Step 1: Download original if needed
@@ -349,12 +360,19 @@ pub async fn cmd_prepare_fmp4_stream(
                 .await
                 .map_err(|e| format!("Failed to download original: {}", e))?;
 
-                log::info!("fMP4 remux: original cached ({:.1} MB)", total_size as f64 / (1024.0 * 1024.0));
+                log::info!(
+                    "fMP4 remux: original cached ({:.1} MB)",
+                    total_size as f64 / (1024.0 * 1024.0)
+                );
                 manager_clone.evict_lru().await;
             }
 
             // Step 2: Run FFmpeg remux
-            log::info!("fMP4 remux: starting FFmpeg remux for {:?} → {:?}", original_path, output_path);
+            log::info!(
+                "fMP4 remux: starting FFmpeg remux for {:?} → {:?}",
+                original_path,
+                output_path
+            );
             let (_cancel_tx, mut cancel_rx) = tokio::sync::oneshot::channel();
 
             run_fmp4_remux(
@@ -368,7 +386,8 @@ pub async fn cmd_prepare_fmp4_stream(
             .map_err(|e| format!("fMP4 remux failed: {}", e))?;
 
             Ok(())
-        }.await;
+        }
+        .await;
 
         // Update job status
         let mut jobs = remux_state_clone.jobs.lock().await;
@@ -400,9 +419,15 @@ pub async fn cmd_get_fmp4_status(
     remux_state: tauri::State<'_, Fmp4RemuxState>,
 ) -> Result<Fmp4StatusResult, String> {
     // Check if output file already exists (ready)
-    let output_path = manager.cache_root.join(FMP4_DIR).join(&file_key).join("output.mp4");
+    let output_path = manager
+        .cache_root
+        .join(FMP4_DIR)
+        .join(&file_key)
+        .join("output.mp4");
     if output_path.exists() {
-        let size = std::fs::metadata(&output_path).map(|m| m.len()).unwrap_or(0);
+        let size = std::fs::metadata(&output_path)
+            .map(|m| m.len())
+            .unwrap_or(0);
         if size > 0 {
             // Clean up job entry if still present
             remux_state.jobs.lock().await.remove(&file_key);
@@ -458,7 +483,10 @@ async fn serve_fmp4(
     }
 
     // Sanitize file_key to prevent path traversal
-    if file_key.chars().any(|c| !c.is_alphanumeric() && c != '_' && c != '-') {
+    if file_key
+        .chars()
+        .any(|c| !c.is_alphanumeric() && c != '_' && c != '-')
+    {
         return HttpResponse::BadRequest().body("Invalid file key");
     }
 
@@ -491,10 +519,9 @@ async fn serve_fmp4(
     // Use NamedFile for automatic Range/Content-Range support and
     // streaming from disk (no full-file memory load).
     match actix_files::NamedFile::open_async(&safe_path).await {
-        Ok(f) => {
-            f.set_content_type("video/mp4".parse().unwrap())
-                .into_response(&_req)
-        }
+        Ok(f) => f
+            .set_content_type("video/mp4".parse().unwrap())
+            .into_response(&_req),
         Err(e) => {
             log::error!("Failed to open fMP4 file {:?}: {}", safe_path, e);
             HttpResponse::InternalServerError().body("Failed to read file")

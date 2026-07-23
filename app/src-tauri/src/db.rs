@@ -1,6 +1,6 @@
-use tauri::{AppHandle, Manager};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use tauri::{AppHandle, Manager};
 
 pub type DbConnection = Arc<Mutex<sqlite::Connection>>;
 
@@ -11,7 +11,7 @@ pub fn init_db(app: &AppHandle) -> Result<DbConnection, String> {
     let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let db_path = dir.join("shares.db");
-    
+
     // Retry opening the database with exponential backoff.
     // SQLite may report "database is locked" if another process or a stale
     // wal/shm journal hasn't been cleaned up yet (e.g., after a crash).
@@ -44,7 +44,7 @@ pub fn init_db(app: &AppHandle) -> Result<DbConnection, String> {
             )
         })?
     };
-    
+
     // Run migration (also with retry for locked-database scenarios)
     {
         let mut last_err = String::new();
@@ -76,7 +76,7 @@ pub fn init_db(app: &AppHandle) -> Result<DbConnection, String> {
                     display_order INTEGER NOT NULL DEFAULT 0,
                     group_id INTEGER,
                     FOREIGN KEY(group_id) REFERENCES groups(id) ON DELETE SET NULL
-                );"
+                );",
             ) {
                 Ok(_) => {
                     last_err.clear();
@@ -102,7 +102,7 @@ pub fn init_db(app: &AppHandle) -> Result<DbConnection, String> {
             ));
         }
     }
-    
+
     log::info!("SQLite database initialized successfully using sqlite crate.");
     Ok(Arc::new(Mutex::new(conn)))
 }

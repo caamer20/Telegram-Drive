@@ -206,6 +206,23 @@ export interface MsAccountInfo {
     account_email: string;
 }
 
+export interface ScanProgressPayload {
+    phase: 'starting' | 'enumerating' | 'building_snapshot' | 'stopping' | 'stopped' | 'completed' | 'failed';
+    pages_scanned: number;
+    discovered_files: number;
+    discovered_folders: number;
+    elapsed_ms: number;
+}
+
+export interface ProcessingLogEntry {
+    id: string;
+    timestamp: number;
+    category: 'scan' | 'download' | 'upload' | 'job' | 'system';
+    level: 'info' | 'success' | 'warning' | 'error';
+    message_key: string;
+    params?: Record<string, string | number>;
+}
+
 export interface AutoMigrationProfile {
     id: number;
     account_id: string;
@@ -216,12 +233,36 @@ export interface AutoMigrationProfile {
     last_auto_scan_at?: number | null;
     created_at: number;
     updated_at: number;
+    active_job_id?: number | null;
+    pause_reason?: string | null;
+}
+
+export interface AutoMigrationStatus {
+    profile: AutoMigrationProfile | null;
+    account: MsAccountInfo | null;
+    active_job: MigrationJobDetail | null;
+    scan_progress: ScanProgressPayload | null;
 }
 
 export interface DailyMigrationQuota {
     date_string: string;
     uploaded_bytes: number;
     limit_bytes: number;
+    remaining_bytes: number;
+    resets_at: number;
+}
+
+export interface MigrationActivity {
+    id: number;
+    job_id: number;
+    item_id?: number | null;
+    item_name?: string | null;
+    phase: 'scan' | 'downloading' | 'uploading' | 'completed' | 'failed' | 'quota';
+    status: string;
+    attempt: number;
+    revision: number;
+    message?: string | null;
+    created_at: number;
 }
 
 
@@ -262,6 +303,8 @@ export interface MigrationJob {
     started_at?: number | null;
     completed_at?: number | null;
     updated_at: number;
+    job_origin: 'manual' | 'auto';
+    pause_reason?: string | null;
 }
 
 export interface MigrationJobSummary {
@@ -311,6 +354,7 @@ export interface MigrationItem {
     telegram_message_id?: number | null;
     created_at: number;
     completed_at?: number | null;
+    queue_position: number;
 }
 
 export interface MigrationJobDetail {
@@ -335,6 +379,10 @@ export interface ItemProgressPayload {
     bytes_done: number;
     bytes_total: number;
     speed_bytes_per_sec: number;
+    event_id: string;
+    attempt: number;
+    revision: number;
+    timestamp: number;
 }
 
 export interface ItemCompletePayload {
@@ -356,4 +404,3 @@ export interface CooldownPayload {
     cooldown_until: number | null;
     seconds_remaining: number;
 }
-
