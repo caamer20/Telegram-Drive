@@ -59,31 +59,50 @@ stateDiagram-v2
 
 ---
 
-## 2. Các Định tuyến Xử lý (Route Kinds)
+## 2. Các Định tuyến Xử lý (Route Kinds) & Video Processing Decisions
 
-1.  `video_to_td`: Download → FFmpeg (remux `-c copy` hoặc transcode) → Upload lên Telegram Drive.
+### 2.1. Route Kinds
+1.  `video_to_td`: Download → FFmpeg (remux `-c copy`, transcode hoặc passthrough) → Upload lên Telegram Drive.
 2.  `image_to_td`: Download (staging area) → Upload trực tiếp nguyên bản lên Telegram Drive.
 3.  `other_to_local`: Download về vùng tạm `.working` → Di chuyển (Atomic Rename) sang thư mục `OneDrive_Archive/[Relative Path]` cục bộ (bao gồm cả việc tạo thư mục rỗng).
+
+### 2.2. Video Processing Decisions (Ma trận quyết định xử lý Video)
+Mỗi video được kiểm tra bằng `ffprobe` và phân loại thành một trong ba trạng thái quyết định:
+*   `transcode`: Khi codec, container, kích thước, bitrate hoặc khả năng phát trên Telegram cần tối ưu. Không hạ chất lượng tùy tiện.
+*   `remux_copy`: Dùng `ffmpeg -c copy` khi video/audio codec đã tương thích tốt nhưng container hoặc metadata cần chuẩn hóa.
+*   `passthrough`: Sử dụng trực tiếp tệp gốc mà không chạy FFmpeg khi container và codec đã tương thích tốt, không có vấn đề về cấu trúc file, không vượt quá giới hạn kích thước, remux/transcode không đem lại lợi ích thực tế. Quyết định passthrough PHẢI được ghi nhận rõ ràng vào manifest và log.
 
 ---
 
 ## 3. Cấu trúc Database SQLite Đề xuất (DB Schema Design)
 
-### 3.1. Bảng `migration_jobs` (Bổ sung trường tương thích)
+### 3.1. Bảng `migration_jobs` (Bổ sung các trường v2)
 ```sql
 ALTER TABLE migration_jobs ADD COLUMN pipeline_version INTEGER NOT NULL DEFAULT 1;
-```
-*   `pipeline_version`: Job cũ sẽ có version = 1; Job thiết kế mới có version = 2.
-*   **Quy tắc tương thích**: Giữ nguyên lịch sử job cũ. Không thực hiện mass-update route của các item thuộc Job v1. Nếu phát hiện Job v1 chưa hoàn tất, hệ thống sẽ tự động pause/archive an toàn và UI đề nghị người dùng tạo snapshot v2 mới.
+ALTER TABLE migration_jobs ADD COLUMN local_backup_dir TEXT;
+ALTER TABLE migration_jobs ADD COLUMN workspace_dir TEXT;
 
-### 3.2. Bảng `migration_items` (Cập nhật cột)
+-- Trường Manifest Export State
+ALTER TABLE migration_jobs ADD COLUMN manifest_state TEXT DEFAULT 'pending' CHECK(manifest_state IN ('pending', 'exporting', 'exported', 'export_pending', 'failed'));
+ALTER TABLE migration_jobs ADD COLUMN manifest_json_path TEXT;
+ALTER TABLE migration_jobs ADD COLUMN manifest_csv_path TEXT;
+ALTER TABLE migration_jobs ADD COLUMN manifest_last_error TEXT;
+ALTER TABLE migration_jobs ADD COLUMN manifest_exported_at INTEGER;
+```
+*   `pipeline_version`: Job cũ có version = 1; Job mới (004) có version = 2.
+*   **Quy tắc tương thích**: Giữ nguyên lịch sử job cũ. `local_dir` cũ được coi là legacy field, khi đọc job v1, nó được map sang `local_backup_dir`. Các job v1 chưa hoàn thành đang `running` khi startup phải được chuyển sang trạng thái `paused` (hoặc `completed_with_errors`/`failed` tùy tình huống) an toàn, UI sẽ đề xuất người dùng tạo job v2 mới, tuyệt đối không chạy job v1 bằng worker v2.
+
+### 3.2. Bảng `migration_items` (Cập nhật cột v2)
 ```sql
 ALTER TABLE migration_items ADD COLUMN route_kind TEXT NOT NULL DEFAULT 'other_to_local';
 ALTER TABLE migration_items ADD COLUMN duplicate_of_item_id INTEGER REFERENCES migration_items(id);
 ALTER TABLE migration_items ADD COLUMN artifact_size_bytes INTEGER;
 ALTER TABLE migration_items ADD COLUMN local_dest_path TEXT;
-ALTER TABLE migration_items ADD COLUMN telegram_random_id INTEGER;
+ALTER TABLE migration_items ADD COLUMN telegram_random_id TEXT; -- Chuyển sang TEXT để hỗ trợ 64-bit ID an toàn trên JS/TS
 ALTER TABLE migration_items ADD COLUMN upload_attempt_id TEXT;
+ALTER TABLE migration_items ADD COLUMN original_sha256 TEXT;
+ALTER TABLE migration_items ADD COLUMN processed_sha256 TEXT;
+ALTER TABLE migration_items ADD COLUMN video_decision TEXT CHECK(video_decision IN ('transcode', 'remux_copy', 'passthrough'));
 ```
 
 ### 3.3. Bảng `migrated_fingerprints` (Lịch sử trùng lặp toàn cục)
@@ -102,7 +121,7 @@ CREATE TABLE IF NOT EXISTS migrated_fingerprints (
 );
 ```
 
-### 3.4. Bảng `quota_reservations` (Quản lý giữ chỗ Quota tạm thời)
+### 3.4. Bảng `quota_reservations` (Quản lý giữ chỗ Quota tạm thời - Module `app/src-tauri/src/migration/quota_reserve.rs`)
 ```sql
 CREATE TABLE IF NOT EXISTS quota_reservations (
     item_id                 INTEGER PRIMARY KEY REFERENCES migration_items(id),
@@ -115,6 +134,19 @@ CREATE TABLE IF NOT EXISTS quota_reservations (
 );
 ```
 
+### 3.5. Bảng `migration_pacing_state` (Lưu trữ trạng thái pacing bền vững)
+```sql
+CREATE TABLE IF NOT EXISTS migration_pacing_state (
+    key                     TEXT PRIMARY KEY, -- 'global' hoặc theo target_key
+    last_success_timestamp  INTEGER,
+    sent_count_since_cooldown INTEGER,
+    next_allowed_at         INTEGER,
+    batch_cooldown_until    INTEGER,
+    flood_wait_until        INTEGER,
+    updated_at              INTEGER NOT NULL
+);
+```
+
 ---
 
 ## 4. Cơ chế Giao dịch & Chống trùng lặp (Dedupe & Quota Transaction Logic)
@@ -122,12 +154,14 @@ CREATE TABLE IF NOT EXISTS quota_reservations (
 ### 4.1. Phân bổ Canonical Claim & Promotion theo Đích đến
 *   Vân tay của mỗi tệp tin được so sánh dựa trên khóa duy nhất:
     `fingerprint_type + fingerprint_value + source_size + artifact_target_key`
-*   Khi quét snapshot, nếu phát hiện trùng lặp vân tay trên cùng đích đến (`artifact_target_key`), tệp đầu tiên được gán làm canonical. Các bản sao còn lại chuyển sang trạng thái `waiting_duplicate` và lưu `duplicate_of_item_id`.
-*   Nếu tệp canonical thành công, tất cả các tệp `waiting_duplicate` được cập nhật thành `skipped_duplicate` và kế thừa kết quả.
-*   Nếu tệp canonical lỗi (attempt = 3), hệ thống tự động tìm bản sao tiếp theo ở trạng thái `waiting_duplicate`, cập nhật nó thành canonical mới (`duplicate_of_item_id = NULL`), chuyển trạng thái về `pending` và trỏ các bản sao còn lại về canonical mới này.
+*   Trong đó `artifact_target_key` phân chia độc lập giữa:
+    *   Telegram: `telegram:<destination_id>`
+    *   Local: `local:<normalized_backup_root>`
+*   Nếu file cần lưu ở cả 2 đích thì tạo 2 item với target key khác nhau, không được dedupe chéo gây mất file.
+*   Khi tệp canonical bị lỗi vĩnh viễn (attempt = 3), hệ thống tự động tìm bản sao tiếp theo ở trạng thái `waiting_duplicate`, cập nhật nó thành canonical mới (`duplicate_of_item_id = NULL`), chuyển trạng thái về `pending` và trỏ các bản sao còn lại về canonical mới này.
 
 ### 4.2. Khôi phục Quota Reservation sau Crash
-Khi khởi động ứng dụng hoặc khi ngày local của hệ thống thay đổi:
+Khi khởi động ứng dụng hoặc khi ngày local của hệ thống thay đổi (được quản lý bởi module `quota_reserve.rs`):
 1.  Hệ thống thực hiện quét bảng `quota_reservations`.
 2.  Mọi bản ghi có trạng thái `'reserved'` và có `expires_at` nhỏ hơn thời gian hiện tại hoặc có `date_string` khác ngày local hiện tại sẽ tự động bị xóa (release quota thừa bị kẹt do crash).
 

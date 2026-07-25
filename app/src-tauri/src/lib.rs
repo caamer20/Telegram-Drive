@@ -595,7 +595,7 @@ pub fn run() {
             app.manage(ActixServerHandle(server_handle_for_setup.clone()));
             app.manage(ApiServerHandle(Arc::new(std::sync::Mutex::new(None))));
             app.manage(ApiServerRunning(Arc::new(std::sync::atomic::AtomicBool::new(false))));
-            
+
             // Initialize TranscodeManager for HLS streaming
             let app_data_dir = app.path().app_data_dir().map_err(|e| {
                 log::error!("Failed to get app data dir: {}", e);
@@ -633,7 +633,7 @@ pub fn run() {
                     }
                 });
             }
-            
+
             // Initialize SQLite Database
             let db_pool = db::init_db(app.handle()).map_err(|e| {
                 log::error!("Failed to initialize SQLite database: {}", e);
@@ -657,7 +657,7 @@ pub fn run() {
                 migration_db,
                 restored_ms_session,
             ));
-            
+
             // Start Streaming Server on dedicated thread (Actix needs its own runtime)
             // Disabled on Android: actix_rt::System creates a second Tokio runtime that
             // conflicts with Tauri's runtime and crashes the process on launch.

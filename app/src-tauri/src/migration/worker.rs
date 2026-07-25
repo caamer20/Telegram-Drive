@@ -150,7 +150,13 @@ pub fn get_top_level_folder_info(source_path: &str, _file_name: &str) -> (String
 pub fn sanitize_filename(name: &str) -> String {
     let sanitized: String = name
         .chars()
-        .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect();
     if sanitized.trim_matches('_').is_empty() {
         "Folder".to_string()
@@ -159,8 +165,12 @@ pub fn sanitize_filename(name: &str) -> String {
     }
 }
 
-pub fn create_zip_from_directory(src_dir: &std::path::Path, zip_path: &std::path::Path) -> Result<(), String> {
-    let file = std::fs::File::create(zip_path).map_err(|e| format!("Failed to create zip file: {}", e))?;
+pub fn create_zip_from_directory(
+    src_dir: &std::path::Path,
+    zip_path: &std::path::Path,
+) -> Result<(), String> {
+    let file =
+        std::fs::File::create(zip_path).map_err(|e| format!("Failed to create zip file: {}", e))?;
     let mut zip = zip::ZipWriter::new(file);
     let options = zip::write::SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated);
@@ -169,35 +179,52 @@ pub fn create_zip_from_directory(src_dir: &std::path::Path, zip_path: &std::path
         let entry = entry.map_err(|e| e.to_string())?;
         let path = entry.path();
         if path.is_file() {
-            let filename = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+            let filename = path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
             zip.start_file(&filename, options)
                 .map_err(|e| format!("Failed to add '{}' to zip: {}", filename, e))?;
-            let mut f = std::fs::File::open(&path).map_err(|e| format!("Failed to open '{}': {}", filename, e))?;
-            std::io::copy(&mut f, &mut zip).map_err(|e| format!("Failed to compress '{}': {}", filename, e))?;
+            let mut f = std::fs::File::open(&path)
+                .map_err(|e| format!("Failed to open '{}': {}", filename, e))?;
+            std::io::copy(&mut f, &mut zip)
+                .map_err(|e| format!("Failed to compress '{}': {}", filename, e))?;
         }
     }
-    zip.finish().map_err(|e| format!("Failed to finalize zip file: {}", e))?;
+    zip.finish()
+        .map_err(|e| format!("Failed to finalize zip file: {}", e))?;
     Ok(())
 }
 
-pub fn create_zip_from_directory_recursive(src_dir: &std::path::Path, zip_path: &std::path::Path) -> Result<(), String> {
-    let file = std::fs::File::create(zip_path).map_err(|e| format!("Failed to create zip file: {}", e))?;
+pub fn create_zip_from_directory_recursive(
+    src_dir: &std::path::Path,
+    zip_path: &std::path::Path,
+) -> Result<(), String> {
+    let file =
+        std::fs::File::create(zip_path).map_err(|e| format!("Failed to create zip file: {}", e))?;
     let mut zip = zip::ZipWriter::new(file);
     let options = zip::write::SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated);
 
-    for entry in walkdir::WalkDir::new(src_dir).into_iter().filter_map(|e| e.ok()) {
+    for entry in walkdir::WalkDir::new(src_dir)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
         let path = entry.path();
         if path.is_file() {
             let relative = path.strip_prefix(src_dir).unwrap_or(path);
             let name = relative.to_string_lossy().to_string();
             zip.start_file(&name, options)
                 .map_err(|e| format!("Failed to add '{}' to zip: {}", name, e))?;
-            let mut f = std::fs::File::open(path).map_err(|e| format!("Failed to open '{}': {}", name, e))?;
-            std::io::copy(&mut f, &mut zip).map_err(|e| format!("Failed to compress '{}': {}", name, e))?;
+            let mut f = std::fs::File::open(path)
+                .map_err(|e| format!("Failed to open '{}': {}", name, e))?;
+            std::io::copy(&mut f, &mut zip)
+                .map_err(|e| format!("Failed to compress '{}': {}", name, e))?;
         }
     }
-    zip.finish().map_err(|e| format!("Failed to finalize zip file: {}", e))?;
+    zip.finish()
+        .map_err(|e| format!("Failed to finalize zip file: {}", e))?;
     Ok(())
 }
 
@@ -398,7 +425,10 @@ async fn worker_loop_inner(
                             }
                             session.access_token.clone()
                         } else {
-                            return Err("Microsoft authentication session expired. Please reconnect.".into());
+                            return Err(
+                                "Microsoft authentication session expired. Please reconnect."
+                                    .into(),
+                            );
                         }
                     };
 
@@ -415,7 +445,8 @@ async fn worker_loop_inner(
                         if let Some(parent) = file_dest_path.parent() {
                             let _ = std::fs::create_dir_all(parent);
                         }
-                        let part_dest_path = base_local_non_media_dir.join(format!("{}.part", nm_item.id));
+                        let part_dest_path =
+                            base_local_non_media_dir.join(format!("{}.part", nm_item.id));
                         let part_dest_str = part_dest_path.to_string_lossy().to_string();
 
                         {
@@ -480,7 +511,11 @@ async fn worker_loop_inner(
                                 );
                             }
                             Err(error) => {
-                                log::error!("Failed to download local non-media file {}: {}", nm_item.name, error);
+                                log::error!(
+                                    "Failed to download local non-media file {}: {}",
+                                    nm_item.name,
+                                    error
+                                );
                                 record_item_failed(
                                     &mig_state.db,
                                     job_id,
@@ -597,7 +632,9 @@ async fn worker_loop_inner(
                         }
                         session.access_token.clone()
                     } else {
-                        return Err("Microsoft authentication session expired. Please reconnect.".into());
+                        return Err(
+                            "Microsoft authentication session expired. Please reconnect.".into(),
+                        );
                     }
                 };
 
@@ -607,9 +644,15 @@ async fn worker_loop_inner(
                         &code_item.source_fingerprint_type,
                         &code_item.source_fingerprint_value,
                     ) {
-                        if check_fingerprint(&mig_state.db, fp_type, fp_val, code_item.size_bytes)? {
+                        if check_fingerprint(&mig_state.db, fp_type, fp_val, code_item.size_bytes)?
+                        {
                             log::info!("Pre-download duplicate skip for item: {}", code_item.name);
-                            record_item_skipped_duplicate(&mig_state.db, job_id, code_item.id, None)?;
+                            record_item_skipped_duplicate(
+                                &mig_state.db,
+                                job_id,
+                                code_item.id,
+                                None,
+                            )?;
                             emit_activity(
                                 &mig_state.db,
                                 &app_handle,
@@ -676,7 +719,11 @@ async fn worker_loop_inner(
                             downloaded_items.push(code_item.clone());
                         }
                         Err(error) => {
-                            log::error!("Failed to download code file {}: {}", code_item.name, error);
+                            log::error!(
+                                "Failed to download code file {}: {}",
+                                code_item.name,
+                                error
+                            );
                             record_item_failed(
                                 &mig_state.db,
                                 job_id,
@@ -697,7 +744,8 @@ async fn worker_loop_inner(
                         log::error!("Failed to zip folder {}: {}", folder_name, e);
                     } else {
                         let destination_id = if auto_job {
-                            match ensure_auto_type_destination(&app_handle, "Auto Documents").await {
+                            match ensure_auto_type_destination(&app_handle, "Auto Documents").await
+                            {
                                 Ok(id) => Some(id),
                                 Err(_) => job.telegram_destination_id,
                             }
@@ -720,73 +768,53 @@ async fn worker_loop_inner(
                             )
                             .await;
 
-                                match upload_res {
-                                    Ok(res) => {
-                                        for d_item in &downloaded_items {
-                                            record_item_success(
-                                                &mig_state.db,
-                                                job_id,
-                                                d_item.id,
-                                                "",
-                                                None,
-                                                d_item.size_bytes,
-                                                destination_id,
-                                                res.message_id,
-                                                auto_job,
-                                            )?;
-                                            emit_activity(
-                                                &mig_state.db,
-                                                &app_handle,
-                                                job_id,
-                                                Some(d_item.id),
-                                                Some(&d_item.name),
-                                                "completed",
-                                                "success",
-                                                Some(&format!("Đã nén trong {}", zip_filename)),
+                            match upload_res {
+                                Ok(res) => {
+                                    for d_item in &downloaded_items {
+                                        record_item_success(
+                                            &mig_state.db,
+                                            job_id,
+                                            d_item.id,
+                                            "",
+                                            None,
+                                            d_item.size_bytes,
+                                            destination_id,
+                                            res.message_id,
+                                            auto_job,
+                                        )?;
+                                        emit_activity(
+                                            &mig_state.db,
+                                            &app_handle,
+                                            job_id,
+                                            Some(d_item.id),
+                                            Some(&d_item.name),
+                                            "completed",
+                                            "success",
+                                            Some(&format!("Đã nén trong {}", zip_filename)),
+                                        );
+
+                                        log::info!(
+                                                "Uploaded zipped '{}' successfully. Retaining OneDrive source per safety guard.",
+                                                d_item.name
                                             );
 
-                                            if auto_job {
-                                                if let Some(source_id) = d_item.source_item_id.as_deref() {
-                                                    if let Err(error) =
-                                                        delete_onedrive_item(&http, &access_token, source_id).await
-                                                    {
-                                                        log::warn!(
-                                                            "Uploaded zipped '{}' but failed to delete OneDrive source: {}",
-                                                            d_item.name,
-                                                            error
-                                                        );
-                                                        emit_activity(
-                                                            &mig_state.db,
-                                                            &app_handle,
-                                                            job_id,
-                                                            Some(d_item.id),
-                                                            Some(&d_item.name),
-                                                            "cleanup",
-                                                            "failed",
-                                                            Some(&error),
-                                                        );
-                                                    } else {
-                                                        log::info!(
-                                                            "Deleted OneDrive source after successful zip upload: {}",
-                                                            d_item.name
-                                                        );
-                                                    }
-                                                }
-                                            }
-
-                                            let _ = app_handle.emit(
-                                                "migration:item-complete",
-                                                serde_json::json!({
-                                                    "job_id": job_id,
-                                                    "item_id": d_item.id,
-                                                    "item_name": d_item.name,
-                                                    "status": "completed"
-                                                }),
-                                            );
-                                        }
+                                        let _ = app_handle.emit(
+                                            "migration:item-complete",
+                                            serde_json::json!({
+                                                "job_id": job_id,
+                                                "item_id": d_item.id,
+                                                "item_name": d_item.name,
+                                                "status": "completed"
+                                            }),
+                                        );
                                     }
+                                }
                                 Err(error) => {
-                                    log::error!("Failed to upload zipped folder {}: {}", zip_filename, error);
+                                    log::error!(
+                                        "Failed to upload zipped folder {}: {}",
+                                        zip_filename,
+                                        error
+                                    );
                                     for d_item in &downloaded_items {
                                         record_item_failed(
                                             &mig_state.db,
@@ -1315,35 +1343,10 @@ async fn worker_loop_inner(
                     None,
                 );
 
-                // Remove the OneDrive source only after Telegram confirms the upload.
-                if auto_job {
-                    if let Some(source_id) = item.source_item_id.as_deref() {
-                        if let Err(error) =
-                            delete_onedrive_item(&http, &access_token, source_id).await
-                        {
-                            log::warn!(
-                                "Uploaded '{}' but failed to delete OneDrive source: {}",
-                                item.name,
-                                error
-                            );
-                            emit_activity(
-                                &mig_state.db,
-                                &app_handle,
-                                job_id,
-                                Some(item.id),
-                                Some(&item.name),
-                                "cleanup",
-                                "failed",
-                                Some(&error),
-                            );
-                        } else {
-                            log::info!(
-                                "Deleted OneDrive source after successful upload: {}",
-                                item.name
-                            );
-                        }
-                    }
-                }
+                log::info!(
+                    "Uploaded '{}' successfully. Retaining OneDrive source per safety guard.",
+                    item.name
+                );
 
                 let _ = tokio::fs::remove_file(&part_path).await;
 
@@ -1518,13 +1521,22 @@ mod worker_code_text_tests {
 
     #[test]
     fn test_create_zip_from_directory_recursive() {
-        let temp_dir = std::env::temp_dir().join(format!("test_zip_rec_{}", chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)));
-        let zip_file = std::env::temp_dir().join(format!("test_rec_out_{}.zip", chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)));
+        let temp_dir = std::env::temp_dir().join(format!(
+            "test_zip_rec_{}",
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
+        ));
+        let zip_file = std::env::temp_dir().join(format!(
+            "test_rec_out_{}.zip",
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
+        ));
         let sub_dir = temp_dir.join("src/components");
         std::fs::create_dir_all(&sub_dir).unwrap();
 
         let file1 = sub_dir.join("Header.tsx");
-        File::create(&file1).unwrap().write_all(b"export const Header = () => null;").unwrap();
+        File::create(&file1)
+            .unwrap()
+            .write_all(b"export const Header = () => null;")
+            .unwrap();
 
         let result = create_zip_from_directory_recursive(&temp_dir, &zip_file);
         assert!(result.is_ok());

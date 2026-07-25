@@ -31,7 +31,7 @@ Tài liệu này phân rã kế hoạch thành các nhiệm vụ chi tiết có 
 *   **Dependency**: `T002`.
 *   **Parallel**: Không.
 *   **File path dự kiến**: `app/src-tauri/src/migration/db.rs`
-*   **FR/NFR/SC được bao phủ**: FR-004, NFR-004.
+*   **FR/NFR/SC được bao phủ**: FR-004, NFR-004, SC-006.
 *   **Tiêu chí hoàn thành (Exit Criteria)**:
     *   Cài đặt lệnh SQLite ALTER TABLE thêm các trường: `route_kind`, `duplicate_of_item_id`, `artifact_size_bytes`, `local_dest_path`, `telegram_random_id`, `upload_attempt_id`, và cột `pipeline_version` trong `migration_jobs`.
     *   Cấu hình `PRAGMA journal_mode = WAL;` và `PRAGMA synchronous = FULL;`.
@@ -54,10 +54,11 @@ Tài liệu này phân rã kế hoạch thành các nhiệm vụ chi tiết có 
 *   **Dependency**: `T004`.
 *   **Parallel**: Không.
 *   **File path dự kiến**: `app/src-tauri/src/migration/pipeline/classifier.rs`
-*   **FR/NFR/SC được bao phủ**: FR-001, FR-005.
+*   **FR/NFR/SC được bao phủ**: FR-001, FR-005, FR-036, FR-037.
 *   **Tiêu chí hoàn thành (Exit Criteria)**:
     *   Cài đặt module phân loại tệp dựa trên đuôi định dạng, gán route: `video_to_td`, `image_to_td`, hoặc `other_to_local`.
     *   Hỗ trợ phát hiện và định tuyến các thư mục thực sự rỗng thành `other_to_local`.
+    *   Tích hợp ma trận quyết định video (`transcode`, `remux_copy`, `passthrough`).
     *   Unit test phân loại đúng 100% các case mở rộng.
 
 ### T006: Canonical Claim & Promotion theo Artifact Target
@@ -88,11 +89,11 @@ Tài liệu này phân rã kế hoạch thành các nhiệm vụ chi tiết có 
 *   **Dependency**: `T007`.
 *   **Parallel**: Có `[P]`.
 *   **File path dự kiến**: `app/src-tauri/src/migration/pipeline/transcode_stage.rs`
-*   **FR/NFR/SC được bao phủ**: FR-002, NFR-005.
+*   **FR/NFR/SC được bao phủ**: FR-002, FR-036, FR-037, NFR-005.
 *   **Tiêu chí hoàn thành (Exit Criteria)**:
     *   Xây dựng actor gọi tiến trình FFmpeg đơn lẻ (`concurrency = 1`).
     *   Định nghĩa thread limit `min(2, available_parallelism)`.
-    *   Định tuyến tệp tương thích qua nhánh FFmpeg remux đổi container (`-c copy`) thay vì trả nguyên file gốc.
+    *   Định tuyến tệp tương thích qua nhánh FFmpeg remux đổi container (`-c copy`) hoặc passthrough thay vì chỉ transcode.
     *   Unit test kiểm tra transcode video và remux thành công.
 
 ### T010: Image Staging Stage (Ảnh upload nguyên bản)
@@ -135,7 +136,7 @@ Tài liệu này phân rã kế hoạch thành các nhiệm vụ chi tiết có 
 *   **Phase**: 3
 *   **Dependency**: `T012`.
 *   **Parallel**: Có `[P]`.
-*   **File path dự kiến**: `app/src-tauri/src/migration/pipeline/quota_reserve.rs`
+*   **File path dự kiến**: `app/src-tauri/src/migration/quota_reserve.rs`
 *   **FR/NFR/SC được bao phủ**: FR-011, FR-013, FR-014, FR-015.
 *   **Tiêu chí hoàn thành (Exit Criteria)**:
     *   Triển khai cơ chế atomically reserve/commit/release quota ngày 250GB dựa trên dung lượng artifact thật.
@@ -161,7 +162,7 @@ Tài liệu này phân rã kế hoạch thành các nhiệm vụ chi tiết có 
 *   **File path dự kiến**: `app/src-tauri/src/migration/upload_adapter.rs`
 *   **FR/NFR/SC được bao phủ**: FR-028, FR-029, FR-030, FR-031, FR-032, SC-003.
 *   **Tiêu chí hoàn thành (Exit Criteria)**:
-    *   Xác minh khả năng tiêm `random_id` vào thư viện Grammers hoặc sử dụng MTProto fallback.
+    *   Xác minh khả năng tiêm `random_id` vào thư viện Grammers bằng cách xây dựng raw request hoặc adapter.
     *   Triển khai upload sử dụng persisted `telegram_random_id`.
     *   Unit test chứng minh zero duplicate message khi retry sau crash.
 

@@ -1,10 +1,18 @@
+pub mod adapters_v2;
 pub mod auto_engine;
 pub mod commands;
 pub mod db;
+pub mod disk_reserve;
+pub mod manifest;
 pub mod media_processor;
 pub mod microsoft;
 pub mod models;
+pub mod pipeline_v2;
+pub mod quota_reserve;
+pub mod repository_v2;
+pub mod schema_v2;
 pub mod session_store;
+pub mod telegram_idempotency;
 pub mod upload_adapter;
 pub mod worker;
 
@@ -44,3 +52,8 @@ impl MigrationState {
         }
     }
 }
+
+#[cfg(test)]
+mod db_tests;
+#[cfg(test)]
+mod pipeline_v2_tests;

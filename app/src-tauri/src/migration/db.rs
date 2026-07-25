@@ -266,6 +266,8 @@ pub fn open_migration_db_at_path(db_path: PathBuf) -> Result<MigrationDb, String
         "INTEGER NOT NULL DEFAULT 0",
     )?;
 
+    crate::migration::schema_v2::migrate_to_v2(&conn)?;
+
     let db = Arc::new(Mutex::new(conn));
 
     // Run startup recovery

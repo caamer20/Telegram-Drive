@@ -46,33 +46,43 @@ Kế hoạch này vạch ra kiến trúc pipeline song song phân tầng, chiế
 ## 3. Khôi phục Upload Idempotent (Persisted random_id)
 
 Để bảo đảm zero duplicate message khi gặp lỗi crash/mất điện giữa chừng:
-1.  **Xác minh Grammers API**:
-    *   Quá trình triển khai phải kiểm tra (validate) xem API cao cấp (high-level client) của thư viện `Grammers` có cho phép tùy biến hoặc tiêm (inject) tham số `random_id` (64-bit) hay không.
-    *   Nếu không hỗ trợ, chúng ta PHẢI sử dụng trực tiếp các cuộc gọi MTProto cấp thấp hơn như `messages.sendMedia` thông qua adapter phù hợp.
-2.  **Lưu trữ Random ID bền vững**:
-    *   Trước khi gọi hàm gửi media, ghi `telegram_random_id` và `upload_attempt_id` vào SQLite.
+1.  **Hạn chế của Grammers High-Level API**:
+    *   Thư viện Grammers bản ghim (`d07f96f`) tự động sinh `random_id` ngẫu nhiên trong hàm high-level `Client::send_message`. Do đó, không thể tiêm (inject) `random_id` thông qua API này.
+2.  **Phương án gọi API Raw**:
+    *   Để sử dụng persisted `random_id`, adapter của chúng ta phải dùng raw API `Client::invoke(messages::SendMedia)` kết hợp với `InputMediaUploadedDocument` tự xây dựng.
+    *   Đây là API không nằm trong stability guarantee mạnh của Grammers.
+    *   Thiết kế persisted `random_id` chỉ được coi là hoàn tất khi capability spike biên dịch thành công, có test adapter hoạt động, và có chiến lược parse/reconcile response (ví dụ: giải mã `UpdateShortSentMessage` hoặc các update chứa `UpdateMessageId`).
+    *   Chỉ cam kết zero duplicate khi adapter chứng minh contract bằng test. Nếu không bảo đảm, tệp đó PHẢI được đánh dấu là `reconciliation_required` và dừng lại để đối soát thủ công, không tự động tải lên lại gây trùng lặp.
+3.  **Lưu trữ Random ID bền vững**:
+    *   Trước khi gọi hàm gửi media, ghi `telegram_random_id` (TEXT) và `upload_attempt_id` vào SQLite.
     *   Khi tải lên, truyền trực tiếp `telegram_random_id` này.
     *   Nếu crash, khi chạy lại, worker tái sử dụng chính xác `telegram_random_id` này. Telegram sẽ tự động loại bỏ yêu cầu nếu đã nhận được tệp đó trước đó.
     *   Lưu ánh xạ (mapping) từ response Telegram sang `telegram_message_id`.
-    *   Nếu adapter không thể đảm bảo an toàn idempotent (ví dụ gặp lỗi API không xác định), tệp tin chuyển sang trạng thái `reconciliation_required` và dừng lại để đối soát thủ công, không tự động tải lại.
 
 ---
 
 ## 4. Tương thích Ngược & Loại bỏ API Phá hủy (Pipeline Compatibility)
 
 *   **Pipeline Versioning**: Bảng `migration_jobs` được bổ sung trường `pipeline_version`. Job hiện tại có version = 1; Job thiết kế mới có version = 2.
-*   **Xử lý Job cũ**: Giữ nguyên lịch sử các Job v1. Không thực hiện mass-update route của các item cũ. Các Job v1 chưa hoàn thành phải được pause/archive an toàn và UI đề nghị tạo snapshot v2 mới.
-*   **An toàn Dữ liệu**: **Loại bỏ hoàn toàn khả năng gọi `delete_onedrive_item` từ bất kỳ migration worker nào (cả v1 và v2)** để đảm bảo an toàn tuyệt đối cho tệp gốc OneDrive.
+*   **Xử lý Job cũ**: Giữ nguyên lịch sử các Job v1. Không thực hiện mass-update route của các item cũ. Các Job v1 chưa hoàn thành đang `running` khi startup phải được chuyển sang trạng thái `paused` an toàn, UI sẽ đề xuất người dùng tạo job v2 mới, tuyệt đối không chạy job v1 bằng worker v2.
+*   **An toàn Dữ liệu (Safety Guard)**: **Loại bỏ hoàn toàn khả năng gọi `delete_onedrive_item` và Microsoft Graph DELETE từ bất kỳ migration worker nào (cả v1 và v2)** để đảm bảo an toàn tuyệt đối cho tệp gốc OneDrive. Sau khi Telegram upload thành công, chỉ cleanup file tạm trong `workspace_dir` cục bộ, giữ nguyên OneDrive source.
 
 ---
 
-## 5. Kế hoạch Di chuyển Cơ sở dữ liệu (Database Migration Plan)
+## 5. Kế hoạch Di chuyển Cơ sở dữ liệu & Quản lý Quota/Manifest
 
-Bật chế độ WAL và cấu hình đồng bộ cao nhất:
-```sql
-PRAGMA journal_mode = WAL;
-PRAGMA synchronous = FULL; -- Tuyệt đối không dùng synchronous = NORMAL để bảo toàn dữ liệu khi crash
-```
+*   **Cấu hình Database**: Bật chế độ WAL và cấu hình đồng bộ cao nhất:
+    ```sql
+    PRAGMA journal_mode = WAL;
+    PRAGMA synchronous = FULL; -- Tuyệt đối không dùng synchronous = NORMAL để bảo toàn dữ liệu khi crash
+    ```
+*   **Quản lý Quota**: Được triển khai và quản lý bền vững thông qua module `app/src-tauri/src/migration/quota_reserve.rs`.
+*   **Chính sách Xuất Manifest**:
+    *   Tự động xuất manifest hướng người dùng tại:
+        `[local_backup_dir]/_TelegramDrive_Backup/[job_id]/manifest.json`
+        `[local_backup_dir]/_TelegramDrive_Backup/[job_id]/manifest.csv`
+    *   Manifest được ghi bằng temporary file rồi atomic rename.
+    *   Nếu local backup root không khả dụng, giữ job DB, đặt `manifest_state` thành `export_pending` để export lại khi resume/retry. Không đánh dấu toàn bộ backup thất bại chỉ vì lỗi CSV export.
 
 ---
 
