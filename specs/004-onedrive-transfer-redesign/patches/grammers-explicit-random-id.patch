@@ -1,0 +1,40 @@
+diff --git a/grammers-client/src/client/messages.rs b/grammers-client/src/client/messages.rs
+index 41dd8a7..aa375c1 100644
+--- a/grammers-client/src/client/messages.rs
++++ b/grammers-client/src/client/messages.rs
+@@ -492,9 +492,34 @@ impl Client {
+         peer: C,
+         message: M,
+     ) -> Result<Message, InvocationError> {
++        self.send_message_with_random_id(peer, message, generate_random_id())
++            .await
++    }
++
++    /// Sends a message to the desired peer with an explicit `random_id`.
++    ///
++    /// This method is identical to [`Client::send_message`] except that it accepts
++    /// a caller-provided `random_id` instead of generating one internally. This
++    /// enables idempotent message sending: if the same `random_id` is used on retry,
++    /// Telegram will deduplicate the message server-side.
++    ///
++    /// `random_id` must not be zero. Passing zero will result in an error.
++    ///
++    /// See [`Client::send_message`] for full documentation on parameters and examples.
++    pub async fn send_message_with_random_id<C: Into<PeerRef>, M: Into<types::InputMessage>>(
++        &self,
++        peer: C,
++        message: M,
++        random_id: i64,
++    ) -> Result<Message, InvocationError> {
++        if random_id == 0 {
++            return Err(InvocationError::Io(std::io::Error::new(
++                std::io::ErrorKind::InvalidInput,
++                "random_id must not be zero",
++            )));
++        }
+         let peer = peer.into();
+         let message = message.into();
+-        let random_id = generate_random_id();
+         let entities = parse_mention_entities(self, message.entities.clone());
+         let updates = if let Some(media) = message.media.clone() {
+             self.invoke(&tl::functions::messages::SendMedia {

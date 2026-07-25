@@ -21,10 +21,10 @@ tauri-plugin-opener = "2"
 tauri-plugin-os = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-grammers-client = { git = "https://github.com/Lonami/grammers", rev = "d07f96f", features = ["proxy"] }
-grammers-session = { git = "https://github.com/Lonami/grammers", rev = "d07f96f" }
-grammers-mtsender = { git = "https://github.com/Lonami/grammers", rev = "d07f96f", features = ["proxy"] }
-grammers-tl-types = { git = "https://github.com/Lonami/grammers", rev = "d07f96f" }
+grammers-client = { git = "https://github.com/nmtuong97/grammers", rev = "5b7ac0c99baea97da1682ed92b8c459401562591", features = ["proxy"] }
+grammers-session = { git = "https://github.com/nmtuong97/grammers", rev = "5b7ac0c99baea97da1682ed92b8c459401562591" }
+grammers-mtsender = { git = "https://github.com/nmtuong97/grammers", rev = "5b7ac0c99baea97da1682ed92b8c459401562591", features = ["proxy"] }
+grammers-tl-types = { git = "https://github.com/nmtuong97/grammers", rev = "5b7ac0c99baea97da1682ed92b8c459401562591" }
 tokio = { version = "1", features = ["full"] }
 
 tauri-plugin-store = "2"
@@ -62,7 +62,7 @@ walkdir = "2"
 sqlite = { version = "0.37.0", features = ["bundled"] }
 mp4parse = "0.17"
 urlencoding = "2"
-reqwest = { version = "0.12", features = ["stream", "rustls-tls", "socks"] }
+reqwest = { version = "0.12", features = ["stream", "rustls-tls", "socks", "json"] }
 sysinfo = "0.30"
 tokio-rustls = "0.26"
 rustls = "0.23"
@@ -76,4 +76,11 @@ ndk-context = "0.1.1"
 # Embed the WebView2 bootstrapper so the app works on Windows systems
 # where the WebView2 runtime is not pre-installed (fresh installs, servers, etc.)
 webview-install-mode = "embeddir"
+
+[dev-dependencies]
+wiremock = "0.6"
+
+[features]
+default = []
+grammers_explicit_random_id = []
 

@@ -145,10 +145,10 @@ pub fn promote_canonical(db: &MigrationDb, canonical_item_id: i64) -> Result<Opt
     let conn = db.lock().map_err(|e| e.to_string())?;
     let mut stmt = conn.prepare("SELECT id FROM migration_items WHERE duplicate_of_item_id = ? AND pipeline_stage = 'waiting_for_canonical' LIMIT 1;").unwrap();
     stmt.bind((1, canonical_item_id)).unwrap();
-    
+
     if let Ok(State::Row) = stmt.next() {
         let promoted_id: i64 = stmt.read(0).unwrap();
-        
+
         // Update promoted to canonical
         let mut upd_promoted = conn.prepare("UPDATE migration_items SET duplicate_of_item_id = NULL, pipeline_stage = 'queued_download', state = 'pending' WHERE id = ?;").unwrap();
         upd_promoted.bind((1, promoted_id)).unwrap();
@@ -159,7 +159,7 @@ pub fn promote_canonical(db: &MigrationDb, canonical_item_id: i64) -> Result<Opt
         upd_others.bind((1, promoted_id)).unwrap();
         upd_others.bind((2, canonical_item_id)).unwrap();
         upd_others.next().unwrap();
-        
+
         return Ok(Some(promoted_id));
     }
     Ok(None)
@@ -171,21 +171,21 @@ pub fn post_download_dedupe(db: &MigrationDb, item_id: i64, sha256: &str) -> Res
     let mut stmt = conn.prepare("SELECT id FROM migration_items WHERE original_sha256 = ? AND id != ? AND (pipeline_stage = 'completed_telegram' OR pipeline_stage = 'completed_local') LIMIT 1;").unwrap();
     stmt.bind((1, sha256)).unwrap();
     stmt.bind((2, item_id)).unwrap();
-    
+
     if let Ok(State::Row) = stmt.next() {
         let canonical_id: i64 = stmt.read(0).unwrap();
-        
+
         let now = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs() as i64;
-            
+
         let mut upd = conn.prepare("UPDATE migration_items SET duplicate_of_item_id = ?, pipeline_stage = 'skipped_duplicate', state = 'skipped_duplicate', completed_at = ? WHERE id = ?;").unwrap();
         upd.bind((1, canonical_id)).unwrap();
         upd.bind((2, now)).unwrap();
         upd.bind((3, item_id)).unwrap();
         upd.next().unwrap();
-        
+
         return Ok(true);
     }
     Ok(false)

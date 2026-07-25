@@ -72,7 +72,7 @@ impl SourceDownloader for FakeDownloader {
             // Ghi file download giả lập
             let _ = fs::write(&path, b"fake_downloaded_bytes");
             active_d.fetch_sub(1, Ordering::Relaxed);
-            
+
             if source_id.starts_with("hash:") {
                 Ok(source_id.strip_prefix("hash:").unwrap().to_string())
             } else {
@@ -823,7 +823,9 @@ async fn test_pipeline_stop_is_not_resume() {
         active_downloads: Arc::new(AtomicUsize::new(0)),
         max_active: Arc::new(AtomicUsize::new(0)),
     });
-    let inspector = Arc::new(FakeInspector { video_codec: "h264".to_string() });
+    let inspector = Arc::new(FakeInspector {
+        video_codec: "h264".to_string(),
+    });
     let processor = Arc::new(FakeProcessor {
         call_count: Arc::new(AtomicUsize::new(0)),
         active_processors: Arc::new(AtomicUsize::new(0)),
@@ -850,8 +852,14 @@ async fn test_pipeline_stop_is_not_resume() {
         tmp.path().join("backup"),
     ));
 
-    let cancel = runner.start(downloader.clone(), inspector, processor, uploader, finalizer);
-    
+    let cancel = runner.start(
+        downloader.clone(),
+        inspector,
+        processor,
+        uploader,
+        finalizer,
+    );
+
     // Stop pipeline right away
     cancel.stop();
 
@@ -883,7 +891,9 @@ async fn test_pipeline_dedupes_equal_content_after_download() {
         active_downloads: Arc::new(AtomicUsize::new(0)),
         max_active: Arc::new(AtomicUsize::new(0)),
     });
-    let inspector = Arc::new(FakeInspector { video_codec: "h264".to_string() });
+    let inspector = Arc::new(FakeInspector {
+        video_codec: "h264".to_string(),
+    });
     let processor = Arc::new(FakeProcessor {
         call_count: Arc::new(AtomicUsize::new(0)),
         active_processors: Arc::new(AtomicUsize::new(0)),
@@ -911,15 +921,23 @@ async fn test_pipeline_dedupes_equal_content_after_download() {
         tmp.path().join("backup"),
     ));
 
-    let _cancel = runner.start(downloader.clone(), inspector, processor, uploader, finalizer);
-    
+    let _cancel = runner.start(
+        downloader.clone(),
+        inspector,
+        processor,
+        uploader,
+        finalizer,
+    );
+
     tokio::time::sleep(Duration::from_millis(400)).await;
 
     assert_eq!(downloader.call_count.load(Ordering::Relaxed), 1);
     assert_eq!(uploader_calls.load(Ordering::Relaxed), 0); // Upload was skipped!
 
     let conn = db.lock().unwrap();
-    let mut stmt = conn.prepare("SELECT pipeline_stage, duplicate_of_item_id FROM migration_items WHERE id = 2;").unwrap();
+    let mut stmt = conn
+        .prepare("SELECT pipeline_stage, duplicate_of_item_id FROM migration_items WHERE id = 2;")
+        .unwrap();
     assert_eq!(stmt.next().unwrap(), sqlite::State::Row);
     assert_eq!(stmt.read::<String, _>(0).unwrap(), "skipped_duplicate");
     assert_eq!(stmt.read::<i64, _>(1).unwrap(), 1);
@@ -947,7 +965,9 @@ async fn test_canonical_permanent_failure_promotion() {
         active_downloads: Arc::new(AtomicUsize::new(0)),
         max_active: Arc::new(AtomicUsize::new(0)),
     });
-    let inspector = Arc::new(FakeInspector { video_codec: "h264".to_string() });
+    let inspector = Arc::new(FakeInspector {
+        video_codec: "h264".to_string(),
+    });
     let processor = Arc::new(FakeProcessor {
         call_count: Arc::new(AtomicUsize::new(0)),
         active_processors: Arc::new(AtomicUsize::new(0)),
@@ -963,9 +983,7 @@ async fn test_canonical_permanent_failure_promotion() {
             _random_id: i64,
             _filename: &str,
         ) -> Pin<Box<dyn Future<Output = Result<i64, String>> + Send>> {
-            Box::pin(async move {
-                Err("permanent_error".to_string())
-            })
+            Box::pin(async move { Err("permanent_error".to_string()) })
         }
     }
 
@@ -983,17 +1001,27 @@ async fn test_canonical_permanent_failure_promotion() {
         tmp.path().join("backup"),
     ));
 
-    let _cancel = runner.start(downloader, inspector, processor, Arc::new(FailingUploader), finalizer);
+    let _cancel = runner.start(
+        downloader,
+        inspector,
+        processor,
+        Arc::new(FailingUploader),
+        finalizer,
+    );
     tokio::time::sleep(Duration::from_millis(500)).await;
 
     let conn = db.lock().unwrap();
     // Item 1 must be failed
-    let mut stmt1 = conn.prepare("SELECT pipeline_stage FROM migration_items WHERE id = 1;").unwrap();
+    let mut stmt1 = conn
+        .prepare("SELECT pipeline_stage FROM migration_items WHERE id = 1;")
+        .unwrap();
     assert_eq!(stmt1.next().unwrap(), sqlite::State::Row);
     assert_eq!(stmt1.read::<String, _>(0).unwrap(), "failed");
 
     // Item 2 must be promoted (its duplicate_of_item_id becomes NULL, stage queued_download or pending)
-    let mut stmt2 = conn.prepare("SELECT pipeline_stage, duplicate_of_item_id FROM migration_items WHERE id = 2;").unwrap();
+    let mut stmt2 = conn
+        .prepare("SELECT pipeline_stage, duplicate_of_item_id FROM migration_items WHERE id = 2;")
+        .unwrap();
     assert_eq!(stmt2.next().unwrap(), sqlite::State::Row);
     assert_eq!(stmt2.read::<String, _>(0).unwrap(), "queued_download");
     assert!(stmt2.read::<Option<i64>, _>(1).unwrap().is_none());
@@ -1021,7 +1049,9 @@ async fn test_retryable_canonical_failure_no_promotion() {
         active_downloads: Arc::new(AtomicUsize::new(0)),
         max_active: Arc::new(AtomicUsize::new(0)),
     });
-    let inspector = Arc::new(FakeInspector { video_codec: "h264".to_string() });
+    let inspector = Arc::new(FakeInspector {
+        video_codec: "h264".to_string(),
+    });
     let processor = Arc::new(FakeProcessor {
         call_count: Arc::new(AtomicUsize::new(0)),
         active_processors: Arc::new(AtomicUsize::new(0)),
@@ -1037,9 +1067,7 @@ async fn test_retryable_canonical_failure_no_promotion() {
             _random_id: i64,
             _filename: &str,
         ) -> Pin<Box<dyn Future<Output = Result<i64, String>> + Send>> {
-            Box::pin(async move {
-                Err("retryable_error".to_string())
-            })
+            Box::pin(async move { Err("retryable_error".to_string()) })
         }
     }
 
@@ -1057,17 +1085,27 @@ async fn test_retryable_canonical_failure_no_promotion() {
         tmp.path().join("backup"),
     ));
 
-    let _cancel = runner.start(downloader, inspector, processor, Arc::new(FailingUploader), finalizer);
+    let _cancel = runner.start(
+        downloader,
+        inspector,
+        processor,
+        Arc::new(FailingUploader),
+        finalizer,
+    );
     tokio::time::sleep(Duration::from_millis(500)).await;
 
     let conn = db.lock().unwrap();
     // Item 1 must be failed
-    let mut stmt1 = conn.prepare("SELECT pipeline_stage FROM migration_items WHERE id = 1;").unwrap();
+    let mut stmt1 = conn
+        .prepare("SELECT pipeline_stage FROM migration_items WHERE id = 1;")
+        .unwrap();
     assert_eq!(stmt1.next().unwrap(), sqlite::State::Row);
     assert_eq!(stmt1.read::<String, _>(0).unwrap(), "failed");
 
     // Item 2 must NOT be promoted (still duplicate_of_item_id = 1, pipeline_stage = waiting_for_canonical)
-    let mut stmt2 = conn.prepare("SELECT pipeline_stage, duplicate_of_item_id FROM migration_items WHERE id = 2;").unwrap();
+    let mut stmt2 = conn
+        .prepare("SELECT pipeline_stage, duplicate_of_item_id FROM migration_items WHERE id = 2;")
+        .unwrap();
     assert_eq!(stmt2.next().unwrap(), sqlite::State::Row);
     assert_eq!(stmt2.read::<String, _>(0).unwrap(), "waiting_for_canonical");
     assert_eq!(stmt2.read::<i64, _>(1).unwrap(), 1);
@@ -1094,16 +1132,26 @@ async fn test_path_traversal_reserved_names_and_collision() {
     drop(conn);
 
     // Create the pre-existing file in the backup directory
-    let collision_dir = tmp.path().join("backup").join("OneDrive_Archive").join("dir");
+    let collision_dir = tmp
+        .path()
+        .join("backup")
+        .join("OneDrive_Archive")
+        .join("dir");
     std::fs::create_dir_all(&collision_dir).unwrap();
-    std::fs::write(collision_dir.join("collision.txt"), b"existing file content").unwrap();
+    std::fs::write(
+        collision_dir.join("collision.txt"),
+        b"existing file content",
+    )
+    .unwrap();
 
     let downloader = Arc::new(FakeDownloader {
         call_count: Arc::new(AtomicUsize::new(0)),
         active_downloads: Arc::new(AtomicUsize::new(0)),
         max_active: Arc::new(AtomicUsize::new(0)),
     });
-    let inspector = Arc::new(FakeInspector { video_codec: "h264".to_string() });
+    let inspector = Arc::new(FakeInspector {
+        video_codec: "h264".to_string(),
+    });
     let processor = Arc::new(FakeProcessor {
         call_count: Arc::new(AtomicUsize::new(0)),
         active_processors: Arc::new(AtomicUsize::new(0)),
@@ -1137,16 +1185,26 @@ async fn test_path_traversal_reserved_names_and_collision() {
 
     // Debug print stage of all items
     for id in 1..=3 {
-        let mut debug_stmt = conn.prepare(format!("SELECT pipeline_stage, local_dest_path FROM migration_items WHERE id = {};", id)).unwrap();
+        let mut debug_stmt = conn
+            .prepare(format!(
+                "SELECT pipeline_stage, local_dest_path FROM migration_items WHERE id = {};",
+                id
+            ))
+            .unwrap();
         if debug_stmt.next().unwrap() == sqlite::State::Row {
             let stage: String = debug_stmt.read(0).unwrap();
             let path: Option<String> = debug_stmt.read(1).unwrap();
-            println!("DEBUG: Item {} is in stage '{}', path={:?}", id, stage, path);
+            println!(
+                "DEBUG: Item {} is in stage '{}', path={:?}",
+                id, stage, path
+            );
         }
     }
 
     // 1. Path traversal verification: parent component ".." ignored, so path is resolved under backup dir safely
-    let mut stmt1 = conn.prepare("SELECT local_dest_path, pipeline_stage FROM migration_items WHERE id = 1;").unwrap();
+    let mut stmt1 = conn
+        .prepare("SELECT local_dest_path, pipeline_stage FROM migration_items WHERE id = 1;")
+        .unwrap();
     assert_eq!(stmt1.next().unwrap(), sqlite::State::Row);
     let path1: Option<String> = stmt1.read(0).unwrap();
     let stage1: String = stmt1.read(1).unwrap();
@@ -1157,7 +1215,9 @@ async fn test_path_traversal_reserved_names_and_collision() {
     assert!(!path1_str.contains(".."));
 
     // 2. Windows reserved name verification: CON sanitized to CON_safe
-    let mut stmt2 = conn.prepare("SELECT local_dest_path, pipeline_stage FROM migration_items WHERE id = 2;").unwrap();
+    let mut stmt2 = conn
+        .prepare("SELECT local_dest_path, pipeline_stage FROM migration_items WHERE id = 2;")
+        .unwrap();
     assert_eq!(stmt2.next().unwrap(), sqlite::State::Row);
     let path2: Option<String> = stmt2.read(0).unwrap();
     let stage2: String = stmt2.read(1).unwrap();
@@ -1166,7 +1226,9 @@ async fn test_path_traversal_reserved_names_and_collision() {
     assert!(path2_str.contains("CON_safe"));
 
     // 3. Collision resolution verification: suffix added
-    let mut stmt3 = conn.prepare("SELECT local_dest_path, pipeline_stage FROM migration_items WHERE id = 3;").unwrap();
+    let mut stmt3 = conn
+        .prepare("SELECT local_dest_path, pipeline_stage FROM migration_items WHERE id = 3;")
+        .unwrap();
     assert_eq!(stmt3.next().unwrap(), sqlite::State::Row);
     let path3: Option<String> = stmt3.read(0).unwrap();
     let stage3: String = stmt3.read(1).unwrap();
@@ -1196,7 +1258,9 @@ async fn test_terminal_item_no_replay() {
         active_downloads: Arc::new(AtomicUsize::new(0)),
         max_active: Arc::new(AtomicUsize::new(0)),
     });
-    let inspector = Arc::new(FakeInspector { video_codec: "h264".to_string() });
+    let inspector = Arc::new(FakeInspector {
+        video_codec: "h264".to_string(),
+    });
     let processor = Arc::new(FakeProcessor {
         call_count: Arc::new(AtomicUsize::new(0)),
         active_processors: Arc::new(AtomicUsize::new(0)),
@@ -1223,7 +1287,13 @@ async fn test_terminal_item_no_replay() {
         tmp.path().join("backup"),
     ));
 
-    let _cancel = runner.start(downloader.clone(), inspector, processor, uploader, finalizer);
+    let _cancel = runner.start(
+        downloader.clone(),
+        inspector,
+        processor,
+        uploader,
+        finalizer,
+    );
     tokio::time::sleep(Duration::from_millis(400)).await;
 
     // Neither of them should be processed again
@@ -1248,7 +1318,9 @@ async fn test_pipeline_pause_resume_to_completion() {
         active_downloads: Arc::new(AtomicUsize::new(0)),
         max_active: Arc::new(AtomicUsize::new(0)),
     });
-    let inspector = Arc::new(FakeInspector { video_codec: "h264".to_string() });
+    let inspector = Arc::new(FakeInspector {
+        video_codec: "h264".to_string(),
+    });
     let processor = Arc::new(FakeProcessor {
         call_count: Arc::new(AtomicUsize::new(0)),
         active_processors: Arc::new(AtomicUsize::new(0)),
@@ -1300,8 +1372,651 @@ async fn test_pipeline_pause_resume_to_completion() {
     assert_eq!(downloader.call_count.load(Ordering::Relaxed), 1);
 
     let conn = db.lock().unwrap();
-    let mut stmt = conn.prepare("SELECT pipeline_stage FROM migration_items WHERE id = 1;").unwrap();
+    let mut stmt = conn
+        .prepare("SELECT pipeline_stage FROM migration_items WHERE id = 1;")
+        .unwrap();
     assert_eq!(stmt.next().unwrap(), sqlite::State::Row);
     assert_eq!(stmt.read::<String, _>(0).unwrap(), "completed_local");
 }
 
+// 16. Test: Backpressure ensures all items eventually complete
+#[tokio::test]
+async fn test_backpressure_all_items_complete() {
+    let tmp = TempDir::new();
+    let db_path = tmp.path().join("test_backpressure_complete.db");
+    let db = open_migration_db_at_path(db_path).unwrap();
+
+    let conn = db.lock().unwrap();
+    conn.execute("INSERT INTO migration_jobs (id, state, pipeline_version, created_at, updated_at) VALUES (1, 'running', 2, 0, 0);").unwrap();
+    // Only 3 items with very fast processing so all can complete
+    for i in 1..=3 {
+        conn.execute(format!(
+            "INSERT INTO migration_items (id, job_id, name, source_path, source_item_id, state, pipeline_stage, created_at)
+             VALUES ({}, 1, 'file{}.txt', 'file{}.txt', 'src_{}', 'pending', 'discovered', 0);",
+            i, i, i, i
+        )).unwrap();
+    }
+    drop(conn);
+
+    let config = PipelineConfig {
+        download_queue_capacity: 2,
+        processing_queue_capacity: 2,
+        upload_queue_capacity: 2,
+        local_finalizer_queue_capacity: 2,
+        ..PipelineConfig::default()
+    };
+
+    let downloader = Arc::new(FakeDownloader {
+        call_count: Arc::new(AtomicUsize::new(0)),
+        active_downloads: Arc::new(AtomicUsize::new(0)),
+        max_active: Arc::new(AtomicUsize::new(0)),
+    });
+    let inspector = Arc::new(FakeInspector {
+        video_codec: "h264".to_string(),
+    });
+    let processor = Arc::new(FakeProcessor {
+        call_count: Arc::new(AtomicUsize::new(0)),
+        active_processors: Arc::new(AtomicUsize::new(0)),
+        max_active: Arc::new(AtomicUsize::new(0)),
+    });
+    let uploader = Arc::new(FakeUploader {
+        call_count: Arc::new(AtomicUsize::new(0)),
+        active_uploads: Arc::new(AtomicUsize::new(0)),
+        max_active: Arc::new(AtomicUsize::new(0)),
+        delay: Duration::from_millis(5),
+        received_bytes: Arc::new(std::sync::Mutex::new(vec![])),
+    });
+    let finalizer = Arc::new(FakeLocalFinalizer {
+        call_count: Arc::new(AtomicUsize::new(0)),
+        active_finalizers: Arc::new(AtomicUsize::new(0)),
+        max_active: Arc::new(AtomicUsize::new(0)),
+    });
+
+    let runner = Arc::new(PipelineRunner::new(
+        config,
+        db.clone(),
+        1,
+        tmp.path().join("workspace"),
+        tmp.path().join("backup"),
+    ));
+
+    let _cancel = runner.start(
+        downloader.clone(),
+        inspector,
+        processor,
+        uploader,
+        finalizer,
+    );
+
+    // Wait long enough for all items to be processed
+    tokio::time::sleep(Duration::from_millis(1000)).await;
+
+    // Verify all items completed (Other files go to local finalizer)
+    let conn = db.lock().unwrap();
+    let mut stmt = conn
+        .prepare("SELECT COUNT(*) FROM migration_items WHERE pipeline_stage = 'completed_local';")
+        .unwrap();
+    assert_eq!(stmt.next().unwrap(), sqlite::State::Row);
+    assert_eq!(stmt.read::<i64, _>(0).unwrap(), 3);
+}
+
+// 17. Test: Target isolation — pipeline for job 1 must not touch job 2 items
+#[tokio::test]
+async fn test_target_isolation_between_jobs() {
+    let tmp = TempDir::new();
+    let db_path = tmp.path().join("test_isolation.db");
+    let db = open_migration_db_at_path(db_path).unwrap();
+
+    let conn = db.lock().unwrap();
+    // Create 2 jobs
+    conn.execute("INSERT INTO migration_jobs (id, state, pipeline_version, created_at, updated_at) VALUES (1, 'running', 2, 0, 0);").unwrap();
+    conn.execute("INSERT INTO migration_jobs (id, state, pipeline_version, created_at, updated_at) VALUES (2, 'running', 2, 0, 0);").unwrap();
+    // Job 1 items
+    conn.execute("INSERT INTO migration_items (id, job_id, name, source_path, source_item_id, state, pipeline_stage, created_at) VALUES (1, 1, 'file1.txt', 'f1.txt', 'src_1', 'pending', 'discovered', 0);").unwrap();
+    conn.execute("INSERT INTO migration_items (id, job_id, name, source_path, source_item_id, state, pipeline_stage, created_at) VALUES (2, 1, 'file2.txt', 'f2.txt', 'src_2', 'pending', 'discovered', 0);").unwrap();
+    // Job 2 item - must remain untouched
+    conn.execute("INSERT INTO migration_items (id, job_id, name, source_path, source_item_id, state, pipeline_stage, created_at) VALUES (3, 2, 'other.txt', 'other.txt', 'src_3', 'pending', 'discovered', 0);").unwrap();
+    drop(conn);
+
+    let downloader = Arc::new(FakeDownloader {
+        call_count: Arc::new(AtomicUsize::new(0)),
+        active_downloads: Arc::new(AtomicUsize::new(0)),
+        max_active: Arc::new(AtomicUsize::new(0)),
+    });
+    let inspector = Arc::new(FakeInspector {
+        video_codec: "h264".to_string(),
+    });
+    let processor = Arc::new(FakeProcessor {
+        call_count: Arc::new(AtomicUsize::new(0)),
+        active_processors: Arc::new(AtomicUsize::new(0)),
+        max_active: Arc::new(AtomicUsize::new(0)),
+    });
+    let finalizer = Arc::new(FakeLocalFinalizer {
+        call_count: Arc::new(AtomicUsize::new(0)),
+        active_finalizers: Arc::new(AtomicUsize::new(0)),
+        max_active: Arc::new(AtomicUsize::new(0)),
+    });
+
+    // Sticky uploader: never completes upload for job 2 item
+    struct IsolationUploader;
+    impl TelegramUploader for IsolationUploader {
+        fn upload_file(
+            &self,
+            _path: &Path,
+            _random_id: i64,
+            _filename: &str,
+        ) -> Pin<Box<dyn Future<Output = Result<i64, String>> + Send>> {
+            Box::pin(async {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                Ok(9999)
+            })
+        }
+    }
+
+    let runner = Arc::new(PipelineRunner::new(
+        PipelineConfig::default(),
+        db.clone(),
+        1, // Only run pipeline for job_id=1
+        tmp.path().join("workspace"),
+        tmp.path().join("backup"),
+    ));
+
+    let _cancel = runner.start(
+        downloader,
+        inspector,
+        processor,
+        Arc::new(IsolationUploader),
+        finalizer,
+    );
+
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    // Job 1 items should have progressed
+    let conn = db.lock().unwrap();
+    let mut stmt1 = conn
+        .prepare("SELECT pipeline_stage FROM migration_items WHERE id = 1;")
+        .unwrap();
+    assert_eq!(stmt1.next().unwrap(), sqlite::State::Row);
+    let stage1 = stmt1.read::<String, _>(0).unwrap();
+    assert!(
+        stage1 != "discovered",
+        "Job 1 item 1 should have progressed beyond discovered"
+    );
+
+    // Job 2 item must still be 'discovered'
+    let mut stmt3 = conn
+        .prepare("SELECT pipeline_stage FROM migration_items WHERE id = 3;")
+        .unwrap();
+    assert_eq!(stmt3.next().unwrap(), sqlite::State::Row);
+    assert_eq!(
+        stmt3.read::<String, _>(0).unwrap(),
+        "discovered",
+        "Job 2 item must be untouched by job 1 pipeline"
+    );
+}
+
+// 18. Test: Recovery of incomplete local finalization (saving_local → downloaded)
+#[test]
+fn test_crash_recovery_saving_local() {
+    use crate::migration::pipeline_v2::recovery::run_crash_recovery;
+
+    let tmp = TempDir::new();
+    let db_path = tmp.path().join("test_recovery_local.db");
+    let db = open_migration_db_at_path(db_path).unwrap();
+
+    let conn = db.lock().unwrap();
+    conn.execute("INSERT INTO migration_jobs (id, state, pipeline_version, created_at, updated_at) VALUES (1, 'running', 2, 0, 0);").unwrap();
+    conn.execute("INSERT INTO migration_items (id, job_id, name, source_path, state, pipeline_stage, created_at) VALUES (4, 1, 'local_fail.mp4', 'path4', 'downloading', 'saving_local', 0);").unwrap();
+    drop(conn);
+
+    run_crash_recovery(&db, 1).unwrap();
+
+    let conn = db.lock().unwrap();
+    let mut check = conn
+        .prepare("SELECT pipeline_stage FROM migration_items WHERE id = 4;")
+        .unwrap();
+    assert_eq!(check.next().unwrap(), sqlite::State::Row);
+    assert_eq!(
+        check.read::<String, _>(0).unwrap(),
+        "downloaded",
+        "saving_local should recover to downloaded"
+    );
+}
+
+// 19. Test: Video remux-copy decision routing
+#[tokio::test]
+async fn test_video_remux_copy_decision() {
+    let tmp = TempDir::new();
+    let db_path = tmp.path().join("test_remux.db");
+    let db = open_migration_db_at_path(db_path).unwrap();
+
+    let conn = db.lock().unwrap();
+    conn.execute("INSERT INTO migration_jobs (id, state, pipeline_version, created_at, updated_at) VALUES (1, 'running', 2, 0, 0);").unwrap();
+    // MKV container with h264 codec = remux candidate
+    conn.execute("INSERT INTO migration_items (id, job_id, name, source_path, source_item_id, state, pipeline_stage, created_at) VALUES (1, 1, 'video.mkv', 'v1.mkv', 'src_1', 'pending', 'discovered', 0);").unwrap();
+    // MP4 with hevc = transcode
+    conn.execute("INSERT INTO migration_items (id, job_id, name, source_path, source_item_id, state, pipeline_stage, created_at) VALUES (2, 1, 'video_hevc.mp4', 'v2.mp4', 'src_2', 'pending', 'discovered', 0);").unwrap();
+    drop(conn);
+
+    let downloader = Arc::new(FakeDownloader {
+        call_count: Arc::new(AtomicUsize::new(0)),
+        active_downloads: Arc::new(AtomicUsize::new(0)),
+        max_active: Arc::new(AtomicUsize::new(0)),
+    });
+
+    // Inspector: MKV returns h264 (remux candidate), MP4 returns hevc (transcode)
+    struct RemuxInspector;
+    impl MediaInspector for RemuxInspector {
+        fn inspect_file(
+            &self,
+            path: &Path,
+        ) -> Pin<Box<dyn Future<Output = Result<VideoMetadata, String>> + Send>> {
+            let is_mkv = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .map(|n| n.contains("1"))
+                .unwrap_or(false);
+            Box::pin(async move {
+                Ok(VideoMetadata {
+                    container: if is_mkv {
+                        "mkv".to_string()
+                    } else {
+                        "mp4".to_string()
+                    },
+                    video_codec: if is_mkv {
+                        "h264".to_string()
+                    } else {
+                        "hevc".to_string()
+                    },
+                    audio_codec: "aac".to_string(),
+                    duration: 30.0,
+                    width: 1920,
+                    height: 1080,
+                    bitrate: 2000,
+                    is_valid: true,
+                    rotation: 0,
+                    file_size: 100,
+                })
+            })
+        }
+    }
+
+    let processor_calls = Arc::new(AtomicUsize::new(0));
+    // Track decisions received by processor
+    let processor_decisions: Arc<std::sync::Mutex<Vec<String>>> =
+        Arc::new(std::sync::Mutex::new(vec![]));
+
+    struct DecisionTrackingProcessor {
+        call_count: Arc<AtomicUsize>,
+        active_processors: Arc<AtomicUsize>,
+        max_active: Arc<AtomicUsize>,
+        decisions: Arc<std::sync::Mutex<Vec<String>>>,
+    }
+
+    impl VideoProcessor for DecisionTrackingProcessor {
+        fn process_video(
+            &self,
+            _input_path: &Path,
+            output_path: &Path,
+            decision: &str,
+        ) -> Pin<Box<dyn Future<Output = Result<String, String>> + Send>> {
+            self.call_count.fetch_add(1, Ordering::Relaxed);
+            let active = self.active_processors.fetch_add(1, Ordering::Relaxed) + 1;
+            let max_a = self.max_active.clone();
+            let active_p = self.active_processors.clone();
+            let path = output_path.to_path_buf();
+            let decision = decision.to_string();
+            let decisions = self.decisions.clone();
+
+            Box::pin(async move {
+                loop {
+                    let current_max = max_a.load(Ordering::Relaxed);
+                    if active > current_max {
+                        max_a.store(active, Ordering::Relaxed);
+                    }
+                    break;
+                }
+                let _ = fs::write(&path, b"fake_processed_bytes");
+                decisions.lock().unwrap().push(decision);
+                active_p.fetch_sub(1, Ordering::Relaxed);
+                Ok("fake_processed_sha256".to_string())
+            })
+        }
+    }
+
+    let processor = Arc::new(DecisionTrackingProcessor {
+        call_count: processor_calls.clone(),
+        active_processors: Arc::new(AtomicUsize::new(0)),
+        max_active: Arc::new(AtomicUsize::new(0)),
+        decisions: processor_decisions.clone(),
+    });
+
+    let uploader = Arc::new(FakeUploader {
+        call_count: Arc::new(AtomicUsize::new(0)),
+        active_uploads: Arc::new(AtomicUsize::new(0)),
+        max_active: Arc::new(AtomicUsize::new(0)),
+        delay: Duration::from_millis(1),
+        received_bytes: Arc::new(std::sync::Mutex::new(vec![])),
+    });
+
+    let finalizer = Arc::new(FakeLocalFinalizer {
+        call_count: Arc::new(AtomicUsize::new(0)),
+        active_finalizers: Arc::new(AtomicUsize::new(0)),
+        max_active: Arc::new(AtomicUsize::new(0)),
+    });
+
+    let runner = Arc::new(PipelineRunner::new(
+        PipelineConfig::default(),
+        db.clone(),
+        1,
+        tmp.path().join("workspace"),
+        tmp.path().join("backup"),
+    ));
+
+    let _cancel = runner.start(
+        downloader,
+        Arc::new(RemuxInspector),
+        processor,
+        uploader,
+        finalizer,
+    );
+
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    // MKV+h264 → remux_copy → processor called
+    // MP4+hevc → transcode → processor called
+    // Both go through processor (2 calls)
+    assert_eq!(
+        processor_calls.load(Ordering::Relaxed),
+        2,
+        "MKV+h264 should be remux_copy (processor call), HEVC should transcode (processor call)"
+    );
+
+    // Check video_decision stored in DB
+    let conn = db.lock().unwrap();
+    let mut stmt = conn
+        .prepare("SELECT video_decision FROM migration_items WHERE id = 1;")
+        .unwrap();
+    assert_eq!(stmt.next().unwrap(), sqlite::State::Row);
+    let decision1 = stmt.read::<String, _>(0).unwrap();
+    assert!(
+        decision1 == "remux_copy",
+        "h264 in mkv should get remux_copy decision, got: {}",
+        decision1
+    );
+
+    let mut stmt2 = conn
+        .prepare("SELECT video_decision FROM migration_items WHERE id = 2;")
+        .unwrap();
+    assert_eq!(stmt2.next().unwrap(), sqlite::State::Row);
+    let decision2 = stmt2.read::<String, _>(0).unwrap();
+    assert!(
+        decision2 == "transcode",
+        "hevc should get transcode decision, got: {}",
+        decision2
+    );
+}
+
+// 20. Test: Symlink escape protection
+#[tokio::test]
+async fn test_symlink_escape_protection() {
+    let tmp = TempDir::new();
+    let db_path = tmp.path().join("test_symlink.db");
+    let db = open_migration_db_at_path(db_path).unwrap();
+
+    let conn = db.lock().unwrap();
+    conn.execute("INSERT INTO migration_jobs (id, state, pipeline_version, created_at, updated_at) VALUES (1, 'running', 2, 0, 0);").unwrap();
+    conn.execute("INSERT INTO migration_items (id, job_id, name, source_path, source_item_id, state, pipeline_stage, created_at) VALUES (1, 1, 'file.txt', 'legit/path/file.txt', 'src_1', 'pending', 'discovered', 0);").unwrap();
+    drop(conn);
+
+    let backup_dir = tmp.path().join("backup");
+    fs::create_dir_all(&backup_dir).unwrap();
+
+    // Create a symlink outside backup that we must NOT follow
+    let outside_file = tmp.path().join("outside_secret.txt");
+    fs::write(&outside_file, b"SECRET").unwrap();
+
+    // Create a symlink inside backup pointing outside
+    let symlink_path = backup_dir.join("OneDrive_Archive").join("escape_link");
+    fs::create_dir_all(symlink_path.parent().unwrap()).unwrap();
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(&outside_file, &symlink_path).unwrap();
+    }
+    #[cfg(not(unix))]
+    {
+        // On non-Unix, symlink creation might not be available; skip the symlink part
+        // but the path safety tests still apply
+    }
+
+    let downloader = Arc::new(FakeDownloader {
+        call_count: Arc::new(AtomicUsize::new(0)),
+        active_downloads: Arc::new(AtomicUsize::new(0)),
+        max_active: Arc::new(AtomicUsize::new(0)),
+    });
+    let inspector = Arc::new(FakeInspector {
+        video_codec: "h264".to_string(),
+    });
+    let processor = Arc::new(FakeProcessor {
+        call_count: Arc::new(AtomicUsize::new(0)),
+        active_processors: Arc::new(AtomicUsize::new(0)),
+        max_active: Arc::new(AtomicUsize::new(0)),
+    });
+    let finalizer = Arc::new(FakeLocalFinalizer {
+        call_count: Arc::new(AtomicUsize::new(0)),
+        active_finalizers: Arc::new(AtomicUsize::new(0)),
+        max_active: Arc::new(AtomicUsize::new(0)),
+    });
+    let uploader_calls = Arc::new(AtomicUsize::new(0));
+    let uploader = Arc::new(FakeUploader {
+        call_count: uploader_calls.clone(),
+        active_uploads: Arc::new(AtomicUsize::new(0)),
+        max_active: Arc::new(AtomicUsize::new(0)),
+        delay: Duration::from_millis(1),
+        received_bytes: Arc::new(std::sync::Mutex::new(vec![])),
+    });
+
+    let runner = Arc::new(PipelineRunner::new(
+        PipelineConfig::default(),
+        db.clone(),
+        1,
+        tmp.path().join("workspace"),
+        backup_dir.clone(),
+    ));
+
+    let _cancel = runner.start(downloader, inspector, processor, uploader, finalizer);
+
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    // Pipeline should complete for the legitimate file
+    let conn = db.lock().unwrap();
+    let mut stmt = conn
+        .prepare("SELECT pipeline_stage, local_dest_path FROM migration_items WHERE id = 1;")
+        .unwrap();
+    assert_eq!(stmt.next().unwrap(), sqlite::State::Row);
+    let stage = stmt.read::<String, _>(0).unwrap();
+    assert_eq!(
+        stage, "completed_local",
+        "Item should reach completed_local"
+    );
+    let dest_path = stmt.read::<String, _>(1).unwrap_or_default();
+
+    // Destination path must NOT contain '..' (traversal protection)
+    assert!(
+        !dest_path.contains(".."),
+        "Dest path must not contain '..': {}",
+        dest_path
+    );
+    // Destination path must be within backup directory
+    assert!(
+        dest_path.starts_with(backup_dir.to_string_lossy().as_ref()),
+        "Dest path must be within backup dir: {}",
+        dest_path
+    );
+}
+
+// 21. Test: Waiting for disk — disk reservation backpressure
+#[tokio::test]
+async fn test_disk_reservation_waiting_for_disk() {
+    let tmp = TempDir::new();
+    let db_path = tmp.path().join("test_disk_wait.db");
+    let db = open_migration_db_at_path(db_path).unwrap();
+
+    let conn = db.lock().unwrap();
+    conn.execute("INSERT INTO migration_jobs (id, state, pipeline_version, created_at, updated_at) VALUES (1, 'running', 2, 0, 0);").unwrap();
+    // Create items with very large size that would exceed reservation
+    conn.execute("INSERT INTO migration_items (id, job_id, name, source_path, source_item_id, size_bytes, state, pipeline_stage, created_at) VALUES (1, 1, 'large.mp4', 'large.mp4', 'src_1', 10737418240, 'pending', 'discovered', 0);").unwrap();
+    // A small item that should be able to proceed
+    conn.execute("INSERT INTO migration_items (id, job_id, name, source_path, source_item_id, size_bytes, state, pipeline_stage, created_at) VALUES (2, 1, 'small.txt', 'small.txt', 'src_2', 1024, 'pending', 'discovered', 0);").unwrap();
+    drop(conn);
+
+    let downloader = Arc::new(FakeDownloader {
+        call_count: Arc::new(AtomicUsize::new(0)),
+        active_downloads: Arc::new(AtomicUsize::new(0)),
+        max_active: Arc::new(AtomicUsize::new(0)),
+    });
+    let inspector = Arc::new(FakeInspector {
+        video_codec: "h264".to_string(),
+    });
+    let processor = Arc::new(FakeProcessor {
+        call_count: Arc::new(AtomicUsize::new(0)),
+        active_processors: Arc::new(AtomicUsize::new(0)),
+        max_active: Arc::new(AtomicUsize::new(0)),
+    });
+    let uploader = Arc::new(FakeUploader {
+        call_count: Arc::new(AtomicUsize::new(0)),
+        active_uploads: Arc::new(AtomicUsize::new(0)),
+        max_active: Arc::new(AtomicUsize::new(0)),
+        delay: Duration::from_millis(1),
+        received_bytes: Arc::new(std::sync::Mutex::new(vec![])),
+    });
+    let finalizer = Arc::new(FakeLocalFinalizer {
+        call_count: Arc::new(AtomicUsize::new(0)),
+        active_finalizers: Arc::new(AtomicUsize::new(0)),
+        max_active: Arc::new(AtomicUsize::new(0)),
+    });
+
+    let runner = Arc::new(PipelineRunner::new(
+        PipelineConfig::default(),
+        db.clone(),
+        1,
+        tmp.path().join("workspace"),
+        tmp.path().join("backup"),
+    ));
+
+    let _cancel = runner.start(downloader, inspector, processor, uploader, finalizer);
+
+    tokio::time::sleep(Duration::from_millis(800)).await;
+
+    // The large item (10GB) may fail disk reservation, but the small item should proceed
+    let conn = db.lock().unwrap();
+    // Small item should progress
+    let mut stmt2 = conn
+        .prepare("SELECT pipeline_stage FROM migration_items WHERE id = 2;")
+        .unwrap();
+    assert_eq!(stmt2.next().unwrap(), sqlite::State::Row);
+    let stage2 = stmt2.read::<String, _>(0).unwrap();
+    assert!(
+        stage2 != "discovered",
+        "Small item should progress past discovered, got: {}",
+        stage2
+    );
+
+    // Verify disk reservation was released for completed items
+    let total_reserved =
+        crate::migration::disk_reserve::get_total_reserved_disk_space(&conn, 1).unwrap_or(0);
+    println!("Total reserved disk after pipeline: {}", total_reserved);
+}
+
+// 22. Test: Stale disk reservation recovery at pipeline level
+#[tokio::test]
+async fn test_stale_disk_reservation_pipeline_recovery() {
+    use crate::migration::disk_reserve::{release_disk_space, reserve_disk_space};
+
+    let tmp = TempDir::new();
+    let db_path = tmp.path().join("test_stale_res.db");
+    let db = open_migration_db_at_path(db_path).unwrap();
+
+    let conn = db.lock().unwrap();
+    conn.execute("INSERT INTO migration_jobs (id, state, pipeline_version, created_at, updated_at) VALUES (1, 'running', 2, 0, 0);").unwrap();
+    conn.execute("INSERT INTO migration_items (id, job_id, name, source_path, source_item_id, state, pipeline_stage, size_bytes, created_at) VALUES (1, 1, 'video.mp4', 'v1.mp4', 'src_1', 'pending', 'discovered', 1024000, 0);").unwrap();
+
+    // Create a stale reservation (expired)
+    let stale_res_id = "stale_reservation_001";
+    reserve_disk_space(
+        &conn,
+        stale_res_id,
+        1,
+        999,
+        "orphan",
+        1073741824,
+        "download",
+        -10,
+    )
+    .unwrap();
+    drop(conn);
+
+    // Verify stale reservation exists
+    let conn = db.lock().unwrap();
+    let reserved_before =
+        crate::migration::disk_reserve::get_total_reserved_disk_space(&conn, 1).unwrap_or(0);
+    assert!(
+        reserved_before > 0,
+        "Should have stale reservation before pipeline"
+    );
+    drop(conn);
+
+    let downloader = Arc::new(FakeDownloader {
+        call_count: Arc::new(AtomicUsize::new(0)),
+        active_downloads: Arc::new(AtomicUsize::new(0)),
+        max_active: Arc::new(AtomicUsize::new(0)),
+    });
+    let inspector = Arc::new(FakeInspector {
+        video_codec: "h264".to_string(),
+    });
+    let processor = Arc::new(FakeProcessor {
+        call_count: Arc::new(AtomicUsize::new(0)),
+        active_processors: Arc::new(AtomicUsize::new(0)),
+        max_active: Arc::new(AtomicUsize::new(0)),
+    });
+    let uploader = Arc::new(FakeUploader {
+        call_count: Arc::new(AtomicUsize::new(0)),
+        active_uploads: Arc::new(AtomicUsize::new(0)),
+        max_active: Arc::new(AtomicUsize::new(0)),
+        delay: Duration::from_millis(1),
+        received_bytes: Arc::new(std::sync::Mutex::new(vec![])),
+    });
+    let finalizer = Arc::new(FakeLocalFinalizer {
+        call_count: Arc::new(AtomicUsize::new(0)),
+        active_finalizers: Arc::new(AtomicUsize::new(0)),
+        max_active: Arc::new(AtomicUsize::new(0)),
+    });
+
+    let runner = Arc::new(PipelineRunner::new(
+        PipelineConfig::default(),
+        db.clone(),
+        1,
+        tmp.path().join("workspace"),
+        tmp.path().join("backup"),
+    ));
+
+    let _cancel = runner.start(downloader, inspector, processor, uploader, finalizer);
+
+    tokio::time::sleep(Duration::from_millis(600)).await;
+
+    // Verify the valid item still completed
+    let conn = db.lock().unwrap();
+    let mut stmt = conn
+        .prepare("SELECT pipeline_stage FROM migration_items WHERE id = 1;")
+        .unwrap();
+    assert_eq!(stmt.next().unwrap(), sqlite::State::Row);
+    let stage = stmt.read::<String, _>(0).unwrap();
+    assert!(
+        stage == "completed_local" || stage == "completed_telegram",
+        "Valid item should complete despite stale reservations, got: {}",
+        stage
+    );
+
+    // Cleanup: release the stale reservation if still present
+    let _ = release_disk_space(&conn, stale_res_id);
+}

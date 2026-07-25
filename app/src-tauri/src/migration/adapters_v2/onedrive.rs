@@ -3,6 +3,7 @@ use crate::migration::microsoft::{self, MicrosoftSession};
 use crate::migration::pipeline_v2::stages::SourceDownloader;
 
 use reqwest::Client;
+use sha2::Digest;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
@@ -77,11 +78,7 @@ impl SourceDownloader for OneDriveDownloader {
             };
 
             // 2. Fetch metadata from OneDrive
-            let item_url = format!(
-                "{}/v1.0/me/drive/items/{}",
-                base_url,
-                source_item_id
-            );
+            let item_url = format!("{}/v1.0/me/drive/items/{}", base_url, source_item_id);
             let resp = match http.get(&item_url).bearer_auth(&access_token).send().await {
                 Ok(r) => r,
                 Err(e) => return Err(format!("TransientNetwork: {}", e)),
@@ -133,6 +130,7 @@ impl SourceDownloader for OneDriveDownloader {
                     .map_err(|e| e.to_string())?;
                 upd.bind((1, f_type.as_str())).map_err(|e| e.to_string())?;
                 upd.bind((2, f_val.as_str())).map_err(|e| e.to_string())?;
+                upd.bind((3, item_id)).map_err(|e| e.to_string())?;
                 upd.next().map_err(|e| e.to_string())?;
             }
 
@@ -165,7 +163,12 @@ impl SourceDownloader for OneDriveDownloader {
                 sha2::Digest::update(&mut hasher, &chunk);
                 downloaded_bytes += chunk.len() as u64;
 
-                log::info!("Download progress for item {}: {}/{}", item_id, downloaded_bytes, total_bytes);
+                log::info!(
+                    "Download progress for item {}: {}/{}",
+                    item_id,
+                    downloaded_bytes,
+                    total_bytes
+                );
             }
 
             if let Err(e) = file.flush().await {
@@ -182,7 +185,7 @@ impl SourceDownloader for OneDriveDownloader {
 mod tests {
     use super::*;
     use crate::migration::db::open_migration_db_at_path;
-    use crate::migration::microsoft::MsAccountInfo;
+    use crate::migration::models::MsAccountInfo;
     use wiremock::matchers::{header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -192,7 +195,8 @@ mod tests {
 
     impl TempDir {
         fn new() -> Self {
-            let path = std::env::temp_dir().join(format!("temp_onedrive_tests_{}", rand::random::<u64>()));
+            let path =
+                std::env::temp_dir().join(format!("temp_onedrive_tests_{}", rand::random::<u64>()));
             std::fs::create_dir_all(&path).unwrap();
             Self { path }
         }
@@ -267,7 +271,10 @@ mod tests {
         let dest = tmp.path.join("download.txt");
         let hash = downloader.download_file(1, "item123", &dest).await.unwrap();
 
-        assert_eq!(hash, "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"); // SHA-256 of "hello world"
+        assert_eq!(
+            hash,
+            "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
+        ); // SHA-256 of "hello world"
         assert!(dest.exists());
         let content = std::fs::read_to_string(&dest).unwrap();
         assert_eq!(content, "hello world");
@@ -315,7 +322,10 @@ mod tests {
             .await;
 
         let dest = tmp.path.join("missing.txt");
-        let err = downloader.download_file(1, "missing", &dest).await.unwrap_err();
+        let err = downloader
+            .download_file(1, "missing", &dest)
+            .await
+            .unwrap_err();
         assert!(err.contains("SourceNotFound"));
 
         // 429 test
@@ -325,7 +335,104 @@ mod tests {
             .mount(&mock_server)
             .await;
 
-        let err = downloader.download_file(1, "throttled", &dest).await.unwrap_err();
+        let err = downloader
+            .download_file(1, "throttled", &dest)
+            .await
+            .unwrap_err();
         assert!(err.contains("RateLimited"));
+    }
+
+    #[tokio::test]
+    async fn test_onedrive_adapter_persists_download_metadata_with_item_id_binding() {
+        // Regression: ensure UPDATE binds item_id correctly.
+        // Test with TWO items in DB — only the downloaded item should change.
+        let mock_server = MockServer::start().await;
+        let tmp = TempDir::new();
+        let db_path = tmp.path.join("test_od_bind.db");
+        let db = open_migration_db_at_path(db_path).unwrap();
+
+        // Seed TWO items
+        {
+            let conn = db.lock().unwrap();
+            conn.execute("INSERT INTO migration_jobs (id, state, pipeline_version, created_at, updated_at) VALUES (1, 'running', 2, 0, 0);").unwrap();
+            conn.execute("INSERT INTO migration_items (id, job_id, name, source_path, source_item_id, state, pipeline_stage, created_at)
+                          VALUES (1, 1, 'item_a.txt', 'item_a.txt', 'item_a', 'pending', 'discovered', 0);").unwrap();
+            conn.execute("INSERT INTO migration_items (id, job_id, name, source_path, source_item_id, state, pipeline_stage, created_at)
+                          VALUES (2, 1, 'item_b.txt', 'item_b.txt', 'item_b', 'pending', 'discovered', 0);").unwrap();
+        }
+
+        // Mock for item A (will be downloaded)
+        let mock_metadata_a = serde_json::json!({
+            "id": "item_a",
+            "name": "item_a.txt",
+            "file": { "hashes": { "quickXorHash": "qx_a" } },
+            "@microsoft.graph.downloadUrl": format!("{}/download/item_a", mock_server.uri())
+        });
+
+        Mock::given(method("GET"))
+            .and(path("/v1.0/me/drive/items/item_a"))
+            .and(header("Authorization", "Bearer fake_token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(mock_metadata_a))
+            .mount(&mock_server)
+            .await;
+
+        Mock::given(method("GET"))
+            .and(path("/download/item_a"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(b"item a content", "text/plain"))
+            .mount(&mock_server)
+            .await;
+
+        let session = MicrosoftSession {
+            client_id: "client123".to_string(),
+            access_token: "fake_token".to_string(),
+            refresh_token: "ref_token".to_string(),
+            expires_at: chrono::Utc::now().timestamp() + 3600,
+            tenant: "common".to_string(),
+            redirect_uri: "http://redirect".to_string(),
+            account_info: MsAccountInfo {
+                account_name: "Test".to_string(),
+                account_email: "test@mail.com".to_string(),
+            },
+        };
+
+        let downloader = OneDriveDownloader::new_with_base_url(
+            Client::new(),
+            Arc::new(TokioMutex::new(Some(session))),
+            db.clone(),
+            mock_server.uri(),
+        );
+
+        // Download ONLY item A
+        let dest_a = tmp.path.join("item_a.txt");
+        let _hash = downloader
+            .download_file(1, "item_a", &dest_a)
+            .await
+            .unwrap();
+
+        // Verify item A metadata was updated
+        let conn = db.lock().unwrap();
+        let mut stmt_a = conn
+            .prepare("SELECT source_fingerprint_type, source_fingerprint_value FROM migration_items WHERE id = 1;")
+            .unwrap();
+        assert_eq!(stmt_a.next().unwrap(), sqlite::State::Row);
+        assert_eq!(stmt_a.read::<String, _>(0).unwrap(), "quickXorHash");
+        assert_eq!(stmt_a.read::<String, _>(1).unwrap(), "qx_a");
+
+        // Verify item B was NOT updated (still NULL fingerprints)
+        let mut stmt_b = conn
+            .prepare("SELECT source_fingerprint_type, source_fingerprint_value FROM migration_items WHERE id = 2;")
+            .unwrap();
+        assert_eq!(stmt_b.next().unwrap(), sqlite::State::Row);
+        // Item B should have NULL fingerprints — unchanged
+        let fp_type_b: Option<String> = stmt_b.read(0).unwrap_or(None);
+        let fp_val_b: Option<String> = stmt_b.read(1).unwrap_or(None);
+        assert!(
+            fp_type_b.is_none(),
+            "Item B fingerprint type should remain NULL"
+        );
+        assert!(
+            fp_val_b.is_none(),
+            "Item B fingerprint value should remain NULL"
+        );
     }
 }

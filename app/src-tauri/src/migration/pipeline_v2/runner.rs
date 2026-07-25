@@ -63,8 +63,28 @@ fn sanitize_path(path: &str) -> PathBuf {
             let s = c.to_string_lossy().to_ascii_uppercase();
             if matches!(
                 s.as_ref(),
-                "CON" | "PRN" | "AUX" | "NUL" | "COM1" | "COM2" | "COM3" | "COM4" | "COM5" | "COM6" | "COM7" | "COM8" | "COM9" |
-                "LPT1" | "LPT2" | "LPT3" | "LPT4" | "LPT5" | "LPT6" | "LPT7" | "LPT8" | "LPT9"
+                "CON"
+                    | "PRN"
+                    | "AUX"
+                    | "NUL"
+                    | "COM1"
+                    | "COM2"
+                    | "COM3"
+                    | "COM4"
+                    | "COM5"
+                    | "COM6"
+                    | "COM7"
+                    | "COM8"
+                    | "COM9"
+                    | "LPT1"
+                    | "LPT2"
+                    | "LPT3"
+                    | "LPT4"
+                    | "LPT5"
+                    | "LPT6"
+                    | "LPT7"
+                    | "LPT8"
+                    | "LPT9"
             ) {
                 safe.push(format!("{}_safe", c.to_string_lossy()));
             } else {
@@ -377,7 +397,11 @@ impl PipelineRunner {
                                 }
 
                                 // 3.5. Dedupe check
-                                if let Ok(true) = crate::migration::pipeline_v2::transitions::post_download_dedupe(&db_clone, item.id, &sha256) {
+                                if let Ok(true) =
+                                    crate::migration::pipeline_v2::transitions::post_download_dedupe(
+                                        &db_clone, item.id, &sha256,
+                                    )
+                                {
                                     println!("Downloader item {} deduped successfully!", item.id);
                                     let _ = std::fs::remove_file(&final_path);
                                     let conn = db_clone.lock().unwrap();
@@ -482,9 +506,15 @@ impl PipelineRunner {
                 // Inspect video
                 match inspector_clone.inspect_file(&input_path).await {
                     Ok(meta) => {
-                        // Quyết định xử lý
+                        // Quyết định xử lý: passthrough | remux_copy | transcode
                         let decision = if meta.video_codec == "h264" {
-                            "passthrough"
+                            // h264: pass-through if mp4/mov container, else remux
+                            let container = meta.container.to_ascii_lowercase();
+                            if container == "mp4" || container == "mov" {
+                                "passthrough"
+                            } else {
+                                "remux_copy"
+                            }
                         } else {
                             "transcode"
                         };
@@ -634,9 +664,11 @@ impl PipelineRunner {
                     Err(e) => {
                         let _ =
                             update_item_pipeline_stage(&db_clone, item.id, PipelineStage::Failed);
-                            
+
                         if e == "permanent_error" {
-                            let _ = crate::migration::pipeline_v2::transitions::promote_canonical(&db_clone, item.id);
+                            let _ = crate::migration::pipeline_v2::transitions::promote_canonical(
+                                &db_clone, item.id,
+                            );
                         }
                     }
                 }
@@ -677,11 +709,11 @@ impl PipelineRunner {
 
                 let input_path = workspace.join(format!("{}", item.id));
                 let safe_source = sanitize_path(&item.source_path);
-                
+
                 let base_dest = backup.join("OneDrive_Archive").join(&safe_source);
                 let mut dest_path = base_dest.clone();
                 let mut counter = 1;
-                
+
                 // Collision handle
                 while dest_path.exists() {
                     let file_stem = base_dest.file_stem().unwrap_or_default().to_string_lossy();

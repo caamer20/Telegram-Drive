@@ -1,7 +1,7 @@
-pub mod onedrive;
-pub mod media;
-pub mod telegram;
-pub mod local;
 pub mod factory;
+pub mod local;
+pub mod media;
+pub mod onedrive;
+pub mod telegram;
 
 pub use factory::build_pipeline_v2_services;
