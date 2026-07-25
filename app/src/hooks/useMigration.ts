@@ -36,11 +36,13 @@ const activityToProcessingLog = (entry: MigrationActivity): ProcessingLogEntry =
     timestamp: entry.created_at * 1000,
     category: entry.phase === 'downloading'
         ? 'download'
-        : entry.phase === 'uploading'
-            ? 'upload'
-            : entry.phase === 'scan'
-                ? 'scan'
-                : 'system',
+        : entry.phase === 'processing'
+            ? 'processing'
+            : entry.phase === 'uploading'
+                ? 'upload'
+                : entry.phase === 'scan'
+                    ? 'scan'
+                    : 'system',
     level: entry.status === 'failed'
         ? 'error'
         : entry.status === 'completed'
@@ -404,11 +406,19 @@ export function useMigration() {
             if (lastLoggedProgressBucket.get(progressKey) !== progressBucket || e.payload.percent === 100) {
                 lastLoggedProgressBucket.set(progressKey, progressBucket);
                 appendProcessingLog({
-                    category: e.payload.phase === 'downloading' ? 'download' : 'upload',
+                    category: e.payload.phase === 'downloading'
+                        ? 'download'
+                        : e.payload.phase === 'uploading'
+                            ? 'upload'
+                            : 'processing',
                     level: 'info',
                     message_key: e.payload.phase === 'downloading'
                         ? 'migration.log_item_downloading'
-                        : 'migration.log_item_uploading',
+                        : e.payload.phase === 'uploading'
+                            ? 'migration.log_item_uploading'
+                            : e.payload.phase === 'analyzing'
+                                ? 'migration.log_item_analyzing'
+                                : 'migration.log_item_processing',
                     params: {
                         name: e.payload.item_name,
                         percent: Math.round(e.payload.percent),
@@ -501,7 +511,11 @@ export function useMigration() {
                 || e.payload.phase === 'stopping'
             ) {
                 setSnapshotLoading(true);
-            } else if (e.payload.phase === 'failed' || e.payload.phase === 'stopped') {
+            } else if (
+                e.payload.phase === 'failed'
+                || e.payload.phase === 'stopped'
+                || e.payload.phase === 'completed'
+            ) {
                 setSnapshotLoading(false);
             }
             if (e.payload.phase === 'stopped') {
@@ -764,6 +778,7 @@ export function useMigration() {
             toast.info(t('migration.scan_stop_requested', 'Đang dừng quét và lưu checkpoint...'));
             return progress;
         } catch (e: any) {
+            setSnapshotLoading(false);
             toast.error(String(e));
             return null;
         }
@@ -820,6 +835,29 @@ export function useMigration() {
                 'migration.checkpoint_migration_started',
                 'Đã bắt đầu migrate file đã quét',
             ));
+            return jobId;
+        } catch (e: any) {
+            toast.error(String(e));
+            return null;
+        } finally {
+            setLoading(false);
+        }
+    }, [loadJob, refreshJobs, t]);
+
+    const queueSelectedItems = useCallback(async (sourceItemIds: string[], actionType: 'download' | 'sync') => {
+        setLoading(true);
+        try {
+            const jobId = await invoke<number>('cmd_migration_queue_selected_items', {
+                sourceItemIds,
+                actionType,
+            });
+            await loadJob(jobId);
+            await refreshJobs();
+            toast.success(
+                actionType === 'download'
+                    ? t('migration.bulk_download_started', 'Đã bắt đầu tải xuống các mục đã chọn')
+                    : t('migration.bulk_sync_started', 'Đã bắt đầu đồng bộ các mục đã chọn'),
+            );
             return jobId;
         } catch (e: any) {
             toast.error(String(e));
@@ -966,6 +1004,7 @@ export function useMigration() {
         renameMigrationItem,
         syncSingleItem,
         syncScanSnapshotItem,
+        queueSelectedItems,
         clearProcessingLogs,
     };
 }

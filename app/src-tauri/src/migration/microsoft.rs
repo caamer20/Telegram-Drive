@@ -407,11 +407,12 @@ pub async fn send_graph_request(
             || text.contains("quota");
 
         if is_throttled && attempts <= MAX_ATTEMPTS {
-            let wait_secs = retry_header.unwrap_or_else(|| {
+            let calculated_wait = retry_header.unwrap_or_else(|| {
                 let response_hint = parse_retry_after_seconds(&text, None);
                 let exponential_backoff = 2u64.pow(attempts.min(6));
                 response_hint.max(exponential_backoff)
             });
+            let wait_secs = calculated_wait.min(30);
 
             log::warn!(
                 "Microsoft Graph API throttled. Waiting {} seconds before retrying (attempt {}/{})...",

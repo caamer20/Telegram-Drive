@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri::{AppHandle, Manager};
@@ -203,6 +203,12 @@ pub fn open_migration_db_at_path(db_path: PathBuf) -> Result<MigrationDb, String
         "queue_position",
         "INTEGER NOT NULL DEFAULT 0",
     )?;
+    ensure_column(
+        &conn,
+        "migration_items",
+        "action_type",
+        "TEXT DEFAULT 'sync'",
+    )?;
     ensure_column(&conn, "auto_migration_profiles", "active_job_id", "INTEGER")?;
     ensure_column(&conn, "auto_migration_profiles", "pause_reason", "TEXT")?;
 
@@ -273,6 +279,23 @@ pub fn open_migration_db_at_path(db_path: PathBuf) -> Result<MigrationDb, String
 /// Startup recovery mapping (Rule: downloading/uploading -> pending + recovery_interrupted, cleanup temp files, attempt_count unchanged)
 pub fn run_startup_recovery(db: &MigrationDb) -> Result<(), String> {
     let conn = db.lock().map_err(|e| e.to_string())?;
+    let mut local_dirs = Vec::new();
+    {
+        let mut statement = conn
+            .prepare(
+                "SELECT DISTINCT local_dir FROM migration_jobs
+                 WHERE local_dir IS NOT NULL AND TRIM(local_dir) <> '';",
+            )
+            .map_err(|e| e.to_string())?;
+        loop {
+            match statement.next().map_err(|e| e.to_string())? {
+                sqlite::State::Row => {
+                    local_dirs.push(statement.read::<String, _>(0).map_err(|e| e.to_string())?);
+                }
+                sqlite::State::Done => break,
+            }
+        }
+    }
 
     conn.execute(
         "UPDATE migration_items
@@ -291,6 +314,18 @@ pub fn run_startup_recovery(db: &MigrationDb) -> Result<(), String> {
          WHERE state = 'running';",
     )
     .map_err(|e| e.to_string())?;
+
+    drop(conn);
+    for local_dir in local_dirs {
+        let removed =
+            crate::migration::media_processor::cleanup_orphaned_outputs(Path::new(&local_dir));
+        if removed > 0 {
+            log::info!(
+                "Migration recovery removed {} orphaned video output(s)",
+                removed
+            );
+        }
+    }
 
     Ok(())
 }
@@ -515,8 +550,18 @@ pub fn batch_insert_items(
     job_id: i64,
     items: &[OneDriveItem],
 ) -> Result<MigrationStats, String> {
+    batch_insert_items_with_action(db, job_id, items, Some("sync"))
+}
+
+pub fn batch_insert_items_with_action(
+    db: &MigrationDb,
+    job_id: i64,
+    items: &[OneDriveItem],
+    action_type: Option<&str>,
+) -> Result<MigrationStats, String> {
     let conn = db.lock().map_err(|e| e.to_string())?;
     let now = chrono::Utc::now().timestamp();
+    let act_str = action_type.unwrap_or("sync");
 
     // Clear previous snapshot
     conn.execute(format!(
@@ -536,8 +581,8 @@ pub fn batch_insert_items(
             "INSERT INTO migration_items (
             job_id, item_type, name, source_path, source_item_id, size_bytes,
             source_etag, source_last_modified, source_fingerprint_type, source_fingerprint_value,
-            state, created_at, queue_position
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?);",
+            state, created_at, queue_position, action_type
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?);",
         )
         .map_err(|e| e.to_string())?;
 
@@ -595,6 +640,7 @@ pub fn batch_insert_items(
         stmt.bind((11, now)).map_err(|e| e.to_string())?;
         stmt.bind((12, queue_position as i64))
             .map_err(|e| e.to_string())?;
+        stmt.bind((13, act_str)).map_err(|e| e.to_string())?;
 
         stmt.next().map_err(|e| e.to_string())?;
         stmt.reset().map_err(|e| e.to_string())?;
@@ -635,68 +681,70 @@ pub fn append_scan_items(
     job_id: i64,
     items: &[OneDriveItem],
 ) -> Result<(), String> {
-    let conn = db.lock().map_err(|e| e.to_string())?;
-    let now = chrono::Utc::now().timestamp();
-    let mut stmt = conn
-        .prepare(
-            "INSERT OR IGNORE INTO migration_items (
-                job_id, item_type, name, source_path, source_item_id, size_bytes,
-                source_etag, source_last_modified, source_fingerprint_type,
-                source_fingerprint_value, state, created_at, queue_position
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?,
-                COALESCE((SELECT MAX(queue_position) + 1 FROM migration_items WHERE job_id = ?), 0));",
-        )
-        .map_err(|e| e.to_string())?;
+    {
+        let conn = db.lock().map_err(|e| e.to_string())?;
+        let now = chrono::Utc::now().timestamp();
+        let mut stmt = conn
+            .prepare(
+                "INSERT OR IGNORE INTO migration_items (
+                    job_id, item_type, name, source_path, source_item_id, size_bytes,
+                    source_etag, source_last_modified, source_fingerprint_type,
+                    source_fingerprint_value, state, created_at, queue_position
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?,
+                    COALESCE((SELECT MAX(queue_position) + 1 FROM migration_items WHERE job_id = ?), 0));",
+            )
+            .map_err(|e| e.to_string())?;
 
-    for item in items {
-        let path = item.path.as_deref().unwrap_or(&item.name);
-        let fingerprint_type = if item.quickxor_hash.is_some() {
-            Some("onedrive_quickxor")
-        } else if item.sha1_hash.is_some() {
-            Some("onedrive_sha1")
-        } else {
-            None
-        };
-        let fingerprint_value = item.quickxor_hash.as_deref().or(item.sha1_hash.as_deref());
-        stmt.bind((1, job_id)).map_err(|e| e.to_string())?;
-        stmt.bind((2, item.item_type.as_str()))
-            .map_err(|e| e.to_string())?;
-        stmt.bind((3, item.name.as_str()))
-            .map_err(|e| e.to_string())?;
-        stmt.bind((4, path)).map_err(|e| e.to_string())?;
-        stmt.bind((5, item.id.as_str()))
-            .map_err(|e| e.to_string())?;
-        stmt.bind((6, item.size)).map_err(|e| e.to_string())?;
-        match item.etag.as_deref() {
-            Some(value) => stmt.bind((7, value)).map_err(|e| e.to_string())?,
-            None => stmt
-                .bind((7, sqlite::Value::Null))
-                .map_err(|e| e.to_string())?,
+        for item in items {
+            let path = item.path.as_deref().unwrap_or(&item.name);
+            let fingerprint_type = if item.quickxor_hash.is_some() {
+                Some("onedrive_quickxor")
+            } else if item.sha1_hash.is_some() {
+                Some("onedrive_sha1")
+            } else {
+                None
+            };
+            let fingerprint_value = item.quickxor_hash.as_deref().or(item.sha1_hash.as_deref());
+            stmt.bind((1, job_id)).map_err(|e| e.to_string())?;
+            stmt.bind((2, item.item_type.as_str()))
+                .map_err(|e| e.to_string())?;
+            stmt.bind((3, item.name.as_str()))
+                .map_err(|e| e.to_string())?;
+            stmt.bind((4, path)).map_err(|e| e.to_string())?;
+            stmt.bind((5, item.id.as_str()))
+                .map_err(|e| e.to_string())?;
+            stmt.bind((6, item.size)).map_err(|e| e.to_string())?;
+            match item.etag.as_deref() {
+                Some(value) => stmt.bind((7, value)).map_err(|e| e.to_string())?,
+                None => stmt
+                    .bind((7, sqlite::Value::Null))
+                    .map_err(|e| e.to_string())?,
+            }
+            match item.last_modified.as_deref() {
+                Some(value) => stmt.bind((8, value)).map_err(|e| e.to_string())?,
+                None => stmt
+                    .bind((8, sqlite::Value::Null))
+                    .map_err(|e| e.to_string())?,
+            }
+            match fingerprint_type {
+                Some(value) => stmt.bind((9, value)).map_err(|e| e.to_string())?,
+                None => stmt
+                    .bind((9, sqlite::Value::Null))
+                    .map_err(|e| e.to_string())?,
+            }
+            match fingerprint_value {
+                Some(value) => stmt.bind((10, value)).map_err(|e| e.to_string())?,
+                None => stmt
+                    .bind((10, sqlite::Value::Null))
+                    .map_err(|e| e.to_string())?,
+            }
+            stmt.bind((11, now)).map_err(|e| e.to_string())?;
+            stmt.bind((12, job_id)).map_err(|e| e.to_string())?;
+            stmt.next().map_err(|e| e.to_string())?;
+            stmt.reset().map_err(|e| e.to_string())?;
         }
-        match item.last_modified.as_deref() {
-            Some(value) => stmt.bind((8, value)).map_err(|e| e.to_string())?,
-            None => stmt
-                .bind((8, sqlite::Value::Null))
-                .map_err(|e| e.to_string())?,
-        }
-        match fingerprint_type {
-            Some(value) => stmt.bind((9, value)).map_err(|e| e.to_string())?,
-            None => stmt
-                .bind((9, sqlite::Value::Null))
-                .map_err(|e| e.to_string())?,
-        }
-        match fingerprint_value {
-            Some(value) => stmt.bind((10, value)).map_err(|e| e.to_string())?,
-            None => stmt
-                .bind((10, sqlite::Value::Null))
-                .map_err(|e| e.to_string())?,
-        }
-        stmt.bind((11, now)).map_err(|e| e.to_string())?;
-        stmt.bind((12, job_id)).map_err(|e| e.to_string())?;
-        stmt.next().map_err(|e| e.to_string())?;
-        stmt.reset().map_err(|e| e.to_string())?;
+        drop(stmt);
     }
-    drop(stmt);
     update_job_stats(db, job_id)
 }
 
@@ -704,7 +752,7 @@ pub fn append_scan_items(
 pub fn get_items_by_job(db: &MigrationDb, job_id: i64) -> Result<Vec<MigrationItem>, String> {
     let conn = db.lock().map_err(|e| e.to_string())?;
     let mut stmt = conn.prepare(
-        "SELECT id, job_id, item_type, name, source_path, source_item_id, size_bytes, source_etag, source_last_modified, source_fingerprint_type, source_fingerprint_value, state, last_error_code, last_error_message, attempt_count, computed_sha256, telegram_message_id, created_at, completed_at, queue_position FROM migration_items WHERE job_id = ? ORDER BY queue_position ASC, id ASC;"
+        "SELECT id, job_id, item_type, name, source_path, source_item_id, size_bytes, source_etag, source_last_modified, source_fingerprint_type, source_fingerprint_value, state, last_error_code, last_error_message, attempt_count, computed_sha256, telegram_message_id, created_at, completed_at, queue_position, action_type FROM migration_items WHERE job_id = ? ORDER BY queue_position ASC, id ASC;"
     ).map_err(|e| e.to_string())?;
     stmt.bind((1, job_id)).map_err(|e| e.to_string())?;
 
@@ -731,6 +779,7 @@ pub fn get_items_by_job(db: &MigrationDb, job_id: i64) -> Result<Vec<MigrationIt
             created_at: stmt.read(17).unwrap_or(0),
             completed_at: stmt.read(18).unwrap_or(None),
             queue_position: stmt.read(19).unwrap_or(0),
+            action_type: stmt.read(20).unwrap_or(None),
         });
     }
 
@@ -743,7 +792,7 @@ pub fn get_next_pending_item(
 ) -> Result<Option<MigrationItem>, String> {
     let conn = db.lock().map_err(|e| e.to_string())?;
     let mut stmt = conn.prepare(
-        "SELECT id, job_id, item_type, name, source_path, source_item_id, size_bytes, source_etag, source_last_modified, source_fingerprint_type, source_fingerprint_value, state, last_error_code, last_error_message, attempt_count, computed_sha256, telegram_message_id, created_at, completed_at, queue_position FROM migration_items WHERE job_id = ? AND state = 'pending' AND item_type = 'file' ORDER BY queue_position ASC, id ASC LIMIT 1;"
+        "SELECT id, job_id, item_type, name, source_path, source_item_id, size_bytes, source_etag, source_last_modified, source_fingerprint_type, source_fingerprint_value, state, last_error_code, last_error_message, attempt_count, computed_sha256, telegram_message_id, created_at, completed_at, queue_position, action_type FROM migration_items WHERE job_id = ? AND state = 'pending' AND item_type = 'file' ORDER BY queue_position ASC, id ASC LIMIT 1;"
     ).map_err(|e| e.to_string())?;
     stmt.bind((1, job_id)).map_err(|e| e.to_string())?;
 
@@ -769,16 +818,106 @@ pub fn get_next_pending_item(
             created_at: stmt.read(17).unwrap_or(0),
             completed_at: stmt.read(18).unwrap_or(None),
             queue_position: stmt.read(19).unwrap_or(0),
+            action_type: stmt.read(20).unwrap_or(None),
         }))
     } else {
         Ok(None)
     }
 }
 
+pub fn get_next_pending_non_code_item(
+    db: &MigrationDb,
+    job_id: i64,
+) -> Result<Option<MigrationItem>, String> {
+    let conn = db.lock().map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare(
+        "SELECT id, job_id, item_type, name, source_path, source_item_id, size_bytes, source_etag, source_last_modified, source_fingerprint_type, source_fingerprint_value, state, last_error_code, last_error_message, attempt_count, computed_sha256, telegram_message_id, created_at, completed_at, queue_position, action_type FROM migration_items WHERE job_id = ? AND state = 'pending' AND item_type = 'file' ORDER BY queue_position ASC, id ASC;"
+    ).map_err(|e| e.to_string())?;
+    stmt.bind((1, job_id)).map_err(|e| e.to_string())?;
+
+    while let Ok(sqlite::State::Row) = stmt.next() {
+        let name: String = stmt.read(3).unwrap_or_default();
+        if crate::migration::worker::is_video_file(&name) {
+            return Ok(Some(MigrationItem {
+                id: stmt.read(0).unwrap_or(0),
+                job_id: stmt.read(1).unwrap_or(0),
+                item_type: stmt.read(2).unwrap_or_else(|_| "file".into()),
+                name,
+                source_path: stmt.read(4).unwrap_or_default(),
+                source_item_id: stmt.read(5).unwrap_or(None),
+                size_bytes: stmt.read(6).unwrap_or(0),
+                source_etag: stmt.read(7).unwrap_or(None),
+                source_last_modified: stmt.read(8).unwrap_or(None),
+                source_fingerprint_type: stmt.read(9).unwrap_or(None),
+                source_fingerprint_value: stmt.read(10).unwrap_or(None),
+                state: stmt.read(11).unwrap_or_else(|_| "pending".into()),
+                last_error_code: stmt.read(12).unwrap_or(None),
+                last_error_message: stmt.read(13).unwrap_or(None),
+                attempt_count: stmt.read(14).unwrap_or(0),
+                computed_sha256: stmt.read(15).unwrap_or(None),
+                telegram_message_id: stmt.read(16).unwrap_or(None),
+                created_at: stmt.read(17).unwrap_or(0),
+                completed_at: stmt.read(18).unwrap_or(None),
+                queue_position: stmt.read(19).unwrap_or(0),
+                action_type: stmt.read(20).unwrap_or(None),
+            }));
+        }
+    }
+    Ok(None)
+}
+
+pub fn get_next_pending_video_item(
+    db: &MigrationDb,
+    job_id: i64,
+) -> Result<Option<MigrationItem>, String> {
+    let conn = db.lock().map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare(
+        "SELECT id, job_id, item_type, name, source_path, source_item_id, size_bytes, source_etag, source_last_modified, source_fingerprint_type, source_fingerprint_value, state, last_error_code, last_error_message, attempt_count, computed_sha256, telegram_message_id, created_at, completed_at, queue_position, action_type FROM migration_items WHERE job_id = ? AND state = 'pending' AND item_type = 'file' ORDER BY queue_position ASC, id ASC;"
+    ).map_err(|e| e.to_string())?;
+    stmt.bind((1, job_id)).map_err(|e| e.to_string())?;
+
+    while let Ok(sqlite::State::Row) = stmt.next() {
+        let name: String = stmt.read(3).unwrap_or_default();
+        if crate::migration::worker::is_video_file(&name) {
+            return Ok(Some(MigrationItem {
+                id: stmt.read(0).unwrap_or(0),
+                job_id: stmt.read(1).unwrap_or(0),
+                item_type: stmt.read(2).unwrap_or_else(|_| "file".into()),
+                name,
+                source_path: stmt.read(4).unwrap_or_default(),
+                source_item_id: stmt.read(5).unwrap_or(None),
+                size_bytes: stmt.read(6).unwrap_or(0),
+                source_etag: stmt.read(7).unwrap_or(None),
+                source_last_modified: stmt.read(8).unwrap_or(None),
+                source_fingerprint_type: stmt.read(9).unwrap_or(None),
+                source_fingerprint_value: stmt.read(10).unwrap_or(None),
+                state: stmt.read(11).unwrap_or_else(|_| "pending".into()),
+                last_error_code: stmt.read(12).unwrap_or(None),
+                last_error_message: stmt.read(13).unwrap_or(None),
+                attempt_count: stmt.read(14).unwrap_or(0),
+                computed_sha256: stmt.read(15).unwrap_or(None),
+                telegram_message_id: stmt.read(16).unwrap_or(None),
+                created_at: stmt.read(17).unwrap_or(0),
+                completed_at: stmt.read(18).unwrap_or(None),
+                queue_position: stmt.read(19).unwrap_or(0),
+                action_type: stmt.read(20).unwrap_or(None),
+            }));
+        }
+    }
+    Ok(None)
+}
+
+pub fn get_next_pending_media_item(
+    db: &MigrationDb,
+    job_id: i64,
+) -> Result<Option<MigrationItem>, String> {
+    get_next_pending_video_item(db, job_id)
+}
+
 pub fn get_item_by_id(db: &MigrationDb, item_id: i64) -> Result<Option<MigrationItem>, String> {
     let conn = db.lock().map_err(|e| e.to_string())?;
     let mut stmt = conn.prepare(
-        "SELECT id, job_id, item_type, name, source_path, source_item_id, size_bytes, source_etag, source_last_modified, source_fingerprint_type, source_fingerprint_value, state, last_error_code, last_error_message, attempt_count, computed_sha256, telegram_message_id, created_at, completed_at, queue_position FROM migration_items WHERE id = ?;"
+        "SELECT id, job_id, item_type, name, source_path, source_item_id, size_bytes, source_etag, source_last_modified, source_fingerprint_type, source_fingerprint_value, state, last_error_code, last_error_message, attempt_count, computed_sha256, telegram_message_id, created_at, completed_at, queue_position, action_type FROM migration_items WHERE id = ?;"
     ).map_err(|e| e.to_string())?;
     stmt.bind((1, item_id)).map_err(|e| e.to_string())?;
 
@@ -804,10 +943,50 @@ pub fn get_item_by_id(db: &MigrationDb, item_id: i64) -> Result<Option<Migration
             created_at: stmt.read(17).unwrap_or(0),
             completed_at: stmt.read(18).unwrap_or(None),
             queue_position: stmt.read(19).unwrap_or(0),
+            action_type: stmt.read(20).unwrap_or(None),
         }))
     } else {
         Ok(None)
     }
+}
+
+pub fn get_pending_items_by_job(
+    db: &MigrationDb,
+    job_id: i64,
+) -> Result<Vec<MigrationItem>, String> {
+    let conn = db.lock().map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare(
+        "SELECT id, job_id, item_type, name, source_path, source_item_id, size_bytes, source_etag, source_last_modified, source_fingerprint_type, source_fingerprint_value, state, last_error_code, last_error_message, attempt_count, computed_sha256, telegram_message_id, created_at, completed_at, queue_position, action_type FROM migration_items WHERE job_id = ? AND state = 'pending' ORDER BY queue_position ASC, id ASC;"
+    ).map_err(|e| e.to_string())?;
+    stmt.bind((1, job_id)).map_err(|e| e.to_string())?;
+
+    let mut items = Vec::new();
+    while let Ok(sqlite::State::Row) = stmt.next() {
+        items.push(MigrationItem {
+            id: stmt.read(0).unwrap_or(0),
+            job_id: stmt.read(1).unwrap_or(0),
+            item_type: stmt.read(2).unwrap_or_else(|_| "file".into()),
+            name: stmt.read(3).unwrap_or_default(),
+            source_path: stmt.read(4).unwrap_or_default(),
+            source_item_id: stmt.read(5).unwrap_or(None),
+            size_bytes: stmt.read(6).unwrap_or(0),
+            source_etag: stmt.read(7).unwrap_or(None),
+            source_last_modified: stmt.read(8).unwrap_or(None),
+            source_fingerprint_type: stmt.read(9).unwrap_or(None),
+            source_fingerprint_value: stmt.read(10).unwrap_or(None),
+            state: stmt.read(11).unwrap_or_else(|_| "pending".into()),
+            last_error_code: stmt.read(12).unwrap_or(None),
+            last_error_message: stmt.read(13).unwrap_or(None),
+            attempt_count: stmt.read(14).unwrap_or(0),
+            computed_sha256: stmt.read(15).unwrap_or(None),
+            telegram_message_id: stmt.read(16).unwrap_or(None),
+            created_at: stmt.read(17).unwrap_or(0),
+            completed_at: stmt.read(18).unwrap_or(None),
+            queue_position: stmt.read(19).unwrap_or(0),
+            action_type: stmt.read(20).unwrap_or(None),
+        });
+    }
+    Ok(items)
 }
 
 /// Check duplicate in `migrated_fingerprints`
@@ -976,6 +1155,36 @@ pub fn create_migration_job(
     Ok((job.id, stats))
 }
 
+pub fn create_migration_job_with_action(
+    db: &MigrationDb,
+    folder_id: Option<&str>,
+    folder_path: Option<&str>,
+    dest_id: Option<i64>,
+    dest_name: Option<&str>,
+    local_dir: &str,
+    items: &[OneDriveItem],
+    action_type: Option<&str>,
+) -> Result<(i64, MigrationStats), String> {
+    let job = create_job(db)?;
+    {
+        let conn = db.lock().map_err(|e| e.to_string())?;
+        conn.execute(format!(
+            "UPDATE migration_jobs SET job_origin = 'auto' WHERE id = {};",
+            job.id
+        ))
+        .map_err(|e| e.to_string())?;
+    }
+    if let (Some(fid), Some(fpath)) = (folder_id, folder_path) {
+        set_onedrive_folder(db, job.id, fid.to_string(), fpath.to_string())?;
+    }
+    if let Some(dn) = dest_name {
+        set_telegram_destination(db, job.id, dest_id, dn.to_string())?;
+    }
+    set_local_dir(db, job.id, local_dir.to_string())?;
+    let stats = batch_insert_items_with_action(db, job.id, items, action_type)?;
+    Ok((job.id, stats))
+}
+
 /// Mark item skipped as duplicate
 pub fn record_item_skipped_duplicate(
     db: &MigrationDb,
@@ -999,6 +1208,29 @@ pub fn record_item_skipped_duplicate(
         }
         stmt.bind((2, now)).map_err(|e| e.to_string())?;
         stmt.bind((3, item_id)).map_err(|e| e.to_string())?;
+        stmt.next().map_err(|e| e.to_string())?;
+    }
+
+    update_job_stats(db, job_id)?;
+    Ok(())
+}
+
+/// Mark item skipped as non-media file
+pub fn record_item_skipped_non_media(
+    db: &MigrationDb,
+    job_id: i64,
+    item_id: i64,
+) -> Result<(), String> {
+    {
+        let conn = db.lock().map_err(|e| e.to_string())?;
+        let now = chrono::Utc::now().timestamp();
+
+        let mut stmt = conn.prepare(
+            "UPDATE migration_items SET state = 'skipped_non_media', completed_at = ?, last_error_code = NULL, last_error_message = NULL WHERE id = ?;"
+        ).map_err(|e| e.to_string())?;
+
+        stmt.bind((1, now)).map_err(|e| e.to_string())?;
+        stmt.bind((2, item_id)).map_err(|e| e.to_string())?;
         stmt.next().map_err(|e| e.to_string())?;
     }
 

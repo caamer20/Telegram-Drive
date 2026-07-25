@@ -1,10 +1,10 @@
 import React from 'react';
-import { ArrowDownToLine, ArrowUpFromLine } from 'lucide-react';
+import { ArrowDownToLine, ArrowUpFromLine, Clapperboard } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { ItemProgressPayload, MigrationItem } from '../../types';
 
 interface TransferListProps {
-    phase: ItemProgressPayload['phase'];
+    phase: 'downloading' | 'processing' | 'uploading';
     item: MigrationItem | null;
     progress: ItemProgressPayload | null;
 }
@@ -19,11 +19,25 @@ function formatBytes(bytes: number): string {
 export const TransferList: React.FC<TransferListProps> = ({ phase, item, progress }) => {
     const { t } = useTranslation();
     const downloading = phase === 'downloading';
-    const title = downloading ? t('migration.download_list') : t('migration.upload_list');
+    const processing = phase === 'processing';
+    const title = downloading
+        ? t('migration.download_list')
+        : processing
+            ? t('migration.processing_list')
+            : t('migration.upload_list');
     const icon = downloading
         ? <ArrowDownToLine className="w-5 h-5 text-sky-400" />
-        : <ArrowUpFromLine className="w-5 h-5 text-emerald-400" />;
-    const bar = downloading ? 'from-sky-500 to-blue-500' : 'from-emerald-500 to-teal-400';
+        : processing
+            ? <Clapperboard className="w-5 h-5 text-violet-400" />
+            : <ArrowUpFromLine className="w-5 h-5 text-emerald-400" />;
+    const bar = downloading
+        ? 'from-sky-500 to-blue-500'
+        : processing
+            ? 'from-violet-500 to-fuchsia-400'
+            : 'from-emerald-500 to-teal-400';
+    const progressMatches = !progress
+        || progress.phase === phase
+        || (processing && progress.phase === 'analyzing');
 
     return (
         <section className="bg-slate-900 border border-slate-800 rounded-2xl p-5">
@@ -31,7 +45,7 @@ export const TransferList: React.FC<TransferListProps> = ({ phase, item, progres
                 {icon}
                 {title}
             </h3>
-            {item && (!progress || progress.phase === phase) ? (
+            {item && progressMatches ? (
                 <div className="mt-4 p-4 rounded-xl bg-slate-950 border border-slate-800">
                     <div className="flex items-center justify-between gap-4 text-xs">
                         <div className="min-w-0">

@@ -31,6 +31,7 @@ const OneDriveMigrationContent: React.FC = () => {
         renameMigrationItem,
         syncSingleItem,
         syncScanSnapshotItem,
+        queueSelectedItems,
         clearProcessingLogs,
     } = useMigrationContext();
 
@@ -105,6 +106,7 @@ const OneDriveMigrationContent: React.FC = () => {
                 onRenameItem={(jId, iId, nName) => { void renameMigrationItem(jId, iId, nName); }}
                 onSyncSingleItem={(jId, iId) => { void syncSingleItem(jId, iId); }}
                 onSyncCheckpointItem={(sourceItemId) => { void syncScanSnapshotItem(sourceItemId); }}
+                onQueueSelectedItems={(ids, action) => { void queueSelectedItems(ids, action); }}
             />
 
 

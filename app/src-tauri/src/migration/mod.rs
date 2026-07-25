@@ -1,6 +1,7 @@
 pub mod auto_engine;
 pub mod commands;
 pub mod db;
+pub mod media_processor;
 pub mod microsoft;
 pub mod models;
 pub mod session_store;

@@ -49,10 +49,22 @@ describe('Auto Migration transfer state', () => {
     it('never places one item in both transfer lists', () => {
         expect(selectTransferLists(detail, progress('downloading', 1))).toEqual({
             downloading: [item],
+            processing: [],
+            uploading: [],
+        });
+        expect(selectTransferLists(detail, progress('analyzing', 2))).toEqual({
+            downloading: [],
+            processing: [item],
+            uploading: [],
+        });
+        expect(selectTransferLists(detail, progress('processing', 3))).toEqual({
+            downloading: [],
+            processing: [item],
             uploading: [],
         });
         expect(selectTransferLists(detail, progress('uploading', 2))).toEqual({
             downloading: [],
+            processing: [],
             uploading: [item],
         });
     });
@@ -60,7 +72,7 @@ describe('Auto Migration transfer state', () => {
     it('rejects progress for a file not in the authoritative job', () => {
         expect(
             selectTransferLists(detail, { ...progress('downloading', 1), item_id: 99 }),
-        ).toEqual({ downloading: [], uploading: [] });
+        ).toEqual({ downloading: [], processing: [], uploading: [] });
     });
 
     it('hydrates an active phase from persisted item state before the next event', () => {
@@ -70,6 +82,7 @@ describe('Auto Migration transfer state', () => {
         } as MigrationJobDetail;
         expect(selectTransferLists(hydrated, null)).toEqual({
             downloading: [],
+            processing: [],
             uploading: [{ ...item, state: 'uploading' }],
         });
     });
@@ -77,6 +90,15 @@ describe('Auto Migration transfer state', () => {
     it('rejects an out-of-order progress event', () => {
         const current = progress('uploading', 20);
         expect(acceptProgressEvent(current, progress('downloading', 10))).toBe(current);
+        expect(acceptProgressEvent(current, progress('processing', 30))).toBe(current);
+    });
+
+    it('accepts the ordered media processing phases', () => {
+        const downloading = progress('downloading', 1);
+        const analyzing = progress('analyzing', 2);
+        const processing = progress('processing', 3);
+        expect(acceptProgressEvent(downloading, analyzing)).toBe(analyzing);
+        expect(acceptProgressEvent(analyzing, processing)).toBe(processing);
     });
 
     it('deduplicates persisted activity IDs', () => {

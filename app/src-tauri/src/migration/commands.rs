@@ -342,7 +342,7 @@ pub async fn cmd_migration_get_auto_status(
             // stopped so the UI can resume or reset it.
             if matches!(
                 progress.phase.as_str(),
-                "enumerating" | "building_snapshot" | "stopping"
+                "starting" | "enumerating" | "building_snapshot" | "stopping"
             ) && !state.scan_running.load(std::sync::atomic::Ordering::SeqCst)
             {
                 progress.phase = "stopped".into();
@@ -357,7 +357,7 @@ pub async fn cmd_migration_get_auto_status(
                 ScanProgressPayload {
                     phase: if matches!(
                         checkpoint.status.as_str(),
-                        "enumerating" | "building_snapshot" | "stopping"
+                        "starting" | "enumerating" | "building_snapshot" | "stopping"
                     ) && !state.scan_running.load(std::sync::atomic::Ordering::SeqCst)
                     {
                         "stopped".into()
@@ -511,12 +511,16 @@ async fn load_stopped_scan_snapshot(state: &MigrationState) -> Result<Vec<OneDri
             .filter(|value| !value.is_empty())
             .ok_or_else(|| "microsoft_not_connected".to_string())?
     };
-    let checkpoint = db::get_auto_scan_checkpoint(&state.db, &account_email)?
-        .ok_or_else(|| "scan_snapshot_not_available".to_string())?;
-    if checkpoint.status != "stopped" {
-        return Err("scan_snapshot_not_stopped".into());
-    }
     let values = db::load_auto_scan_items(&state.db, &account_email)?;
+    if !values.is_empty() {
+        return Ok(microsoft::build_delta_snapshot(&values));
+    }
+    let _checkpoint = db::get_auto_scan_checkpoint(&state.db, &account_email)?
+        .ok_or_else(|| "scan_snapshot_not_available".to_string())?;
+    let values = db::load_auto_scan_items(&state.db, &account_email)?;
+    if values.is_empty() {
+        return Err("scan_snapshot_not_available".to_string());
+    }
     Ok(microsoft::build_delta_snapshot(&values))
 }
 
@@ -671,6 +675,109 @@ pub async fn cmd_migration_sync_single_item(
     });
 
     Ok(())
+}
+
+#[tauri::command]
+pub async fn cmd_migration_queue_selected_items(
+    state: State<'_, MigrationState>,
+    app_handle: tauri::AppHandle,
+    source_item_ids: Vec<String>,
+    action_type: String,
+) -> Result<i64, String> {
+    if state
+        .worker_running
+        .load(std::sync::atomic::Ordering::SeqCst)
+    {
+        return Err("migration_running".into());
+    }
+
+    let account_email = {
+        let session = state.ms_session.lock().await;
+        session
+            .as_ref()
+            .map(|value| value.account_info.account_email.clone())
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| "microsoft_not_connected".to_string())?
+    };
+
+    let snapshot_items = load_stopped_scan_snapshot(state.inner()).await?;
+
+    let selected_folder_paths: Vec<String> = snapshot_items
+        .iter()
+        .filter(|item| {
+            let path = item.path.as_deref().unwrap_or(&item.name);
+            item.item_type == "folder"
+                && (source_item_ids.contains(&item.id)
+                    || source_item_ids.iter().any(|id| id == path)
+                    || source_item_ids.contains(&item.name))
+        })
+        .map(|item| {
+            let path = item.path.as_deref().unwrap_or(&item.name);
+            format!("{}/", path.trim_end_matches('/'))
+        })
+        .collect();
+
+    let target_file_items: Vec<OneDriveItem> = snapshot_items
+        .into_iter()
+        .filter(|item| {
+            if item.item_type != "file" {
+                return false;
+            }
+            let item_path = item.path.as_deref().unwrap_or(&item.name);
+            if source_item_ids.contains(&item.id)
+                || source_item_ids.iter().any(|id| id == item_path)
+                || source_item_ids.contains(&item.name)
+            {
+                return true;
+            }
+            selected_folder_paths
+                .iter()
+                .any(|prefix| item_path.starts_with(prefix))
+        })
+        .collect();
+
+    if target_file_items.is_empty() {
+        return Err("no_items_selected".into());
+    }
+
+    let profile = db::get_auto_profile(&state.db, &account_email)?
+        .ok_or_else(|| "auto_migration_profile_not_configured".to_string())?;
+
+    let temp_dir = match profile.local_temp_dir {
+        Some(dir) if !dir.trim().is_empty() => dir,
+        _ => {
+            let dir = app_handle
+                .path()
+                .app_data_dir()
+                .map_err(|error| error.to_string())?
+                .join("temp_migration");
+            std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+            dir.to_string_lossy().to_string()
+        }
+    };
+
+    let destination_name = profile
+        .default_telegram_dest_name
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "Saved Messages".to_string());
+
+    let (job_id, _) = db::create_migration_job_with_action(
+        &state.db,
+        Some("root"),
+        Some("/ (Root)"),
+        profile.default_telegram_dest_id,
+        Some(&destination_name),
+        &temp_dir,
+        &target_file_items,
+        Some(&action_type),
+    )?;
+
+    let migration_state = state.inner().clone_state();
+    tauri::async_runtime::spawn(async move {
+        worker::run_migration_worker(migration_state, job_id, app_handle).await;
+    });
+
+    Ok(job_id)
 }
 
 impl MigrationState {

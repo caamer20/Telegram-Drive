@@ -858,6 +858,7 @@ pub fn run() {
             migration::commands::cmd_migration_delete_item,
             migration::commands::cmd_migration_rename_item,
             migration::commands::cmd_migration_sync_single_item,
+            migration::commands::cmd_migration_queue_selected_items,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

@@ -181,6 +181,7 @@ pub struct MigrationItem {
     pub created_at: i64,
     pub completed_at: Option<i64>,
     pub queue_position: i64,
+    pub action_type: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

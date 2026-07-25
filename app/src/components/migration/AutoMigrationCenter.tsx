@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
     Cloud,
@@ -10,8 +10,13 @@ import {
     RefreshCw,
     Activity,
     Folder,
+    FolderOpen,
+    FolderTree,
     FileText,
-    ListFilter,
+    Image,
+    Film,
+    Music,
+    Archive,
     Search,
     Trash2,
     Edit3,
@@ -20,12 +25,15 @@ import {
     Filter,
     ChevronLeft,
     ChevronRight,
+    ChevronDown,
     ArrowUpDown,
     FileType,
     ArrowUp,
     ArrowDown,
     Play,
     Square,
+    Download,
+    CheckSquare,
 } from 'lucide-react';
 
 import {
@@ -69,17 +77,39 @@ interface AutoMigrationCenterProps {
     onRenameItem?: (jobId: number, itemId: number, newName: string) => void;
     onSyncSingleItem?: (jobId: number, itemId: number) => void;
     onSyncCheckpointItem?: (sourceItemId: string) => void;
+    onQueueSelectedItems?: (sourceItemIds: string[], actionType: 'download' | 'sync') => void;
 }
 
 const ITEMS_PER_PAGE = 50;
 
-const getFileCategory = (filename: string): string => {
+const getFileCategory = (filename: string, itemType?: string): string => {
+    if (itemType === 'folder') return 'folder';
     const ext = filename.split('.').pop()?.toLowerCase() || '';
     if (['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'svg', 'heic'].includes(ext)) return 'image';
     if (['mp4', 'mkv', 'avi', 'mov', 'webm', 'flv', 'wmv', 'm4v', '3gp'].includes(ext)) return 'video';
+    if (['mp3', 'flac', 'wav', 'aac', 'm4a', 'ogg'].includes(ext)) return 'audio';
     if (['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'txt', 'csv', 'md'].includes(ext)) return 'document';
     if (['zip', 'rar', '7z', 'tar', 'gz', 'bz2', 'iso'].includes(ext)) return 'archive';
     return 'other';
+};
+
+const renderFileTypeIcon = (file: MigrationItem, isExpanded?: boolean) => {
+    if (file.item_type === 'folder') {
+        return isExpanded ? (
+            <FolderOpen className="w-4 h-4 text-amber-400 shrink-0" />
+        ) : (
+            <Folder className="w-4 h-4 text-amber-400 shrink-0" />
+        );
+    }
+    const category = getFileCategory(file.name, file.item_type);
+    switch (category) {
+        case 'image': return <Image className="w-4 h-4 text-emerald-400 shrink-0" />;
+        case 'video': return <Film className="w-4 h-4 text-purple-400 shrink-0" />;
+        case 'audio': return <Music className="w-4 h-4 text-pink-400 shrink-0" />;
+        case 'document': return <FileText className="w-4 h-4 text-blue-400 shrink-0" />;
+        case 'archive': return <Archive className="w-4 h-4 text-amber-300 shrink-0" />;
+        default: return <FileText className="w-4 h-4 text-slate-400 shrink-0" />;
+    }
 };
 
 const getParentFolderDisplay = (item: MigrationItem): string => {
@@ -132,6 +162,12 @@ const formatBytes = (bytes: number) => {
 interface FileRowProps {
     file: MigrationItem;
     jobId: number;
+    depth?: number;
+    isExpanded?: boolean;
+    onToggleExpand?: (path: string) => void;
+    childCount?: number;
+    isSelected: boolean;
+    onToggleSelect: (item: MigrationItem) => void;
     isEditing: boolean;
     editingName: string;
     setEditingName: (name: string) => void;
@@ -147,6 +183,12 @@ interface FileRowProps {
 const FileRow = React.memo<FileRowProps>(({
     file,
     jobId,
+    depth = 0,
+    isExpanded = false,
+    onToggleExpand,
+    childCount = 0,
+    isSelected,
+    onToggleSelect,
     isEditing,
     editingName,
     setEditingName,
@@ -162,11 +204,37 @@ const FileRow = React.memo<FileRowProps>(({
     const parentFolder = getParentFolderDisplay(file);
 
     return (
-        <tr className="hover:bg-slate-900/60 transition-colors group">
-            {/* File Name / Edit Input */}
-            <td className="py-2.5 px-4 font-medium text-slate-200 max-w-xs truncate">
+        <tr
+            onClick={(e) => {
+                const target = e.target as HTMLElement;
+                if (target.closest('button, input, select, a')) return;
+                onToggleSelect(file);
+            }}
+            onDoubleClick={(e) => {
+                const target = e.target as HTMLElement;
+                if (target.closest('button, input, select, a')) return;
+                if (file.item_type === 'folder' && onToggleExpand) {
+                    onToggleExpand(file.source_path);
+                }
+            }}
+            className={`hover:bg-slate-800/60 transition-colors group cursor-pointer select-none ${
+                isSelected ? 'bg-blue-950/40 border-l-2 border-l-blue-500' : ''
+            }`}
+        >
+            {/* Checkbox Column */}
+            <td className="py-2.5 px-3 w-10">
+                <input
+                    type="checkbox"
+                    checked={isSelected}
+                    onChange={() => onToggleSelect(file)}
+                    className="w-4 h-4 rounded border-slate-700 bg-slate-900 text-blue-600 focus:ring-blue-500 focus:ring-offset-slate-950 cursor-pointer"
+                />
+            </td>
+
+            {/* Tree View Indented Name with Desktop Explorer Guide Lines */}
+            <td className="py-2.5 px-4 font-medium text-slate-200 max-w-sm truncate">
                 {isEditing && !readOnly ? (
-                    <div className="flex items-center gap-1">
+                    <div className="flex items-center gap-1" style={{ paddingLeft: `${depth * 18}px` }}>
                         <input
                             type="text"
                             value={editingName}
@@ -190,9 +258,46 @@ const FileRow = React.memo<FileRowProps>(({
                         </button>
                     </div>
                 ) : (
-                    <div className="flex items-center gap-2 truncate">
-                        <FileText className="w-4 h-4 text-blue-400 shrink-0" />
-                        <span className="truncate" title={file.name}>{file.name}</span>
+                    <div className="flex items-center gap-1.5 truncate relative" style={{ paddingLeft: `${depth * 18}px` }}>
+                        {/* Tree Guide Lines */}
+                        {depth > 0 && (
+                            <span
+                                className="absolute left-0 top-0 bottom-0 border-l border-slate-800/80 pointer-events-none"
+                                style={{ left: `${(depth - 1) * 18 + 12}px` }}
+                            />
+                        )}
+
+                        {file.item_type === 'folder' ? (
+                            <button
+                                type="button"
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    onToggleExpand?.(file.source_path);
+                                }}
+                                className="p-0.5 text-slate-400 hover:text-white rounded hover:bg-slate-800 transition-colors shrink-0 cursor-pointer"
+                                title={isExpanded ? "Thu gọn (Double click)" : "Mở rộng (Double click)"}
+                            >
+                                {isExpanded ? (
+                                    <ChevronDown className="w-4 h-4 text-amber-300" />
+                                ) : (
+                                    <ChevronRight className="w-4 h-4 text-slate-400" />
+                                )}
+                            </button>
+                        ) : (
+                            <span className="w-5 shrink-0" />
+                        )}
+
+                        {renderFileTypeIcon(file, isExpanded)}
+
+                        <span className="truncate font-semibold text-slate-100 group-hover:text-blue-300 transition-colors" title={file.name}>
+                            {file.name}
+                        </span>
+
+                        {file.item_type === 'folder' && (
+                            <span className="text-[10px] text-amber-400/90 font-mono px-1.5 py-0.5 rounded bg-amber-400/10 border border-amber-400/20 shrink-0 ml-1">
+                                {childCount > 0 ? `${childCount} mục` : 'Empty'}
+                            </span>
+                        )}
                     </div>
                 )}
             </td>
@@ -209,7 +314,7 @@ const FileRow = React.memo<FileRowProps>(({
 
             {/* Size */}
             <td className="py-2.5 px-4 text-slate-300 font-mono text-[11px]">
-                {formatBytes(file.size_bytes)}
+                {file.item_type === 'folder' ? '—' : formatBytes(file.size_bytes)}
             </td>
 
             {/* Status */}
@@ -314,6 +419,7 @@ export const AutoMigrationCenter: React.FC<AutoMigrationCenterProps> = ({
     onRenameItem,
     onSyncSingleItem,
     onSyncCheckpointItem,
+    onQueueSelectedItems,
 }) => {
 
     const { t } = useTranslation();
@@ -326,6 +432,24 @@ export const AutoMigrationCenter: React.FC<AutoMigrationCenterProps> = ({
     const [editingItemId, setEditingItemId] = useState<number | null>(null);
     const [editingName, setEditingName] = useState<string>('');
     const [currentPage, setCurrentPage] = useState<number>(1);
+    const [localElapsedSec, setLocalElapsedSec] = useState<number>(0);
+    const [selectedSourceIds, setSelectedSourceIds] = useState<Set<string>>(new Set());
+    const [expandedFolderPaths, setExpandedFolderPaths] = useState<Set<string>>(() => new Set());
+
+    useEffect(() => {
+        if (!snapshotLoading) {
+            setLocalElapsedSec(0);
+            return;
+        }
+        const interval = setInterval(() => {
+            setLocalElapsedSec(prev => prev + 1);
+        }, 1000);
+        return () => clearInterval(interval);
+    }, [snapshotLoading]);
+
+    const effectiveSeconds = scanProgress?.elapsed_ms
+        ? Math.max(Math.floor(scanProgress.elapsed_ms / 1000), localElapsedSec)
+        : localElapsedSec;
 
     // Calculate quota percentage
     const uploadedGB = dailyQuota ? (dailyQuota.uploaded_bytes / (1024 * 1024 * 1024)).toFixed(2) : '0.00';
@@ -380,7 +504,7 @@ export const AutoMigrationCenter: React.FC<AutoMigrationCenterProps> = ({
         }
     };
 
-    // Filter ONLY actual files (exclude folder entries)
+    // Filter snapshot entries (include both files and folders)
     const partialSnapshotEntries = useMemo<MigrationItem[]>(
         () => {
             const activeItemsBySourceId = new Map(
@@ -391,9 +515,12 @@ export const AutoMigrationCenter: React.FC<AutoMigrationCenterProps> = ({
             return scanSnapshotItems.map((item, index) => {
                 const activeItem = activeItemsBySourceId.get(item.id);
                 if (activeItem) {
-                    const liveState = itemProgress?.job_id === activeItem.job_id
+                    const progressPhase = itemProgress?.job_id === activeItem.job_id
                         && itemProgress.item_id === activeItem.id
                         ? itemProgress.phase
+                        : null;
+                    const liveState = progressPhase === 'downloading' || progressPhase === 'uploading'
+                        ? progressPhase
                         : activeItem.state;
                     return { ...activeItem, state: liveState, queue_position: index };
                 }
@@ -427,42 +554,121 @@ export const AutoMigrationCenter: React.FC<AutoMigrationCenterProps> = ({
         const source = isPartialSnapshot
             ? partialSnapshotEntries
             : currentJobDetail?.files || [];
-        return source.filter(item => item.item_type === 'file');
+        return source;
     }, [currentJobDetail?.files, isPartialSnapshot, partialSnapshotEntries]);
 
-    // Multi-Filter & Sort with useMemo
+    const toggleExpandFolder = useCallback((folderPath: string) => {
+        setExpandedFolderPaths(prev => {
+            const next = new Set(prev);
+            if (next.has(folderPath)) {
+                next.delete(folderPath);
+            } else {
+                next.add(folderPath);
+            }
+            return next;
+        });
+    }, []);
+
+    const handleExpandAllFolders = useCallback(() => {
+        const allFolderPaths = rawFileEntries
+            .filter(f => f.item_type === 'folder')
+            .map(f => f.source_path);
+        setExpandedFolderPaths(new Set(allFolderPaths));
+    }, [rawFileEntries]);
+
+    const handleCollapseAllFolders = useCallback(() => {
+        setExpandedFolderPaths(new Set());
+    }, []);
+
+    const handleToggleSelectItem = useCallback((item: MigrationItem) => {
+        const sourceId = item.source_item_id || item.source_path;
+        if (!sourceId) return;
+
+        setSelectedSourceIds(prev => {
+            const next = new Set(prev);
+            const isCurrentlySelected = next.has(sourceId);
+
+            if (item.item_type === 'folder') {
+                const folderPathPrefix = `${item.source_path.trim().replace(/\/$/, '')}/`;
+                const childIds = scanSnapshotItems
+                    .filter(i => {
+                        const iPath = i.path || i.name;
+                        return iPath.startsWith(folderPathPrefix) || i.id === item.source_item_id;
+                    })
+                    .map(i => i.id);
+
+                if (isCurrentlySelected) {
+                    next.delete(sourceId);
+                    childIds.forEach(id => next.delete(id));
+                } else {
+                    next.add(sourceId);
+                    childIds.forEach(id => next.add(id));
+                }
+            } else {
+                if (isCurrentlySelected) {
+                    next.delete(sourceId);
+                } else {
+                    next.add(sourceId);
+                }
+            }
+            return next;
+        });
+    }, [scanSnapshotItems]);
+
+    // Multi-Filter & Tree Structure Visibility with useMemo
     const filteredFiles = useMemo(() => {
         let files = [...rawFileEntries];
 
-        // Search Query
-        if (searchQuery.trim()) {
-            const query = searchQuery.toLowerCase().trim();
-            files = files.filter(file => {
-                const parentFolder = getParentFolderDisplay(file);
-                return file.name.toLowerCase().includes(query) ||
-                    file.source_path.toLowerCase().includes(query) ||
-                    parentFolder.toLowerCase().includes(query);
+        const isFiltering = searchQuery.trim() !== '' || statusFilter !== 'all' || fileTypeFilter !== 'all' || sizeFilter !== 'all';
+
+        if (isFiltering) {
+            // Match items based on query/filters
+            const matchedPaths = new Set<string>();
+            files.forEach(file => {
+                let matches = true;
+                if (searchQuery.trim()) {
+                    const q = searchQuery.toLowerCase().trim();
+                    matches = matches && (file.name.toLowerCase().includes(q) || file.source_path.toLowerCase().includes(q));
+                }
+                if (statusFilter !== 'all') {
+                    matches = matches && file.state === statusFilter;
+                }
+                if (fileTypeFilter !== 'all') {
+                    matches = matches && getFileCategory(file.name, file.item_type) === fileTypeFilter;
+                }
+                if (sizeFilter !== 'all') {
+                    const s = file.size_bytes;
+                    if (sizeFilter === 'small') matches = matches && s < 10 * 1024 * 1024;
+                    else if (sizeFilter === 'medium') matches = matches && s >= 10 * 1024 * 1024 && s < 100 * 1024 * 1024;
+                    else if (sizeFilter === 'large') matches = matches && s >= 100 * 1024 * 1024 && s < 1024 * 1024 * 1024;
+                    else if (sizeFilter === 'huge') matches = matches && s >= 1024 * 1024 * 1024;
+                }
+
+                if (matches) {
+                    matchedPaths.add(file.source_path);
+                    // Add parent folder paths so tree structure is preserved
+                    const parts = file.source_path.trim().replace(/\/$/, '').split('/');
+                    let current = '';
+                    for (let i = 0; i < parts.length - 1; i++) {
+                        current = current ? `${current}/${parts[i]}` : parts[i];
+                        matchedPaths.add(current);
+                    }
+                }
             });
-        }
 
-        // Status Filter
-        if (statusFilter !== 'all') {
-            files = files.filter(file => file.state === statusFilter);
-        }
-
-        // File Type Filter
-        if (fileTypeFilter !== 'all') {
-            files = files.filter(file => getFileCategory(file.name) === fileTypeFilter);
-        }
-
-        // File Size Filter
-        if (sizeFilter !== 'all') {
+            files = files.filter(f => matchedPaths.has(f.source_path));
+        } else {
+            // Hierarchy visibility check: item is visible if top-level or all ancestor folders are expanded
             files = files.filter(file => {
-                const s = file.size_bytes;
-                if (sizeFilter === 'small') return s < 10 * 1024 * 1024;
-                if (sizeFilter === 'medium') return s >= 10 * 1024 * 1024 && s < 100 * 1024 * 1024;
-                if (sizeFilter === 'large') return s >= 100 * 1024 * 1024 && s < 1024 * 1024 * 1024;
-                if (sizeFilter === 'huge') return s >= 1024 * 1024 * 1024;
+                const parts = file.source_path.trim().replace(/\/$/, '').split('/');
+                if (parts.length <= 1) return true; // Top-level
+                let current = '';
+                for (let i = 0; i < parts.length - 1; i++) {
+                    current = current ? `${current}/${parts[i]}` : parts[i];
+                    if (!expandedFolderPaths.has(current)) {
+                        return false;
+                    }
+                }
                 return true;
             });
         }
@@ -486,7 +692,7 @@ export const AutoMigrationCenter: React.FC<AutoMigrationCenterProps> = ({
         });
 
         return files;
-    }, [rawFileEntries, searchQuery, statusFilter, fileTypeFilter, sizeFilter, sortOption]);
+    }, [rawFileEntries, searchQuery, statusFilter, fileTypeFilter, sizeFilter, sortOption, expandedFolderPaths]);
 
     const totalPages = Math.max(1, Math.ceil(filteredFiles.length / ITEMS_PER_PAGE));
 
@@ -494,6 +700,36 @@ export const AutoMigrationCenter: React.FC<AutoMigrationCenterProps> = ({
         const start = (currentPage - 1) * ITEMS_PER_PAGE;
         return filteredFiles.slice(start, start + ITEMS_PER_PAGE);
     }, [filteredFiles, currentPage]);
+
+    const handleSelectAllVisible = useCallback(() => {
+        setSelectedSourceIds(prev => {
+            const visibleIds = paginatedFiles
+                .map(f => f.source_item_id || f.source_path)
+                .filter(Boolean) as string[];
+            const allSelected = visibleIds.length > 0 && visibleIds.every(id => prev.has(id));
+
+            const next = new Set(prev);
+            if (allSelected) {
+                visibleIds.forEach(id => next.delete(id));
+            } else {
+                visibleIds.forEach(id => next.add(id));
+            }
+            return next;
+        });
+    }, [paginatedFiles]);
+
+    const isAllVisibleSelected = useMemo(() => {
+        const visibleIds = paginatedFiles
+            .map(f => f.source_item_id || f.source_path)
+            .filter(Boolean) as string[];
+        return visibleIds.length > 0 && visibleIds.every(id => selectedSourceIds.has(id));
+    }, [paginatedFiles, selectedSourceIds]);
+
+    const selectedTotalSize = useMemo(() => {
+        return rawFileEntries
+            .filter(f => (f.source_item_id && selectedSourceIds.has(f.source_item_id)) || selectedSourceIds.has(f.source_path))
+            .reduce((acc, curr) => acc + curr.size_bytes, 0);
+    }, [rawFileEntries, selectedSourceIds]);
 
     const transferLists = useMemo(
         () => selectTransferLists(currentJobDetail, itemProgress),
@@ -703,10 +939,15 @@ export const AutoMigrationCenter: React.FC<AutoMigrationCenterProps> = ({
                 </div>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 <TransferList
                     phase="downloading"
                     item={transferLists.downloading[0] ?? null}
+                    progress={itemProgress}
+                />
+                <TransferList
+                    phase="processing"
+                    item={transferLists.processing[0] ?? null}
                     progress={itemProgress}
                 />
                 <TransferList
@@ -716,26 +957,47 @@ export const AutoMigrationCenter: React.FC<AutoMigrationCenterProps> = ({
                 />
             </div>
 
-            {/* Flattened File List View (Danh Sách File Trải Phẳng theo File & Thao Tác Trực Tiếp) */}
+            {/* Cây Thư Mục OneDrive (Tree View theo Cấu Trúc Thư Mục) */}
             <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-4">
                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                     <div className="flex items-center gap-2">
-                        <ListFilter className="w-5 h-5 text-blue-400" />
+                        <FolderTree className="w-5 h-5 text-amber-400" />
                         <div>
                             <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                                {t('migration.flattened_files_title', 'Danh Sách File OneDrive Trải Phẳng')}
+                                Cây Thư Mục OneDrive
                                 <span className="text-xs font-normal text-slate-400 bg-slate-950 px-2 py-0.5 rounded-full border border-slate-800">
-                                    {filteredFiles.length} tệp
+                                    {filteredFiles.length} mục
                                 </span>
                             </h3>
                             <p className="text-xs text-slate-400">
-                                Danh sách tất cả file trên OneDrive (Cột Thư Mục Gốc thể hiện đường dẫn chứa file)
+                                Cấu trúc cây thư mục gốc OneDrive (nhấn mũi tên để mở/thu gọn thư mục)
                             </p>
                         </div>
                     </div>
 
                     {/* Filter & Sort Controls Row */}
                     <div className="flex flex-wrap items-center gap-2">
+                        {/* Quick Tree Controls */}
+                        <div className="flex items-center gap-1 bg-slate-950 px-2 py-1 rounded-xl border border-slate-800 text-xs mr-1">
+                            <button
+                                type="button"
+                                onClick={handleExpandAllFolders}
+                                className="px-2 py-0.5 rounded text-[11px] font-medium text-amber-300 hover:bg-slate-800 transition-colors"
+                                title="Mở tất cả thư mục"
+                            >
+                                Mở tất cả
+                            </button>
+                            <span className="text-slate-700">|</span>
+                            <button
+                                type="button"
+                                onClick={handleCollapseAllFolders}
+                                className="px-2 py-0.5 rounded text-[11px] font-medium text-slate-400 hover:bg-slate-800 hover:text-white transition-colors"
+                                title="Thu gọn tất cả thư mục"
+                            >
+                                Thu gọn
+                            </button>
+                        </div>
+
                         {/* Search Input */}
                         <div className="relative">
                             <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
@@ -844,18 +1106,80 @@ export const AutoMigrationCenter: React.FC<AutoMigrationCenterProps> = ({
                     </p>
                 )}
 
-                {/* Flattened File Table with Clickable Sorting Headers & Pagination */}
+                {/* Bulk Action Bar (Floating Selection Bar) */}
+                {selectedSourceIds.size > 0 && (
+                    <div className="flex flex-wrap items-center justify-between gap-4 p-3.5 bg-gradient-to-r from-blue-950 to-indigo-950 border border-blue-500/40 rounded-xl shadow-lg">
+                        <div className="flex items-center gap-3">
+                            <div className="flex items-center gap-2 px-3 py-1 bg-blue-600/30 border border-blue-500/40 rounded-lg text-xs font-bold text-white">
+                                <CheckSquare className="w-4 h-4 text-blue-400" />
+                                <span>Đã chọn {selectedSourceIds.size} mục</span>
+                            </div>
+                            <span className="text-xs font-mono text-slate-300">
+                                ({formatBytes(selectedTotalSize)})
+                            </span>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                            {/* Option 1: Download Only */}
+                            <button
+                                onClick={() => {
+                                    if (onQueueSelectedItems) {
+                                        onQueueSelectedItems(Array.from(selectedSourceIds), 'download');
+                                    }
+                                }}
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold transition-all shadow-md active:scale-95"
+                                title="Tải xuống thư mục/file đã chọn về máy"
+                            >
+                                <Download className="w-4 h-4" />
+                                <span>Tải xuống</span>
+                            </button>
+
+                            {/* Option 2: Full Sync Pipeline */}
+                            <button
+                                onClick={() => {
+                                    if (onQueueSelectedItems) {
+                                        onQueueSelectedItems(Array.from(selectedSourceIds), 'sync');
+                                    }
+                                }}
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-bold transition-all shadow-md active:scale-95"
+                                title="Quy trình: Tải xuống -> Nén FFmpeg (video) -> Upload TD -> Xóa OD"
+                            >
+                                <RefreshCw className="w-4 h-4" />
+                                <span>Đồng bộ (TD & Xóa OD)</span>
+                            </button>
+
+                            {/* Deselect button */}
+                            <button
+                                onClick={() => setSelectedSourceIds(new Set())}
+                                className="px-2 py-1.5 text-xs text-slate-400 hover:text-white transition-colors"
+                            >
+                                Hủy chọn
+                            </button>
+                        </div>
+                    </div>
+                )}
+
+                {/* Tree View Table with Clickable Sorting Headers & Pagination */}
                 <div className="bg-slate-950/80 border border-slate-800/80 rounded-xl overflow-hidden font-sans text-xs space-y-2">
                     <div className="max-h-96 overflow-y-auto custom-scrollbar">
                         <table className="w-full text-left border-collapse">
                             <thead>
                                 <tr className="border-b border-slate-800 bg-slate-950 text-slate-400 font-semibold sticky top-0 z-10 select-none">
+                                    <th className="py-3 px-3 w-10">
+                                        <input
+                                            type="checkbox"
+                                            checked={isAllVisibleSelected}
+                                            onChange={handleSelectAllVisible}
+                                            className="w-4 h-4 rounded border-slate-700 bg-slate-900 text-blue-600 focus:ring-blue-500 focus:ring-offset-slate-950 cursor-pointer"
+                                            title="Chọn tất cả mục đang hiển thị"
+                                        />
+                                    </th>
                                     <th
                                         onClick={() => handleHeaderSort('name')}
                                         className="py-3 px-4 cursor-pointer hover:bg-slate-900 hover:text-white transition-colors group"
                                     >
                                         <div className="flex items-center gap-1.5">
-                                            <span>Tên File</span>
+                                            <span>Cấu Trúc Tên File / Thư Mục</span>
                                             {renderSortIcon('name')}
                                         </div>
                                     </th>
@@ -892,7 +1216,7 @@ export const AutoMigrationCenter: React.FC<AutoMigrationCenterProps> = ({
                             <tbody className="divide-y divide-slate-800/60">
                                 {snapshotLoading ? (
                                     <tr>
-                                        <td colSpan={5} className="py-12 text-center">
+                                        <td colSpan={6} className="py-12 text-center">
                                             <div className="flex flex-col items-center gap-3 text-slate-300">
                                                 <RefreshCw className="w-7 h-7 text-blue-400 animate-spin" />
                                                 <div>
@@ -905,7 +1229,7 @@ export const AutoMigrationCenter: React.FC<AutoMigrationCenterProps> = ({
                                                                 pages: scanProgress.pages_scanned,
                                                                 files: scanProgress.discovered_files,
                                                                 folders: scanProgress.discovered_folders,
-                                                                seconds: Math.floor(scanProgress.elapsed_ms / 1000),
+                                                                seconds: effectiveSeconds,
                                                             })
                                                             : t('migration.loading_onedrive_files_description', 'Danh sách file sẽ xuất hiện ngay khi snapshot hoàn tất.')}
                                                     </p>
@@ -922,29 +1246,43 @@ export const AutoMigrationCenter: React.FC<AutoMigrationCenterProps> = ({
                                         </td>
                                     </tr>
                                 ) : paginatedFiles.length > 0 ? (
-                                    paginatedFiles.map((file) => (
-                                        <FileRow
-                                            key={file.id}
-                                            file={file}
-                                            jobId={currentJobDetail?.job.id || 0}
-                                            isEditing={editingItemId === file.id}
-                                            editingName={editingName}
-                                            setEditingName={setEditingName}
-                                            onStartRename={handleStartRename}
-                                            onSaveRename={handleSaveRename}
-                                            onCancelRename={handleCancelRename}
-                                            onDeleteItem={onDeleteItem}
-                                            onSyncSingleItem={onSyncSingleItem}
-                                            onSyncCheckpointItem={onSyncCheckpointItem}
-                                            readOnly={isPartialSnapshot}
-                                        />
+                                    paginatedFiles.map((file) => {
+                                        const cleanPath = file.source_path.trim().replace(/\/$/, '');
+                                        const depth = cleanPath.includes('/') ? cleanPath.split('/').length - 1 : 0;
+                                        const isExpanded = expandedFolderPaths.has(file.source_path);
+                                        const childCount = file.item_type === 'folder'
+                                            ? rawFileEntries.filter(f => f.source_path !== file.source_path && f.source_path.startsWith(`${cleanPath}/`)).length
+                                            : 0;
 
-                                    ))
+                                        return (
+                                            <FileRow
+                                                key={file.id}
+                                                file={file}
+                                                jobId={currentJobDetail?.job.id || 0}
+                                                depth={depth}
+                                                isExpanded={isExpanded}
+                                                onToggleExpand={toggleExpandFolder}
+                                                childCount={childCount}
+                                                isSelected={(file.source_item_id && selectedSourceIds.has(file.source_item_id)) || selectedSourceIds.has(file.source_path)}
+                                                onToggleSelect={handleToggleSelectItem}
+                                                isEditing={editingItemId === file.id}
+                                                editingName={editingName}
+                                                setEditingName={setEditingName}
+                                                onStartRename={handleStartRename}
+                                                onSaveRename={handleSaveRename}
+                                                onCancelRename={handleCancelRename}
+                                                onDeleteItem={onDeleteItem}
+                                                onSyncSingleItem={onSyncSingleItem}
+                                                onSyncCheckpointItem={onSyncCheckpointItem}
+                                                readOnly={isPartialSnapshot}
+                                            />
+                                        );
+                                    })
                                 ) : (
                                     <tr>
-                                        <td colSpan={5} className="py-8 text-center text-slate-500">
+                                        <td colSpan={6} className="py-8 text-center text-slate-500">
                                             {searchQuery || statusFilter !== 'all' || fileTypeFilter !== 'all' || sizeFilter !== 'all'
-                                                ? 'Không tìm thấy file phù hợp với các bộ lọc đã chọn.'
+                                                ? 'Không tìm thấy file hoặc thư mục phù hợp với các bộ lọc đã chọn.'
                                                 : t('migration.no_snapshot_files', 'Chưa có snapshot OneDrive. Nhấn “Quét lại” để thử lấy danh sách file.')}
                                         </td>
                                     </tr>

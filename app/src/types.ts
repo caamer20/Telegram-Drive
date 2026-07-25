@@ -217,7 +217,7 @@ export interface ScanProgressPayload {
 export interface ProcessingLogEntry {
     id: string;
     timestamp: number;
-    category: 'scan' | 'download' | 'upload' | 'job' | 'system';
+    category: 'scan' | 'download' | 'processing' | 'upload' | 'job' | 'system';
     level: 'info' | 'success' | 'warning' | 'error';
     message_key: string;
     params?: Record<string, string | number>;
@@ -257,7 +257,7 @@ export interface MigrationActivity {
     job_id: number;
     item_id?: number | null;
     item_name?: string | null;
-    phase: 'scan' | 'downloading' | 'uploading' | 'completed' | 'failed' | 'quota';
+    phase: 'scan' | 'downloading' | 'processing' | 'uploading' | 'completed' | 'failed' | 'quota';
     status: string;
     attempt: number;
     revision: number;
@@ -374,7 +374,7 @@ export interface ItemProgressPayload {
     job_id: number;
     item_id: number;
     item_name: string;
-    phase: 'downloading' | 'uploading';
+    phase: 'downloading' | 'analyzing' | 'processing' | 'uploading';
     percent: number;
     bytes_done: number;
     bytes_total: number;

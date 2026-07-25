@@ -18,6 +18,7 @@ const levelColor: Record<ProcessingLogEntry['level'], string> = {
 const categoryColor: Record<ProcessingLogEntry['category'], string> = {
     scan: 'bg-blue-500/10 text-blue-300 border-blue-500/20',
     download: 'bg-cyan-500/10 text-cyan-300 border-cyan-500/20',
+    processing: 'bg-violet-500/10 text-violet-300 border-violet-500/20',
     upload: 'bg-emerald-500/10 text-emerald-300 border-emerald-500/20',
     job: 'bg-purple-500/10 text-purple-300 border-purple-500/20',
     system: 'bg-slate-700/40 text-slate-300 border-slate-600/40',

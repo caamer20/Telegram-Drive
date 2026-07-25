@@ -93,15 +93,21 @@ pub async fn request_stop_auto_scan(
         });
     progress.phase = "stopping".into();
     publish_scan_progress(&app_handle, progress.clone());
-    let account_email = {
-        let session = state.ms_session.lock().await;
-        session
+    let account_email = match tokio::time::timeout(
+        std::time::Duration::from_millis(500),
+        state.ms_session.lock(),
+    )
+    .await
+    {
+        Ok(session_guard) => session_guard
             .as_ref()
             .map(|value| value.account_info.account_email.clone())
-            .filter(|value| !value.is_empty())
-            .ok_or_else(|| "microsoft_not_connected".to_string())?
+            .filter(|value| !value.is_empty()),
+        Err(_) => None,
     };
-    set_auto_scan_status(&state.db, &account_email, "stopped")?;
+    if let Some(email) = account_email {
+        let _ = set_auto_scan_status(&state.db, &email, "stopped");
+    }
     Ok(progress)
 }
 
@@ -131,7 +137,12 @@ async fn account_and_token(app_handle: &AppHandle) -> Result<(String, String), S
         .as_mut()
         .ok_or_else(|| "microsoft_not_connected".to_string())?;
     if session.is_expired() {
-        refresh_access_token(session).await?;
+        tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            refresh_access_token(session),
+        )
+        .await
+        .map_err(|_| "Microsoft token refresh timed out".to_string())??;
         crate::migration::session_store::save(app_handle, session)?;
     }
     Ok((
@@ -142,6 +153,16 @@ async fn account_and_token(app_handle: &AppHandle) -> Result<(String, String), S
 
 async fn run_auto_engine(app_handle: AppHandle, force_rescan: bool) -> Result<Option<i64>, String> {
     let mig_state = app_handle.state::<MigrationState>();
+    if mig_state
+        .scan_running
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
+        return Err("scan_already_running".into());
+    }
+    let _scan_guard = ScanRunningGuard(mig_state.scan_running.clone());
+    mig_state.scan_stop_requested.store(false, Ordering::SeqCst);
+
     let (account_email, access_token) = account_and_token(&app_handle).await?;
     if account_email.is_empty() {
         return Err("microsoft_not_connected".into());
@@ -237,15 +258,6 @@ async fn run_auto_engine(app_handle: AppHandle, force_rescan: bool) -> Result<Op
     ) {
         let _ = app_handle.emit("migration:activity", activity);
     }
-    if mig_state
-        .scan_running
-        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-        .is_err()
-    {
-        return Err("scan_already_running".into());
-    }
-    let _scan_guard = ScanRunningGuard(mig_state.scan_running.clone());
-    mig_state.scan_stop_requested.store(false, Ordering::SeqCst);
     spawn_worker(&app_handle, job_id);
     if existing_checkpoint.is_some() {
         set_auto_scan_status(&mig_state.db, &account_email, "enumerating")?;
