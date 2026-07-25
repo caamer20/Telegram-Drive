@@ -1,4 +1,3 @@
-use std::sync::Arc;
 use tauri::{Manager, State};
 
 use crate::migration::db;
@@ -780,17 +779,3 @@ pub async fn cmd_migration_queue_selected_items(
     Ok(job_id)
 }
 
-impl MigrationState {
-    pub fn clone_state(&self) -> Arc<Self> {
-        Arc::new(Self {
-            db: self.db.clone(),
-            ms_session: self.ms_session.clone(),
-            worker_running: self.worker_running.clone(),
-            scan_running: self.scan_running.clone(),
-            scan_stop_requested: self.scan_stop_requested.clone(),
-            scan_progress: self.scan_progress.clone(),
-            cancel_token: self.cancel_token.clone(),
-            pause_token: self.pause_token.clone(),
-        })
-    }
-}

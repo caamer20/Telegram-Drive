@@ -3,8 +3,8 @@ use crate::migration::disk_reserve::get_total_reserved_disk_space;
 use crate::migration::pipeline_v2::config::PipelineConfig;
 use crate::migration::pipeline_v2::runner::PipelineRunner;
 use crate::migration::pipeline_v2::stages::{
-    LocalFinalizer, MediaInspector, SourceDownloader, TelegramUploader, VideoMetadata,
-    VideoProcessor,
+    LocalFinalizer, MediaInspector, SourceDownloader, TelegramUploadRequest,
+    TelegramUploadResult, TelegramUploader, VideoMetadata, VideoProcessor,
 };
 
 use std::env;
@@ -155,17 +155,15 @@ struct FakeUploader {
 impl TelegramUploader for FakeUploader {
     fn upload_file(
         &self,
-        path: &Path,
-        _random_id: i64,
-        _filename: &str,
-    ) -> Pin<Box<dyn Future<Output = Result<i64, String>> + Send>> {
+        request: TelegramUploadRequest,
+    ) -> Pin<Box<dyn Future<Output = Result<TelegramUploadResult, String>> + Send>> {
         self.call_count.fetch_add(1, Ordering::Relaxed);
         let active = self.active_uploads.fetch_add(1, Ordering::Relaxed) + 1;
 
         let max_a = self.max_active.clone();
         let active_u = self.active_uploads.clone();
         let delay = self.delay;
-        let file_path = path.to_path_buf();
+        let file_path = request.path;
         let bytes_received = self.received_bytes.clone();
 
         Box::pin(async move {
@@ -184,7 +182,10 @@ impl TelegramUploader for FakeUploader {
                 tokio::time::sleep(delay).await;
             }
             active_u.fetch_sub(1, Ordering::Relaxed);
-            Ok(9999_i64) // Return fake message ID
+            Ok(TelegramUploadResult::Confirmed {
+                message_id: 9999_i64,
+                random_id: request.random_id,
+            })
         })
     }
 }
@@ -979,10 +980,8 @@ async fn test_canonical_permanent_failure_promotion() {
     impl TelegramUploader for FailingUploader {
         fn upload_file(
             &self,
-            _path: &Path,
-            _random_id: i64,
-            _filename: &str,
-        ) -> Pin<Box<dyn Future<Output = Result<i64, String>> + Send>> {
+            _request: TelegramUploadRequest,
+        ) -> Pin<Box<dyn Future<Output = Result<TelegramUploadResult, String>> + Send>> {
             Box::pin(async move { Err("permanent_error".to_string()) })
         }
     }
@@ -1059,14 +1058,12 @@ async fn test_retryable_canonical_failure_no_promotion() {
     });
 
     // Uploader returns retryable_error (not permanent_error)
-    struct FailingUploader;
-    impl TelegramUploader for FailingUploader {
+    struct FailingUploaderRetryable;
+    impl TelegramUploader for FailingUploaderRetryable {
         fn upload_file(
             &self,
-            _path: &Path,
-            _random_id: i64,
-            _filename: &str,
-        ) -> Pin<Box<dyn Future<Output = Result<i64, String>> + Send>> {
+            _request: TelegramUploadRequest,
+        ) -> Pin<Box<dyn Future<Output = Result<TelegramUploadResult, String>> + Send>> {
             Box::pin(async move { Err("retryable_error".to_string()) })
         }
     }
@@ -1089,7 +1086,7 @@ async fn test_retryable_canonical_failure_no_promotion() {
         downloader,
         inspector,
         processor,
-        Arc::new(FailingUploader),
+        Arc::new(FailingUploaderRetryable),
         finalizer,
     );
     tokio::time::sleep(Duration::from_millis(500)).await;
@@ -1502,13 +1499,14 @@ async fn test_target_isolation_between_jobs() {
     impl TelegramUploader for IsolationUploader {
         fn upload_file(
             &self,
-            _path: &Path,
-            _random_id: i64,
-            _filename: &str,
-        ) -> Pin<Box<dyn Future<Output = Result<i64, String>> + Send>> {
-            Box::pin(async {
+            request: TelegramUploadRequest,
+        ) -> Pin<Box<dyn Future<Output = Result<TelegramUploadResult, String>> + Send>> {
+            Box::pin(async move {
                 tokio::time::sleep(Duration::from_millis(100)).await;
-                Ok(9999)
+                Ok(TelegramUploadResult::Confirmed {
+                    message_id: 9999,
+                    random_id: request.random_id,
+                })
             })
         }
     }

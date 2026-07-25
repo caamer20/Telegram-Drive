@@ -1,5 +1,5 @@
 use std::future::Future;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -21,6 +21,7 @@ pub enum PipelineStage {
     RetryWait,
     ReconciliationRequired,
     Failed,
+    WaitingForQuota,
 }
 
 impl PipelineStage {
@@ -43,6 +44,7 @@ impl PipelineStage {
             Self::RetryWait => "retry_wait",
             Self::ReconciliationRequired => "reconciliation_required",
             Self::Failed => "failed",
+            Self::WaitingForQuota => "waiting_for_quota",
         }
     }
 
@@ -64,6 +66,7 @@ impl PipelineStage {
             "skipped_duplicate" => Self::SkippedDuplicate,
             "retry_wait" => Self::RetryWait,
             "reconciliation_required" => Self::ReconciliationRequired,
+            "waiting_for_quota" => Self::WaitingForQuota,
             _ => Self::Failed,
         }
     }
@@ -107,6 +110,34 @@ pub struct VideoMetadata {
 }
 
 // Decoupling dependency traits
+
+/// Loại media để adapter biết cách gửi lên Telegram
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TelegramMediaKind {
+    Video,
+    Image,
+    Other,
+}
+
+/// Request typed cho Telegram upload — không hardcode item ID, không bỏ qua random_id
+#[derive(Debug, Clone)]
+pub struct TelegramUploadRequest {
+    pub job_id: i64,
+    pub item_id: i64,
+    pub path: PathBuf,
+    pub filename: String,
+    pub random_id: i64,
+    pub destination_id: Option<i64>,
+    pub media_kind: TelegramMediaKind,
+}
+
+/// Kết quả typed từ Telegram upload
+#[derive(Debug, Clone)]
+pub enum TelegramUploadResult {
+    Confirmed { message_id: i64, random_id: i64 },
+    ReconciliationRequired { random_id: i64, reason: String },
+}
+
 pub trait SourceDownloader: Send + Sync {
     fn download_file(
         &self,
@@ -135,10 +166,8 @@ pub trait VideoProcessor: Send + Sync {
 pub trait TelegramUploader: Send + Sync {
     fn upload_file(
         &self,
-        path: &Path,
-        random_id: i64,
-        filename: &str,
-    ) -> Pin<Box<dyn Future<Output = Result<i64, String>> + Send>>;
+        request: TelegramUploadRequest,
+    ) -> Pin<Box<dyn Future<Output = Result<TelegramUploadResult, String>> + Send>>;
 }
 
 pub trait LocalFinalizer: Send + Sync {

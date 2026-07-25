@@ -13,7 +13,9 @@
 // Does NOT change the existing upload adapter behavior.
 // Does NOT send as photo — always sends as document/file.
 
-use crate::migration::pipeline_v2::stages::TelegramUploader;
+use crate::migration::pipeline_v2::stages::{
+    TelegramUploadRequest, TelegramUploadResult, TelegramUploader,
+};
 use crate::migration::telegram_idempotency::{
     get_deterministic_random_id, map_updates_response_v2,
 };
@@ -236,17 +238,19 @@ impl TelegramProductionAdapter {
 impl TelegramUploader for TelegramProductionAdapter {
     fn upload_file(
         &self,
-        path: &Path,
-        _random_id: i64,
-        filename: &str,
-    ) -> Pin<Box<dyn Future<Output = Result<i64, String>> + Send>> {
+        request: TelegramUploadRequest,
+    ) -> Pin<Box<dyn Future<Output = Result<TelegramUploadResult, String>> + Send>> {
         let client = self.client.clone();
         let peer_cache = self.peer_cache.clone();
         let cancel_token = self.cancel_token.clone();
-        let folder_id = self.destination_folder_id;
+        let folder_id = request.destination_id.or(self.destination_folder_id);
         let db = self.db.clone();
-        let path = path.to_path_buf();
-        let filename = filename.to_string();
+        let path = request.path;
+        let filename = request.filename;
+        let item_id = request.item_id;
+        let job_id = request.job_id;
+        let runner_random_id = request.random_id;
+        let _media_kind = request.media_kind;
 
         Box::pin(async move {
             if cancel_token.load(Ordering::Relaxed) {
@@ -265,29 +269,51 @@ impl TelegramUploader for TelegramProductionAdapter {
             };
 
             // 2. Persist upload attempt in DB BEFORE any network call
-            //    This ensures retry-after-crash reuses the same random_id.
+            //    Uses the ACTUAL item_id from the request, NOT hardcoded.
             let persisted_random_id = if let Some(ref db) = db {
-                // Use a fixed attempt number (1) for now; the pacing engine
-                // in Vòng 2B2B will manage attempt counters properly.
-                match TelegramProductionAdapter::load_existing_attempt(db, 1) {
+                // Try to load existing attempt for THIS item
+                match TelegramProductionAdapter::load_existing_attempt(db, item_id) {
                     Ok(Some((_aid, rid))) => {
-                        log::info!("Upload: reusing persisted random_id={}", rid);
+                        log::info!(
+                            "Upload: reusing persisted random_id={} for item {}",
+                            rid,
+                            item_id
+                        );
                         rid
                     }
                     _ => {
-                        let (_aid, rid) =
-                            TelegramProductionAdapter::persist_upload_attempt(db, 1, 1)?;
-                        log::info!("Upload: created new persisted random_id={}", rid);
-                        rid
+                        // Use the random_id from the runner, and persist it
+                        let upload_attempt_id =
+                            format!("job_{}_item_{}_attempt_1", job_id, item_id);
+                        // Persist the runner's random_id, not a new one
+                        {
+                            let conn = db.lock().map_err(|e| e.to_string())?;
+                            let mut upd = conn
+                                .prepare(
+                                    "UPDATE migration_items SET upload_attempt_id = ?, telegram_random_id = ? WHERE id = ?;",
+                                )
+                                .map_err(|e| e.to_string())?;
+                            upd.bind((1, upload_attempt_id.as_str()))
+                                .map_err(|e| e.to_string())?;
+                            upd.bind((2, runner_random_id))
+                                .map_err(|e| e.to_string())?;
+                            upd.bind((3, item_id))
+                                .map_err(|e| e.to_string())?;
+                            upd.next().map_err(|e| e.to_string())?;
+                        }
+                        log::info!(
+                            "Upload: persisted runner random_id={} for item {}",
+                            runner_random_id,
+                            item_id
+                        );
+                        runner_random_id
                     }
                 }
             } else {
-                return Err(
-                    "Upload: no DB configured for random_id persistence".to_string(),
-                );
+                return Err("Upload: no DB configured for random_id persistence".to_string());
             };
 
-            // 3. Binary upload via upload_stream (reuses existing machinery)
+            // 3. Binary upload via upload_stream
             let (mut reader, total_size, _bytes_counter) =
                 crate::commands::fs::ProgressReader::new(path.to_str().unwrap_or(""))
                     .await
@@ -328,6 +354,7 @@ impl TelegramUploader for TelegramProductionAdapter {
                     .map_err(|e| format!("Upload: peer resolution failed: {}", e))?;
 
             // 5. Send with explicit persisted random_id
+            //    Images and other files are always sent as document/file, not photo
             let send_result = {
                 let message = InputMessage::new().text("").file(uploaded_file);
                 tg_client
@@ -339,21 +366,41 @@ impl TelegramUploader for TelegramProductionAdapter {
                 Ok(msg) => {
                     let msg_id = msg.id() as i64;
                     log::info!(
-                        "Upload: sent '{}' to Telegram, msg_id={}, random_id={}",
+                        "Upload: sent '{}' to Telegram, msg_id={}, random_id={}, item_id={}",
                         filename,
                         msg_id,
-                        persisted_random_id
+                        persisted_random_id,
+                        item_id
                     );
-                    Ok(msg_id)
+                    Ok(TelegramUploadResult::Confirmed {
+                        message_id: msg_id,
+                        random_id: persisted_random_id,
+                    })
                 }
                 Err(e) => {
                     let err_msg = crate::commands::utils::map_error(e);
                     let upload_err = TelegramProductionAdapter::map_grammers_error(&err_msg);
-                    // Don't change random_id on failure — keep for reconciliation
-                    Err(format!(
-                        "Upload: send_message_with_random_id failed (random_id={}): {}",
-                        persisted_random_id, upload_err
-                    ))
+                    // If uncertain (not confirmed failure), mark as reconciliation_required
+                    if matches!(
+                        upload_err,
+                        UploadError::Network(_) | UploadError::Unknown(_)
+                    ) {
+                        log::warn!(
+                            "Upload: uncertain result for item {}, random_id={}, reason: {}",
+                            item_id,
+                            persisted_random_id,
+                            upload_err
+                        );
+                        Ok(TelegramUploadResult::ReconciliationRequired {
+                            random_id: persisted_random_id,
+                            reason: format!("{}", upload_err),
+                        })
+                    } else {
+                        Err(format!(
+                            "Upload: send_message_with_random_id failed (random_id={}): {}",
+                            persisted_random_id, upload_err
+                        ))
+                    }
                 }
             }
         })

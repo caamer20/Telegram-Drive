@@ -1,6 +1,7 @@
 pub mod adapters_v2;
 pub mod auto_engine;
 pub mod commands;
+pub mod commands_v2;
 pub mod db;
 pub mod disk_reserve;
 pub mod manifest;
@@ -20,6 +21,15 @@ use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use tokio::sync::Mutex as TokioMutex;
 
+use crate::migration::pipeline_v2::runner::PipelineRunner;
+
+/// Active V2 pipeline handle
+pub struct ActivePipelineV2 {
+    pub job_id: i64,
+    pub runner: Arc<PipelineRunner>,
+    pub cancel_token: crate::migration::pipeline_v2::runner::CancellationToken,
+}
+
 pub struct MigrationState {
     pub db: db::MigrationDb,
     pub ms_session: Arc<TokioMutex<Option<microsoft::MicrosoftSession>>>,
@@ -29,6 +39,8 @@ pub struct MigrationState {
     pub scan_progress: Arc<Mutex<Option<models::ScanProgressPayload>>>,
     pub cancel_token: Arc<AtomicBool>,
     pub pause_token: Arc<AtomicBool>,
+    /// Active V2 pipeline run (only one at a time)
+    pub active_pipeline_v2: Arc<TokioMutex<Option<ActivePipelineV2>>>,
 }
 
 impl MigrationState {
@@ -49,7 +61,22 @@ impl MigrationState {
             scan_progress: Arc::new(Mutex::new(None)),
             cancel_token: Arc::new(AtomicBool::new(false)),
             pause_token: Arc::new(AtomicBool::new(false)),
+            active_pipeline_v2: Arc::new(TokioMutex::new(None)),
         }
+    }
+
+    pub fn clone_state(&self) -> Arc<Self> {
+        Arc::new(Self {
+            db: self.db.clone(),
+            ms_session: self.ms_session.clone(),
+            worker_running: self.worker_running.clone(),
+            scan_running: self.scan_running.clone(),
+            scan_stop_requested: self.scan_stop_requested.clone(),
+            scan_progress: self.scan_progress.clone(),
+            cancel_token: Arc::new(AtomicBool::new(false)),
+            pause_token: Arc::new(AtomicBool::new(false)),
+            active_pipeline_v2: self.active_pipeline_v2.clone(),
+        })
     }
 }
 

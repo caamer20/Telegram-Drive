@@ -855,10 +855,19 @@ pub fn run() {
             migration::commands::cmd_migration_get_scan_snapshot,
             migration::commands::cmd_migration_sync_scan_snapshot_item,
             migration::commands::cmd_migration_get_activity,
-            migration::commands::cmd_migration_delete_item,
-            migration::commands::cmd_migration_rename_item,
+            // V1 destructive commands — disabled for V2 safety
+            // migration::commands::cmd_migration_delete_item,
+            // migration::commands::cmd_migration_rename_item,
             migration::commands::cmd_migration_sync_single_item,
             migration::commands::cmd_migration_queue_selected_items,
+            // V2 backup commands
+            migration::commands_v2::cmd_backup_v2_preflight,
+            migration::commands_v2::cmd_backup_v2_start,
+            migration::commands_v2::cmd_backup_v2_pause,
+            migration::commands_v2::cmd_backup_v2_resume,
+            migration::commands_v2::cmd_backup_v2_stop,
+            migration::commands_v2::cmd_backup_v2_get_status,
+            migration::commands_v2::cmd_backup_v2_retry_manifest,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

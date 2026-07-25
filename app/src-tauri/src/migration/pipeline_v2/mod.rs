@@ -7,4 +7,6 @@ pub mod transitions;
 
 pub use config::PipelineConfig;
 pub use runner::PipelineRunner;
-pub use stages::PipelineStage;
+pub use stages::{
+    PipelineStage, TelegramMediaKind, TelegramUploadRequest, TelegramUploadResult,
+};

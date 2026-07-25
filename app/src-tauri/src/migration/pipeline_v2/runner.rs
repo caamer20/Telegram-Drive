@@ -4,10 +4,13 @@ use crate::migration::pipeline_v2::classifier::{classify_file, FileCategory};
 use crate::migration::pipeline_v2::config::PipelineConfig;
 use crate::migration::pipeline_v2::stages::{
     LocalFinalizer, MediaInspector, PipelineItem, PipelineStage, SourceDownloader,
-    TelegramUploader, VideoProcessor,
+    TelegramMediaKind, TelegramUploadRequest, TelegramUploadResult, TelegramUploader,
+    VideoProcessor,
 };
 use crate::migration::pipeline_v2::transitions::update_item_pipeline_stage;
+use crate::migration::quota_reserve::{commit_quota, release_quota, reserve_quota};
 use crate::migration::telegram_idempotency::get_deterministic_random_id;
+use chrono::Utc;
 
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
@@ -95,6 +98,23 @@ fn sanitize_path(path: &str) -> PathBuf {
     safe
 }
 
+/// Parse flood wait seconds from Telegram error string
+fn parse_flood_wait_seconds(err_str: &str) -> Option<i64> {
+    if let Some(idx) = err_str.find("FLOOD_WAIT_") {
+        let rest = &err_str[idx + "FLOOD_WAIT_".len()..];
+        let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+        digits.parse::<i64>().ok()
+    } else if let Some(idx) = err_str.find("flood wait") {
+        let digits: String = err_str[idx..]
+            .chars()
+            .filter(|c| c.is_ascii_digit())
+            .collect();
+        digits.parse::<i64>().ok()
+    } else {
+        None
+    }
+}
+
 /// Trạng thái hoạt động nội bộ của Pipeline Runner
 pub struct PipelineRunner {
     pub config: PipelineConfig,
@@ -104,6 +124,12 @@ pub struct PipelineRunner {
     pub backup_dir: PathBuf,
     pub cancel_token: CancellationToken,
     pub active_tasks: std::sync::Mutex<Vec<JoinHandle<()>>>,
+    /// Per-item spawned tasks (download/process/upload/local-finalize)
+    pub item_tasks: Arc<std::sync::Mutex<Vec<JoinHandle<()>>>>,
+    /// Channel senders for graceful shutdown
+    channel_tx: std::sync::Mutex<Option<(
+        mpsc::Sender<PipelineItem>, // download_tx
+    )>>,
 }
 
 impl PipelineRunner {
@@ -124,6 +150,8 @@ impl PipelineRunner {
             backup_dir,
             cancel_token: CancellationToken::new(),
             active_tasks: std::sync::Mutex::new(vec![]),
+            item_tasks: Arc::new(std::sync::Mutex::new(vec![])),
+            channel_tx: std::sync::Mutex::new(None),
         }
     }
 
@@ -140,6 +168,12 @@ impl PipelineRunner {
         let (process_tx, process_rx) = mpsc::channel(self.config.processing_queue_capacity);
         let (upload_tx, upload_rx) = mpsc::channel(self.config.upload_queue_capacity);
         let (local_tx, local_rx) = mpsc::channel(self.config.local_finalizer_queue_capacity);
+
+        // Save download_tx for graceful shutdown
+        {
+            let mut guard = self.channel_tx.lock().unwrap();
+            *guard = Some((download_tx.clone(),));
+        }
 
         let runner_clone = self.clone();
         let cancel = self.cancel_token.clone();
@@ -192,6 +226,64 @@ impl PipelineRunner {
         guard.push(local_handle);
 
         cancel
+    }
+
+    /// Theo dõi một task per-item được spawn bởi downloader/processor/uploader/local-finalizer
+    pub fn track_item_task(&self, handle: JoinHandle<()>) {
+        let mut guard = self.item_tasks.lock().unwrap();
+        guard.push(handle);
+    }
+
+    /// Đợi tất cả các task chính kết thúc, sau đó đợi các item task, rồi kiểm tra completion
+    pub async fn run_to_completion(&self) -> Result<(), String> {
+        // 1. Drain active tasks (5 main loop tasks)
+        let main_tasks: Vec<JoinHandle<()>> = {
+            let mut guard = self.active_tasks.lock().unwrap();
+            std::mem::take(&mut *guard)
+        };
+
+        for handle in main_tasks {
+            let _ = handle.await;
+        }
+
+        // 2. Drain per-item spawned tasks
+        let item_tasks: Vec<JoinHandle<()>> = {
+            let mut guard = self.item_tasks.lock().unwrap();
+            std::mem::take(&mut *guard)
+        };
+
+        for handle in item_tasks {
+            let _ = handle.await;
+        }
+
+        // 3. Clean up channel senders to prevent leaks
+        {
+            let mut guard = self.channel_tx.lock().unwrap();
+            *guard = None;
+        }
+
+        Ok(())
+    }
+
+    /// Check if job has any non-terminal items remaining
+    pub fn has_pending_items(&self) -> bool {
+        let conn = match self.db.lock() {
+            Ok(c) => c,
+            Err(_) => return true, // assume pending on error
+        };
+        let mut stmt = match conn.prepare(
+            "SELECT COUNT(*) FROM migration_items WHERE job_id = ? AND pipeline_stage NOT IN ('completed_telegram', 'completed_local', 'skipped_duplicate', 'failed', 'reconciliation_required') AND duplicate_of_item_id IS NULL;"
+        ) {
+            Ok(s) => s,
+            Err(_) => return true,
+        };
+        stmt.bind((1, self.job_id)).ok();
+        if let Ok(sqlite::State::Row) = stmt.next() {
+            let count: i64 = stmt.read(0).unwrap_or(1);
+            count > 0
+        } else {
+            true
+        }
     }
 
     /// Task Planner quét DB tìm tệp pending đưa vào download queue (Backpressure tự động qua bounded channel)
@@ -307,8 +399,9 @@ impl PipelineRunner {
             let local_tx_clone = local_tx.clone();
             let workspace = self.workspace_dir.clone();
             let cancel = self.cancel_token.clone();
+            let item_tasks = self.item_tasks.clone(); // Shared vec for per-item tasks
 
-            tokio::spawn(async move {
+            let handle = tokio::spawn(async move {
                 let _permit = permit;
                 if cancel.is_cancelled() {
                     return;
@@ -376,6 +469,11 @@ impl PipelineRunner {
                                     item.id,
                                     PipelineStage::Failed,
                                 );
+                                // Release disk on rename failure
+                                {
+                                    let conn = db_clone.lock().unwrap();
+                                    let _ = release_disk_space(&conn, &res_id);
+                                }
                             } else {
                                 println!("Downloader rename OK for item {}", item.id);
                                 item.original_sha256 = Some(sha256.clone());
@@ -454,13 +552,25 @@ impl PipelineRunner {
                                 PipelineStage::Failed,
                             );
                             let _ = std::fs::remove_file(&part_path);
+                            // Release disk on download failure
+                            {
+                                let conn = db_clone.lock().unwrap();
+                                let _ = release_disk_space(&conn, &res_id);
+                            }
                         }
                     }
                 } else {
                     println!("Downloader source_item_id is None for item {}", item.id);
                     let _ = update_item_pipeline_stage(&db_clone, item.id, PipelineStage::Failed);
+                    // Release disk on missing source
+                    {
+                        let conn = db_clone.lock().unwrap();
+                        let _ = release_disk_space(&conn, &res_id);
+                    }
                 }
             });
+            // Track per-item task
+            item_tasks.lock().unwrap().push(handle);
         }
         Ok(())
     }
@@ -491,8 +601,9 @@ impl PipelineRunner {
             let upload_tx_clone = upload_tx.clone();
             let workspace = self.workspace_dir.clone();
             let cancel = self.cancel_token.clone();
+            let item_tasks = self.item_tasks.clone();
 
-            tokio::spawn(async move {
+            let handle = tokio::spawn(async move {
                 let _permit = permit;
                 if cancel.is_cancelled() {
                     return;
@@ -590,6 +701,7 @@ impl PipelineRunner {
                     }
                 }
             });
+            item_tasks.lock().unwrap().push(handle);
         }
         Ok(())
     }
@@ -617,62 +729,218 @@ impl PipelineRunner {
             let uploader_clone = uploader.clone();
             let workspace = self.workspace_dir.clone();
             let cancel = self.cancel_token.clone();
+            let item_tasks = self.item_tasks.clone();
 
-            tokio::spawn(async move {
+            let handle = tokio::spawn(async move {
                 let _permit = permit;
                 println!("Uploader spawned task active for item {}", item.id);
                 if cancel.is_cancelled() {
                     return;
                 }
 
-                let _ = update_item_pipeline_stage(&db_clone, item.id, PipelineStage::Uploading);
-
                 // Chọn đúng tệp processed hoặc original để upload
-                let file_path = if item.video_decision.as_deref() == Some("transcode") {
-                    workspace.join(format!("{}.processed.mp4", item.id))
-                } else {
-                    workspace.join(format!("{}", item.id))
+                // A2 fix: remux_copy ALSO uses .processed.mp4, not just transcode
+                let (file_path, artifact_size) = {
+                    let path = if matches!(
+                        item.video_decision.as_deref(),
+                        Some("remux_copy" | "transcode")
+                    ) {
+                        workspace.join(format!("{}.processed.mp4", item.id))
+                    } else {
+                        workspace.join(format!("{}", item.id))
+                    };
+                    let size = std::fs::metadata(&path)
+                        .map(|m| m.len() as i64)
+                        .unwrap_or(item.size_bytes);
+                    (path, size)
                 };
 
-                // Sinh deterministic random_id để chống trùng lặp
-                let upload_attempt_id = format!("job_{}_item_{}_attempt_1", item.job_id, item.id);
+                // Quota check — atomic reserve before upload
+                let date_string = Utc::now().format("%Y-%m-%d").to_string();
+                {
+                    let conn = db_clone.lock().unwrap();
+                    if let Err(e) = reserve_quota(
+                        &conn,
+                        item.id,
+                        item.job_id,
+                        &date_string,
+                        artifact_size,
+                        7200, // 2 hour expiry
+                    ) {
+                        log::warn!(
+                            "Upload: quota reserve failed for item {}: {} — moving to waiting_for_quota",
+                            item.id, e
+                        );
+                        // conn goes out of scope here, dropping the lock
+                        drop(conn);
+                        let _ = update_item_pipeline_stage(
+                            &db_clone,
+                            item.id,
+                            PipelineStage::WaitingForQuota,
+                        );
+                        return;
+                    }
+                }
+
+                let _ = update_item_pipeline_stage(&db_clone, item.id, PipelineStage::Uploading);
+
+                // Sinh deterministic random_id
+                let upload_attempt_id =
+                    format!("job_{}_item_{}_attempt_1", item.job_id, item.id);
                 let random_id = get_deterministic_random_id(&upload_attempt_id);
 
-                match uploader_clone
-                    .upload_file(&file_path, random_id, &item.name)
-                    .await
-                {
-                    Ok(msg_id) => {
-                        // Ghi nhận thành công
+                // Determine media kind
+                let media_kind = match classify_file(&item.name) {
+                    FileCategory::Video => TelegramMediaKind::Video,
+                    FileCategory::Image => TelegramMediaKind::Image,
+                    FileCategory::Other => TelegramMediaKind::Other,
+                };
+
+                let request = TelegramUploadRequest {
+                    job_id: item.job_id,
+                    item_id: item.id,
+                    path: file_path.clone(),
+                    filename: item.name.clone(),
+                    random_id,
+                    destination_id: None,
+                    media_kind,
+                };
+
+                match uploader_clone.upload_file(request).await {
+                    Ok(result) => match result {
+                        TelegramUploadResult::Confirmed {
+                            message_id,
+                            random_id: confirmed_random_id,
+                        } => {
+                            // Update artifact size in DB
+                            {
+                                let conn = db_clone.lock().unwrap();
+                                let mut upd = conn
+                                    .prepare(
+                                        "UPDATE migration_items SET artifact_size_bytes = ? WHERE id = ?;",
+                                    )
+                                    .unwrap();
+                                upd.bind((1, artifact_size)).unwrap();
+                                upd.bind((2, item.id)).unwrap();
+                                upd.next().unwrap();
+                            }
+
+                            // Commit quota
+                            {
+                                let conn = db_clone.lock().unwrap();
+                                let _ = commit_quota(&conn, item.id);
+                            }
+
+                            // Ghi nhận thành công
+                            {
+                                let conn = db_clone.lock().unwrap();
+                                let mut upd = conn
+                                    .prepare(
+                                        "UPDATE migration_items SET telegram_message_id = ?, telegram_random_id = ? WHERE id = ?;",
+                                    )
+                                    .unwrap();
+                                upd.bind((1, message_id)).unwrap();
+                                upd.bind((2, confirmed_random_id)).unwrap();
+                                upd.bind((3, item.id)).unwrap();
+                                upd.next().unwrap();
+                            }
+
+                            let _ = update_item_pipeline_stage(
+                                &db_clone,
+                                item.id,
+                                PipelineStage::CompletedTelegram,
+                            );
+
+                            // Dọn dẹp tệp tin trong workspace
+                            let _ = std::fs::remove_file(&file_path);
+                        }
+                        TelegramUploadResult::ReconciliationRequired {
+                            random_id: rec_random_id,
+                            reason,
+                        } => {
+                            log::warn!(
+                                "Upload: reconciliation_required for item {}, random_id={}, reason: {}",
+                                item.id, rec_random_id, reason
+                            );
+
+                            // Commit quota conservatively (assume sent)
+                            {
+                                let conn = db_clone.lock().unwrap();
+                                let _ = commit_quota(&conn, item.id);
+                            }
+
+                            // Update item stage
+                            {
+                                let conn = db_clone.lock().unwrap();
+                                let mut upd = conn
+                                    .prepare(
+                                        "UPDATE migration_items SET telegram_random_id = ?, last_error_message = ? WHERE id = ?;",
+                                    )
+                                    .unwrap();
+                                upd.bind((1, rec_random_id)).unwrap();
+                                upd.bind((2, reason.as_str())).unwrap();
+                                upd.bind((3, item.id)).unwrap();
+                                upd.next().unwrap();
+                            }
+
+                            let _ = update_item_pipeline_stage(
+                                &db_clone,
+                                item.id,
+                                PipelineStage::ReconciliationRequired,
+                            );
+                        }
+                    },
+                    Err(e) => {
+                        // Release quota on confirmed failure
                         {
                             let conn = db_clone.lock().unwrap();
-                            let mut upd = conn.prepare("UPDATE migration_items SET telegram_message_id = ? WHERE id = ?;").unwrap();
-                            upd.bind((1, msg_id)).unwrap();
-                            upd.bind((2, item.id)).unwrap();
-                            upd.next().unwrap();
+                            let _ = release_quota(&conn, item.id);
+                        }
+
+                        // Check if it's a FloodWait
+                        if let Some(seconds) = parse_flood_wait_seconds(&e) {
+                            log::warn!(
+                                "Upload: FloodWait {}s for item {}",
+                                seconds,
+                                item.id
+                            );
+                            // Persist flood wait state
+                            let now = Utc::now().timestamp();
+                            let next_allowed = now + seconds;
+                            {
+                                let conn = db_clone.lock().unwrap();
+                                let mut upd = conn
+                                    .prepare(
+                                        "INSERT OR REPLACE INTO migration_pacing_state (key, next_allowed_at, updated_at) VALUES ('next_allowed_at', ?, ?);",
+                                    )
+                                    .unwrap();
+                                upd.bind((1, next_allowed)).unwrap();
+                                upd.bind((2, now)).unwrap();
+                                upd.next().unwrap();
+                            }
+                            // Sleep outside of DB lock
+                            tokio::time::sleep(tokio::time::Duration::from_secs(
+                                seconds as u64,
+                            ))
+                            .await;
                         }
 
                         let _ = update_item_pipeline_stage(
                             &db_clone,
                             item.id,
-                            PipelineStage::CompletedTelegram,
+                            PipelineStage::Failed,
                         );
 
-                        // Dọn dẹp tệp tin trong workspace
-                        let _ = std::fs::remove_file(&file_path);
-                    }
-                    Err(e) => {
-                        let _ =
-                            update_item_pipeline_stage(&db_clone, item.id, PipelineStage::Failed);
-
-                        if e == "permanent_error" {
-                            let _ = crate::migration::pipeline_v2::transitions::promote_canonical(
-                                &db_clone, item.id,
-                            );
+                        if e.contains("permanent_error") {
+                            let _ =
+                                crate::migration::pipeline_v2::transitions::promote_canonical(
+                                    &db_clone, item.id,
+                                );
                         }
                     }
                 }
             });
+            item_tasks.lock().unwrap().push(handle);
         }
         Ok(())
     }
@@ -700,8 +968,9 @@ impl PipelineRunner {
             let workspace = self.workspace_dir.clone();
             let backup = self.backup_dir.clone();
             let cancel = self.cancel_token.clone();
+            let item_tasks = self.item_tasks.clone();
 
-            tokio::spawn(async move {
+            let handle = tokio::spawn(async move {
                 let _permit = permit;
                 if cancel.is_cancelled() {
                     return;
@@ -766,6 +1035,7 @@ impl PipelineRunner {
                     }
                 }
             });
+            item_tasks.lock().unwrap().push(handle);
         }
         Ok(())
     }

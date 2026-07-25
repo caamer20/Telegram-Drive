@@ -41,6 +41,10 @@ pub fn validate_stage_transition(from: PipelineStage, to: PipelineStage) -> bool
                 || to == PipelineStage::RetryWait
                 || to == PipelineStage::ReconciliationRequired
         }
+        PipelineStage::WaitingForQuota => {
+            to == PipelineStage::QueuedUpload
+                || to == PipelineStage::Failed
+        }
         PipelineStage::SavingLocal => {
             to == PipelineStage::CompletedLocal || to == PipelineStage::RetryWait
         }
