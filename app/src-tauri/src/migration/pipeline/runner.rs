@@ -337,13 +337,19 @@ impl PipelineRunner {
         upload_tx: mpsc::Sender<PipelineItem>,
         local_tx: mpsc::Sender<PipelineItem>,
     ) -> Result<(), String> {
+        // Recover all non-terminal items on pipeline start/restart
+        let terminal_stages = "'completed_telegram', 'completed_local', 'failed', 'reconciliation_required'";
         let items = {
             let conn = self.db.lock().map_err(|e| e.to_string())?;
-            let mut stmt = conn.prepare(
-                "SELECT id, job_id, name, path, source_item_id, size, item_category, original_sha256, processed_sha256, video_decision, pipeline_stage 
-                 FROM migration_items 
-                 WHERE job_id = ? AND pipeline_stage IN ('discovered', 'downloaded', 'reconciliation_required');"
-            ).map_err(|e| e.to_string())?;
+            let query = format!(
+                "SELECT id, job_id, name, path, source_item_id, size, item_category, \
+                 original_sha256, processed_sha256, video_decision, pipeline_stage, \
+                 original_artifact_path, processed_artifact_path \
+                 FROM migration_items \
+                 WHERE job_id = ? AND pipeline_stage NOT IN ({})",
+                terminal_stages
+            );
+            let mut stmt = conn.prepare(&query).map_err(|e| e.to_string())?;
             
             stmt.bind((1, self.job_id)).map_err(|e| e.to_string())?;
             
@@ -360,6 +366,8 @@ impl PipelineRunner {
                 let processed_sha256: Option<String> = stmt.read(8).unwrap_or_default();
                 let video_decision: Option<String> = stmt.read(9).unwrap_or_default();
                 let state: String = stmt.read(10).unwrap();
+                let original_path: Option<String> = stmt.read(11).unwrap_or_default();
+                let processed_path: Option<String> = stmt.read(12).unwrap_or_default();
                 
                 items.push(PipelineItem {
                     id,
@@ -375,10 +383,12 @@ impl PipelineRunner {
                     state: state.clone(),
                     original_sha256,
                     processed_sha256,
-                    local_artifact_path: None,
+                    local_artifact_path: original_path,
                     telegram_random_id: None,
                     video_decision,
                 });
+                // Store processed_path for routing logic below
+                let _ = processed_path;
             }
             items
         };
@@ -389,28 +399,72 @@ impl PipelineRunner {
             }
             let stage = item.state.as_str();
             match stage {
-                "discovered" => {
+                // Items that need (re-)download
+                "discovered" | "queued_download" | "downloading" => {
+                    // Reset downloading items — .part files will be cleaned up by downloader
+                    let _ = update_item_pipeline_stage(&self.db, item.id, PipelineStage::QueuedDownload);
                     let _ = download_tx.send(item).await;
                 }
-                "downloaded" => {
-                    // Need to route based on category
+                // Items already downloaded — verify and route
+                "downloaded" | "queued_processing" | "processing" | "processed" | "queued_upload" | "uploading" => {
+                    // Check if processed artifact exists and is valid
+                    let workspace = &self.workspace_dir;
+                    let processed_exists = std::path::Path::new(&workspace.join(format!("{}.processed.mp4", item.id))).exists();
+                    let original_exists = std::path::Path::new(&workspace.join(format!("{}", item.id))).exists();
+                    
                     let category = crate::migration::pipeline::classifier::classify_file(&item.name);
-                    match category {
-                        crate::migration::pipeline::classifier::FileCategory::Video => {
-                            let _ = process_tx.send(item).await;
+                    
+                    if processed_exists && matches!(category, crate::migration::pipeline::classifier::FileCategory::Video) {
+                        // Has processed video → retry upload
+                        let _ = update_item_pipeline_stage(&self.db, item.id, PipelineStage::QueuedUpload);
+                        let _ = upload_tx.send(item).await;
+                    } else if original_exists {
+                        // Has original file → route based on category
+                        match category {
+                            crate::migration::pipeline::classifier::FileCategory::Video => {
+                                let _ = update_item_pipeline_stage(&self.db, item.id, PipelineStage::QueuedProcessing);
+                                let _ = process_tx.send(item).await;
+                            }
+                            crate::migration::pipeline::classifier::FileCategory::Image => {
+                                let _ = update_item_pipeline_stage(&self.db, item.id, PipelineStage::QueuedUpload);
+                                let _ = upload_tx.send(item).await;
+                            }
+                            crate::migration::pipeline::classifier::FileCategory::Other => {
+                                let _ = update_item_pipeline_stage(&self.db, item.id, PipelineStage::SavingLocal);
+                                let _ = local_tx.send(item).await;
+                            }
                         }
-                        crate::migration::pipeline::classifier::FileCategory::Image => {
-                            let _ = upload_tx.send(item).await;
-                        }
-                        crate::migration::pipeline::classifier::FileCategory::Other => {
-                            let _ = local_tx.send(item).await;
-                        }
+                    } else {
+                        // No artifacts — re-download
+                        let _ = update_item_pipeline_stage(&self.db, item.id, PipelineStage::QueuedDownload);
+                        let _ = download_tx.send(item).await;
                     }
                 }
+                // Items needing local finalization
+                "saving_local" => {
+                    let original_exists = std::path::Path::new(&self.workspace_dir.join(format!("{}", item.id))).exists();
+                    if original_exists {
+                        let _ = local_tx.send(item).await;
+                    } else {
+                        // No artifact — download first
+                        let _ = update_item_pipeline_stage(&self.db, item.id, PipelineStage::QueuedDownload);
+                        let _ = download_tx.send(item).await;
+                    }
+                }
+                // Items waiting for quota — keep them, don't re-queue
+                "waiting_for_quota" => {
+                    // Keep in waiting_for_quota — will be picked up by quota watcher
+                    log::info!("Recovery: item {} still waiting for quota", item.id);
+                }
+                // Reconciliation items
                 "reconciliation_required" => {
                     let _ = upload_tx.send(item).await;
                 }
-                _ => {}
+                _ => {
+                    log::warn!("Recovery: unknown stage '{}' for item {} — queuing for download", stage, item.id);
+                    let _ = update_item_pipeline_stage(&self.db, item.id, PipelineStage::QueuedDownload);
+                    let _ = download_tx.send(item).await;
+                }
             }
         }
         Ok(())
