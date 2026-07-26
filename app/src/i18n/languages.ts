@@ -1,4 +1,4 @@
-export type SupportedLanguage = 'en' | 'es' | 'ru' | 'zh-CN' | 'fr' | 'ar' | 'pt-BR' | 'de' | 'hi' | 'id' | 'tr' | 'ja' | 'ko';
+export type SupportedLanguage = 'en' | 'es' | 'ru' | 'zh-CN' | 'fr' | 'ar' | 'pt-BR' | 'de' | 'hi' | 'id' | 'tr' | 'ja' | 'ko' | 'it';
 
 export interface LanguageInfo {
     code: SupportedLanguage;
@@ -21,4 +21,5 @@ export const LANGUAGES: LanguageInfo[] = [
     { code: 'tr', nativeLabel: 'Türkçe', englishLabel: 'Turkish', dir: 'ltr' },
     { code: 'ja', nativeLabel: '日本語', englishLabel: 'Japanese', dir: 'ltr' },
     { code: 'ko', nativeLabel: '한국어', englishLabel: 'Korean', dir: 'ltr' },
+    { code: 'it', nativeLabel: 'Italiano', englishLabel: 'Italian', dir: 'ltr' },
 ];
