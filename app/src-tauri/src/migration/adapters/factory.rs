@@ -236,13 +236,13 @@ mod tests {
         // Seed DB
         {
             let conn = db.lock().unwrap();
-            conn.execute("INSERT INTO migration_jobs (id, state, pipeline_version, created_at, updated_at) VALUES (1, 'running', 2, 0, 0);").unwrap();
+            conn.execute("INSERT INTO migration_jobs (id, source_folder_id, source_folder_path, telegram_destination_id, telegram_destination_name, local_backup_dir, workspace_dir, state, started_at, created_at, updated_at) VALUES (1, 'src', 'path', 'tg', 'tg', 'loc', 'ws', 'running', 0, 0, 0);").unwrap();
             // Video item
-            conn.execute("INSERT INTO migration_items (id, job_id, name, source_path, source_item_id, state, pipeline_stage, size_bytes, created_at) VALUES (1, 1, 'movie.mp4', 'movie.mp4', 'od_item_1', 'pending', 'discovered', 100000, 0);").unwrap();
+            conn.execute("INSERT INTO migration_items (id, job_id, folder_id, name, path, source_item_id, size, item_category, pipeline_stage, created_at, updated_at) VALUES (1, 1, 'f', 'movie.mp4', 'movie.mp4', 'od_item_1', 100, 'video', 'discovered', 0, 0);").unwrap();
             // Image item
-            conn.execute("INSERT INTO migration_items (id, job_id, name, source_path, source_item_id, state, pipeline_stage, size_bytes, created_at) VALUES (2, 1, 'photo.jpg', 'photo.jpg', 'od_item_2', 'pending', 'discovered', 50000, 0);").unwrap();
+            conn.execute("INSERT INTO migration_items (id, job_id, folder_id, name, path, source_item_id, size, item_category, pipeline_stage, created_at, updated_at) VALUES (2, 1, 'f', 'photo.jpg', 'photo.jpg', 'od_item_2', 100, 'video', 'discovered', 0, 0);").unwrap();
             // PDF item (other)
-            conn.execute("INSERT INTO migration_items (id, job_id, name, source_path, source_item_id, state, pipeline_stage, size_bytes, created_at) VALUES (3, 1, 'doc.pdf', 'doc.pdf', 'od_item_3', 'pending', 'discovered', 25000, 0);").unwrap();
+            conn.execute("INSERT INTO migration_items (id, job_id, folder_id, name, path, source_item_id, size, item_category, pipeline_stage, created_at, updated_at) VALUES (3, 1, 'f', 'doc.pdf', 'doc.pdf', 'od_item_3', 100, 'video', 'discovered', 0, 0);").unwrap();
         }
 
         // Build OneDrive adapter with wiremock
@@ -358,17 +358,6 @@ mod tests {
         // The OneDrive adapter only does GET requests, which we've verified
         // through the mock server setup. No additional assertion needed.
         // The wiremock mocks would panic on unregistered methods.
-
-        // TEST 5: Disk reservation release after download
-        {
-            let conn = db.lock().unwrap();
-            let reserved = crate::migration::disk_reserve::get_total_reserved_disk_space(&conn, 1)
-                .unwrap_or(0);
-            // After our manual download test (which doesn't use pipeline),
-            // check that disk reservations are clean.
-            // The pipeline test suite covers reservation lifecycle more thoroughly.
-            log::info!("Disk reserved after composition test: {}", reserved);
-        }
 
         // Verify adapter paths are under backup dir
         let safe_path =

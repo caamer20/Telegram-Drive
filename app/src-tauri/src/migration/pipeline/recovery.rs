@@ -29,7 +29,7 @@ pub fn run_crash_recovery(db: &MigrationDb, job_id: i64) -> Result<(), String> {
                 // Trả về Downloaded để processor xử lý lại
                 Some(PipelineStage::Downloaded)
             }
-            PipelineStage::Uploading | PipelineStage::QueuedUpload => {
+            PipelineStage::Uploading | PipelineStage::QueuedUpload | PipelineStage::WaitingForQuota => {
                 // Đổi thành ReconciliationRequired để kiểm tra trùng lặp trước khi upload lại
                 Some(PipelineStage::ReconciliationRequired)
             }
@@ -42,7 +42,7 @@ pub fn run_crash_recovery(db: &MigrationDb, job_id: i64) -> Result<(), String> {
 
         if let Some(target) = target_stage {
             let mut upd = conn
-                .prepare("UPDATE migration_items SET pipeline_stage = ?, state = 'pending' WHERE id = ?;")
+                .prepare("UPDATE migration_items SET pipeline_stage = ? WHERE id = ?;")
                 .map_err(|e| e.to_string())?;
             upd.bind((1, target.as_str())).map_err(|e| e.to_string())?;
             upd.bind((2, id)).map_err(|e| e.to_string())?;
@@ -91,11 +91,11 @@ mod tests {
         let conn = db.lock().unwrap();
 
         // Seed
-        conn.execute("INSERT INTO migration_jobs (id, state, pipeline_version, created_at, updated_at) VALUES (1, 'running', 2, 0, 0);").unwrap();
-
-        conn.execute("INSERT INTO migration_items (id, job_id, name, source_path, state, pipeline_stage, created_at) VALUES (1, 1, 'file1.mp4', 'path1', 'downloading', 'downloading', 0);").unwrap();
-        conn.execute("INSERT INTO migration_items (id, job_id, name, source_path, state, pipeline_stage, created_at) VALUES (2, 1, 'file2.mp4', 'path2', 'downloading', 'processing', 0);").unwrap();
-        conn.execute("INSERT INTO migration_items (id, job_id, name, source_path, state, pipeline_stage, created_at) VALUES (3, 1, 'file3.mp4', 'path3', 'downloading', 'uploading', 0);").unwrap();
+        conn.execute("INSERT INTO migration_jobs (id, source_folder_id, source_folder_path, telegram_destination_id, telegram_destination_name, local_backup_dir, workspace_dir, state, started_at, created_at, updated_at) VALUES (1, 'src', 'path', 'tg', 'tg', 'loc', 'ws', 'running', 0, 0, 0);").unwrap();
+        // Insert items recovering into various stages
+        conn.execute("INSERT INTO migration_items (id, job_id, folder_id, name, path, source_item_id, size, item_category, pipeline_stage, created_at, updated_at) VALUES (1, 1, 'f', 'file1.mp4', 'file1.mp4', 's1', 100, 'video', 'downloading', 0, 0);").unwrap();
+        conn.execute("INSERT INTO migration_items (id, job_id, folder_id, name, path, source_item_id, size, item_category, pipeline_stage, created_at, updated_at) VALUES (2, 1, 'f', 'file2.mp4', 'file2.mp4', 's2', 100, 'video', 'processing', 0, 0);").unwrap();
+        conn.execute("INSERT INTO migration_items (id, job_id, folder_id, name, path, source_item_id, size, item_category, pipeline_stage, created_at, updated_at) VALUES (3, 1, 'f', 'file3.mp4', 'file3.mp4', 's3', 100, 'video', 'uploading', 0, 0);").unwrap();
 
         drop(conn);
 

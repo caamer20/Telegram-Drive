@@ -107,32 +107,7 @@ impl SourceDownloader for OneDriveDownloader {
                 None => return Err("InvalidResponse: Missing download URL".to_string()),
             };
 
-            // Parse fingerprint/hash from metadata
-            let mut fingerprint_type = None;
-            let mut fingerprint_value = None;
-            if let Some(hashes) = json["file"]["hashes"].as_object() {
-                if let Some(quickxor) = hashes.get("quickXorHash").and_then(|v| v.as_str()) {
-                    fingerprint_type = Some("quickXorHash".to_string());
-                    fingerprint_value = Some(quickxor.to_string());
-                } else if let Some(sha1) = hashes.get("sha1Hash").and_then(|v| v.as_str()) {
-                    fingerprint_type = Some("sha1Hash".to_string());
-                    fingerprint_value = Some(sha1.to_string());
-                }
-            }
 
-            // Persist fingerprint type & value in DB
-            if let (Some(f_type), Some(f_val)) = (&fingerprint_type, &fingerprint_value) {
-                let conn = db.lock().map_err(|e| e.to_string())?;
-                let mut upd = conn
-                    .prepare(
-                        "UPDATE migration_items SET source_fingerprint_type = ?, source_fingerprint_value = ? WHERE id = ?;",
-                    )
-                    .map_err(|e| e.to_string())?;
-                upd.bind((1, f_type.as_str())).map_err(|e| e.to_string())?;
-                upd.bind((2, f_val.as_str())).map_err(|e| e.to_string())?;
-                upd.bind((3, item_id)).map_err(|e| e.to_string())?;
-                upd.next().map_err(|e| e.to_string())?;
-            }
 
             // 3. Download the file streamingly
             let mut stream_resp = match http.get(&download_url).send().await {
@@ -218,9 +193,9 @@ mod tests {
         // Seed item
         {
             let conn = db.lock().unwrap();
-            conn.execute("INSERT INTO migration_jobs (id, state, pipeline_version, created_at, updated_at) VALUES (1, 'running', 2, 0, 0);").unwrap();
-            conn.execute("INSERT INTO migration_items (id, job_id, name, source_path, source_item_id, state, pipeline_stage, created_at)
-                          VALUES (1, 1, 'test.txt', 'test.txt', 'item123', 'pending', 'discovered', 0);").unwrap();
+            conn.execute("INSERT INTO migration_jobs (id, source_folder_id, source_folder_path, telegram_destination_id, telegram_destination_name, local_backup_dir, workspace_dir, state, started_at, created_at, updated_at) VALUES (1, 'src', 'path', 'tg', 'tg', 'loc', 'ws', 'running', 0, 0, 0);").unwrap();
+            conn.execute("INSERT INTO migration_items (id, job_id, folder_id, name, path, source_item_id, size, item_category, pipeline_stage, created_at, updated_at)
+                          VALUES (1, 1, 'f', 'test.txt', 'test.txt', 'item123', 100, 'file', 'discovered', 0, 0);").unwrap();
         }
 
         let mock_metadata = serde_json::json!({
@@ -279,12 +254,7 @@ mod tests {
         let content = std::fs::read_to_string(&dest).unwrap();
         assert_eq!(content, "hello world");
 
-        // Verify fingerprint was persisted
-        let conn = db.lock().unwrap();
-        let mut stmt = conn.prepare("SELECT source_fingerprint_type, source_fingerprint_value FROM migration_items WHERE id = 1;").unwrap();
-        assert_eq!(stmt.next().unwrap(), sqlite::State::Row);
-        assert_eq!(stmt.read::<String, _>(0).unwrap(), "quickXorHash");
-        assert_eq!(stmt.read::<String, _>(1).unwrap(), "fake_quickxor");
+
     }
 
     #[tokio::test]
@@ -340,99 +310,5 @@ mod tests {
             .await
             .unwrap_err();
         assert!(err.contains("RateLimited"));
-    }
-
-    #[tokio::test]
-    async fn test_onedrive_adapter_persists_download_metadata_with_item_id_binding() {
-        // Regression: ensure UPDATE binds item_id correctly.
-        // Test with TWO items in DB — only the downloaded item should change.
-        let mock_server = MockServer::start().await;
-        let tmp = TempDir::new();
-        let db_path = tmp.path.join("test_od_bind.db");
-        let db = open_migration_db_at_path(db_path).unwrap();
-
-        // Seed TWO items
-        {
-            let conn = db.lock().unwrap();
-            conn.execute("INSERT INTO migration_jobs (id, state, pipeline_version, created_at, updated_at) VALUES (1, 'running', 2, 0, 0);").unwrap();
-            conn.execute("INSERT INTO migration_items (id, job_id, name, source_path, source_item_id, state, pipeline_stage, created_at)
-                          VALUES (1, 1, 'item_a.txt', 'item_a.txt', 'item_a', 'pending', 'discovered', 0);").unwrap();
-            conn.execute("INSERT INTO migration_items (id, job_id, name, source_path, source_item_id, state, pipeline_stage, created_at)
-                          VALUES (2, 1, 'item_b.txt', 'item_b.txt', 'item_b', 'pending', 'discovered', 0);").unwrap();
-        }
-
-        // Mock for item A (will be downloaded)
-        let mock_metadata_a = serde_json::json!({
-            "id": "item_a",
-            "name": "item_a.txt",
-            "file": { "hashes": { "quickXorHash": "qx_a" } },
-            "@microsoft.graph.downloadUrl": format!("{}/download/item_a", mock_server.uri())
-        });
-
-        Mock::given(method("GET"))
-            .and(path("/v1.0/me/drive/items/item_a"))
-            .and(header("Authorization", "Bearer fake_token"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(mock_metadata_a))
-            .mount(&mock_server)
-            .await;
-
-        Mock::given(method("GET"))
-            .and(path("/download/item_a"))
-            .respond_with(ResponseTemplate::new(200).set_body_raw(b"item a content", "text/plain"))
-            .mount(&mock_server)
-            .await;
-
-        let session = MicrosoftSession {
-            client_id: "client123".to_string(),
-            access_token: "fake_token".to_string(),
-            refresh_token: "ref_token".to_string(),
-            expires_at: chrono::Utc::now().timestamp() + 3600,
-            tenant: "common".to_string(),
-            redirect_uri: "http://redirect".to_string(),
-            account_info: MsAccountInfo {
-                account_name: "Test".to_string(),
-                account_email: "test@mail.com".to_string(),
-            },
-        };
-
-        let downloader = OneDriveDownloader::new_with_base_url(
-            Client::new(),
-            Arc::new(TokioMutex::new(Some(session))),
-            db.clone(),
-            mock_server.uri(),
-        );
-
-        // Download ONLY item A
-        let dest_a = tmp.path.join("item_a.txt");
-        let _hash = downloader
-            .download_file(1, "item_a", &dest_a)
-            .await
-            .unwrap();
-
-        // Verify item A metadata was updated
-        let conn = db.lock().unwrap();
-        let mut stmt_a = conn
-            .prepare("SELECT source_fingerprint_type, source_fingerprint_value FROM migration_items WHERE id = 1;")
-            .unwrap();
-        assert_eq!(stmt_a.next().unwrap(), sqlite::State::Row);
-        assert_eq!(stmt_a.read::<String, _>(0).unwrap(), "quickXorHash");
-        assert_eq!(stmt_a.read::<String, _>(1).unwrap(), "qx_a");
-
-        // Verify item B was NOT updated (still NULL fingerprints)
-        let mut stmt_b = conn
-            .prepare("SELECT source_fingerprint_type, source_fingerprint_value FROM migration_items WHERE id = 2;")
-            .unwrap();
-        assert_eq!(stmt_b.next().unwrap(), sqlite::State::Row);
-        // Item B should have NULL fingerprints — unchanged
-        let fp_type_b: Option<String> = stmt_b.read(0).unwrap_or(None);
-        let fp_val_b: Option<String> = stmt_b.read(1).unwrap_or(None);
-        assert!(
-            fp_type_b.is_none(),
-            "Item B fingerprint type should remain NULL"
-        );
-        assert!(
-            fp_val_b.is_none(),
-            "Item B fingerprint value should remain NULL"
-        );
     }
 }

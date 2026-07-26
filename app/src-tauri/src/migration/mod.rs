@@ -1,7 +1,7 @@
 pub mod adapters;
 pub mod commands;
 pub mod db;
-pub mod disk_reserve;
+
 pub mod microsoft;
 pub mod models;
 pub mod pipeline;

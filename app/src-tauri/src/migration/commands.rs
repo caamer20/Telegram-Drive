@@ -146,12 +146,15 @@ pub async fn cmd_migration_start(
             &workspace_dir,
         )?;
         
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as i64;
         let mut stmt = conn.prepare(
-            "INSERT INTO folder_queue (job_id, folder_id, folder_path, state) VALUES (?, ?, ?, 'pending')"
+            "INSERT INTO folder_queue (job_id, folder_id, folder_path, state, created_at, updated_at) VALUES (?, ?, ?, 'pending', ?, ?)"
         ).map_err(|e| e.to_string())?;
         stmt.bind((1, jid)).unwrap();
         stmt.bind((2, source_folder_id.as_str())).unwrap();
         stmt.bind((3, source_folder_path.as_str())).unwrap();
+        stmt.bind((4, now)).unwrap();
+        stmt.bind((5, now)).unwrap();
         stmt.next().unwrap();
         jid
     };
@@ -225,53 +228,116 @@ pub async fn cmd_migration_stop(
 pub async fn cmd_migration_get_status(
     state: State<'_, MigrationState>,
     job_id: i64,
-) -> Result<serde_json::Value, String> {
-    // Check if pipeline is running
-    let is_running = {
-        let active_guard = state.active_pipeline.lock().await;
-        active_guard.as_ref().map_or(false, |p| p.job_id == job_id)
-    };
-    
+) -> Result<MigrationJobDetail, String> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
     
-    // Get stats from migration_items
-    let mut stmt = conn.prepare(
-        "SELECT pipeline_stage, COUNT(*) FROM migration_items WHERE job_id = ? GROUP BY pipeline_stage;"
-    ).map_err(|e| e.to_string())?;
-    stmt.bind((1, job_id)).map_err(|e| e.to_string())?;
-    
-    let mut item_stats = serde_json::Map::new();
-    let mut total_items = 0;
-    while let Ok(sqlite::State::Row) = stmt.next() {
-        let stage: String = stmt.read(0).unwrap_or_default();
-        let count: i64 = stmt.read(1).unwrap_or(0);
-        item_stats.insert(stage, serde_json::json!(count));
-        total_items += count;
+    // 1. Get Job
+    let mut job_stmt = conn.prepare("SELECT * FROM migration_jobs WHERE id = ?").map_err(|e| e.to_string())?;
+    job_stmt.bind((1, job_id)).map_err(|e| e.to_string())?;
+    let job = if let Ok(sqlite::State::Row) = job_stmt.next() {
+        MigrationJob {
+            id: job_stmt.read(0).unwrap_or(0),
+            source_folder_id: job_stmt.read(1).unwrap_or_default(),
+            source_folder_path: job_stmt.read(2).unwrap_or_default(),
+            telegram_destination_id: job_stmt.read(3).unwrap_or_default(),
+            telegram_destination_name: job_stmt.read(4).unwrap_or_default(),
+            local_backup_dir: job_stmt.read(5).unwrap_or_default(),
+            workspace_dir: job_stmt.read(6).unwrap_or_default(),
+            state: job_stmt.read(7).unwrap_or_default(),
+            started_at: job_stmt.read(8).unwrap_or(0),
+            completed_at: job_stmt.read(9).ok(),
+            last_error: job_stmt.read(10).ok(),
+            flood_wait_until: job_stmt.read(11).ok(),
+            discovered_folders: job_stmt.read(12).unwrap_or(0),
+            completed_folders: job_stmt.read(13).unwrap_or(0),
+            discovered_items: job_stmt.read(14).unwrap_or(0),
+            completed_items: job_stmt.read(15).unwrap_or(0),
+            failed_items: job_stmt.read(16).unwrap_or(0),
+            waiting_items: job_stmt.read(17).unwrap_or(0),
+            created_at: job_stmt.read(18).unwrap_or(0),
+            updated_at: job_stmt.read(19).unwrap_or(0),
+        }
+    } else {
+        return Err("Job not found".into());
+    };
+
+    // 2. Get Files
+    let mut files_stmt = conn.prepare("SELECT * FROM migration_items WHERE job_id = ?").map_err(|e| e.to_string())?;
+    files_stmt.bind((1, job_id)).map_err(|e| e.to_string())?;
+    let mut files = Vec::new();
+    while let Ok(sqlite::State::Row) = files_stmt.next() {
+        files.push(MigrationItem {
+            id: files_stmt.read(0).unwrap_or(0),
+            job_id: files_stmt.read(1).unwrap_or(0),
+            folder_id: files_stmt.read(2).unwrap_or_default(),
+            source_item_id: files_stmt.read(3).unwrap_or_default(),
+            name: files_stmt.read(4).unwrap_or_default(),
+            path: files_stmt.read(5).unwrap_or_default(),
+            size: files_stmt.read(6).unwrap_or(0),
+            item_category: files_stmt.read(7).unwrap_or_default(),
+            pipeline_stage: files_stmt.read(8).unwrap_or_default(),
+            original_artifact_path: files_stmt.read(9).ok(),
+            processed_artifact_path: files_stmt.read(10).ok(),
+            original_sha256: files_stmt.read(11).ok(),
+            processed_sha256: files_stmt.read(12).ok(),
+            video_decision: files_stmt.read(13).ok(),
+            artifact_size: files_stmt.read(14).ok(),
+            telegram_attempt_id: files_stmt.read(15).ok(),
+            telegram_random_id: files_stmt.read(16).ok(),
+            telegram_message_id: files_stmt.read(17).ok(),
+            retry_count: files_stmt.read(18).unwrap_or(0),
+            last_error: files_stmt.read(19).ok(),
+            created_at: files_stmt.read(20).unwrap_or(0),
+            updated_at: files_stmt.read(21).unwrap_or(0),
+            completed_at: files_stmt.read(22).ok(),
+        });
     }
-    
-    // Get stats from folder_queue
-    let mut stmt = conn.prepare(
-        "SELECT state, COUNT(*) FROM folder_queue WHERE job_id = ? GROUP BY state;"
-    ).map_err(|e| e.to_string())?;
-    stmt.bind((1, job_id)).map_err(|e| e.to_string())?;
-    
-    let mut folder_stats = serde_json::Map::new();
-    let mut total_folders = 0;
-    while let Ok(sqlite::State::Row) = stmt.next() {
-        let folder_state: String = stmt.read(0).unwrap_or_default();
-        let count: i64 = stmt.read(1).unwrap_or(0);
-        folder_stats.insert(folder_state, serde_json::json!(count));
-        total_folders += count;
+
+    // 3. Stats
+    let total_folders = job.discovered_folders;
+    let total_files = files.len() as i64;
+    let total_bytes: i64 = files.iter().map(|f| f.size).sum();
+    let completed_files = files.iter().filter(|f| f.pipeline_stage == "completed").count() as i64;
+    let completed_bytes: i64 = files.iter().filter(|f| f.pipeline_stage == "completed").map(|f| f.size).sum();
+    let failed_files = files.iter().filter(|f| f.pipeline_stage == "failed").count() as i64;
+    let skipped_duplicates = files.iter().filter(|f| f.pipeline_stage == "skipped_duplicate").count() as i64;
+    let pending_files = files.iter().filter(|f| !["completed", "failed", "skipped_duplicate"].contains(&f.pipeline_stage.as_str())).count() as i64;
+
+    let stats = MigrationStats {
+        total_folders,
+        total_files,
+        total_bytes,
+        completed_files,
+        completed_bytes,
+        failed_files,
+        skipped_duplicates,
+        pending_files,
+    };
+
+    // 4. Folders
+    let mut folders_stmt = conn.prepare("SELECT folder_path, COUNT(*), SUM(size) FROM migration_items WHERE job_id = ? GROUP BY folder_path").map_err(|e| e.to_string())?;
+    // Wait, folder_path is not in migration_items. The path contains it. Let's just group by folder_id, but folder_queue has folder_path.
+    // Instead of complex join, let's just use folder_queue for folders.
+    let mut folders = Vec::new();
+    let mut fq_stmt = conn.prepare("SELECT folder_path FROM folder_queue WHERE job_id = ?").map_err(|e| e.to_string())?;
+    fq_stmt.bind((1, job_id)).map_err(|e| e.to_string())?;
+    while let Ok(sqlite::State::Row) = fq_stmt.next() {
+        let fpath: String = fq_stmt.read(0).unwrap_or_default();
+        let fname = fpath.split('/').last().unwrap_or("").to_string();
+        folders.push(FolderSummary {
+            source_path: fpath,
+            name: fname,
+            file_count: 0,
+            total_size: 0,
+        });
     }
-    
-    Ok(serde_json::json!({
-        "job_id": job_id,
-        "is_running": is_running,
-        "total_items": total_items,
-        "item_stats": item_stats,
-        "total_folders": total_folders,
-        "folder_stats": folder_stats,
-    }))
+
+    Ok(MigrationJobDetail {
+        job,
+        stats,
+        folders,
+        files,
+    })
 }
 
 #[tauri::command]

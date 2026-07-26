@@ -337,24 +337,27 @@ export interface FolderSummary {
 export interface MigrationItem {
     id: number;
     job_id: number;
-    item_type: 'file' | 'folder';
+    folder_id: string;
+    source_item_id: string;
     name: string;
-    source_path: string;
-    source_item_id?: string | null;
-    size_bytes: number;
-    source_etag?: string | null;
-    source_last_modified?: string | null;
-    source_fingerprint_type?: string | null;
-    source_fingerprint_value?: string | null;
-    state: ItemState;
-    last_error_code?: string | null;
-    last_error_message?: string | null;
-    attempt_count: number;
-    computed_sha256?: string | null;
+    path: string;
+    size: number;
+    item_category: string;
+    pipeline_stage: string;
+    original_artifact_path?: string | null;
+    processed_artifact_path?: string | null;
+    original_sha256?: string | null;
+    processed_sha256?: string | null;
+    video_decision?: string | null;
+    artifact_size?: number | null;
+    telegram_attempt_id?: string | null;
+    telegram_random_id?: number | null;
     telegram_message_id?: number | null;
+    retry_count: number;
+    last_error?: string | null;
     created_at: number;
+    updated_at: number;
     completed_at?: number | null;
-    queue_position: number;
 }
 
 export interface MigrationJobDetail {

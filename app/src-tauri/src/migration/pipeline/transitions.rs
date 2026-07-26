@@ -86,21 +86,6 @@ pub fn update_item_pipeline_stage(
         return Err("Item not found".into());
     };
 
-    // 2. Bảo vệ Job v1 không bị ghi đè stage v2
-    let mut check_job = conn
-        .prepare("SELECT pipeline_version FROM migration_jobs WHERE id = ? LIMIT 1;")
-        .map_err(|e| e.to_string())?;
-    check_job.bind((1, job_id)).map_err(|e| e.to_string())?;
-    let pipeline_version: i64 = if let Ok(State::Row) = check_job.next() {
-        check_job.read(0).unwrap_or(1)
-    } else {
-        1
-    };
-
-    if pipeline_version == 1 {
-        return Err("Cannot update pipeline stage for v1 jobs".into());
-    }
-
     let current_stage = PipelineStage::from_str(&current_stage_str);
 
     // 3. Validate chuyển đổi trạng thái
@@ -125,20 +110,19 @@ pub fn update_item_pipeline_stage(
     };
 
     let mut upd = conn
-        .prepare("UPDATE migration_items SET pipeline_stage = ?, state = ?, completed_at = ? WHERE id = ?;")
+        .prepare("UPDATE migration_items SET pipeline_stage = ?, completed_at = ? WHERE id = ?;")
         .map_err(|e| e.to_string())?;
     upd.bind((1, new_stage.as_str()))
         .map_err(|e| e.to_string())?;
-    upd.bind((2, state_mapped)).map_err(|e| e.to_string())?;
     if state_mapped == "completed"
         || state_mapped == "skipped_duplicate"
         || state_mapped == "failed"
     {
-        upd.bind((3, now)).map_err(|e| e.to_string())?;
+        upd.bind((2, now)).map_err(|e| e.to_string())?;
     } else {
-        upd.bind((3, None::<i64>)).map_err(|e| e.to_string())?;
+        upd.bind((2, None::<i64>)).map_err(|e| e.to_string())?;
     }
-    upd.bind((4, item_id)).map_err(|e| e.to_string())?;
+    upd.bind((3, item_id)).map_err(|e| e.to_string())?;
     upd.next().map_err(|e| e.to_string())?;
 
     Ok(())
@@ -261,9 +245,9 @@ mod tests {
         let conn = db.lock().unwrap();
 
         // Chèn Job v2
-        conn.execute("INSERT INTO migration_jobs (id, state, pipeline_version, created_at, updated_at) VALUES (1, 'running', 2, 0, 0);").unwrap();
-        // Chèn Item v2
-        conn.execute("INSERT INTO migration_items (id, job_id, name, source_path, state, pipeline_stage, created_at) VALUES (100, 1, 'file.mp4', 'path.mp4', 'pending', 'discovered', 0);").unwrap();
+        conn.execute("INSERT INTO migration_jobs (id, source_folder_id, source_folder_path, telegram_destination_id, telegram_destination_name, local_backup_dir, workspace_dir, state, started_at, created_at, updated_at) VALUES (1, 'src', 'path', 'tg', 'tg', 'loc', 'ws', 'running', 0, 0, 0);").unwrap();
+
+        conn.execute("INSERT INTO migration_items (id, job_id, folder_id, name, path, source_item_id, size, item_category, pipeline_stage, created_at, updated_at) VALUES (100, 1, 'f', 'file.mp4', 'file.mp4', 's1', 100, 'video', 'discovered', 0, 0);").unwrap();
 
         drop(conn);
 

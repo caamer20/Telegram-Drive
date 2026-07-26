@@ -56,7 +56,7 @@ impl StreamingCrawler {
         let conn = self.db.lock().map_err(|e| e.to_string())?;
         
         let mut stmt = conn.prepare(
-            "SELECT id, job_id, folder_id, parent_id, folder_path, state, next_page_token, has_more, files_discovered, files_completed, folders_discovered, last_error
+            "SELECT id, job_id, folder_id, parent_id, folder_path, state, next_page_link, has_more, discovered_files_count, discovered_folders_count, completed_files_count, last_error, created_at, updated_at
              FROM folder_queue
              WHERE job_id = ? AND state IN ('pending', 'fetching') AND has_more = 1
              ORDER BY id ASC LIMIT 1;"
@@ -72,12 +72,14 @@ impl StreamingCrawler {
                 parent_id: stmt.read(3).unwrap_or(None),
                 folder_path: stmt.read(4).unwrap_or_default(),
                 state: stmt.read(5).unwrap_or_default(),
-                next_page_token: stmt.read(6).unwrap_or(None),
+                next_page_link: stmt.read(6).unwrap_or(None),
                 has_more: stmt.read(7).unwrap_or(0) == 1,
-                files_discovered: stmt.read(8).unwrap_or(0),
-                files_completed: stmt.read(9).unwrap_or(0),
-                folders_discovered: stmt.read(10).unwrap_or(0),
+                discovered_files_count: stmt.read(8).unwrap_or(0),
+                discovered_folders_count: stmt.read(9).unwrap_or(0),
+                completed_files_count: stmt.read(10).unwrap_or(0),
                 last_error: stmt.read(11).unwrap_or(None),
+                created_at: stmt.read(12).unwrap_or(0),
+                updated_at: stmt.read(13).unwrap_or(0),
             }))
         } else {
             Ok(None)
@@ -105,7 +107,7 @@ impl StreamingCrawler {
             }
         };
 
-        let request_url = if let Some(token) = &folder.next_page_token {
+        let request_url = if let Some(token) = &folder.next_page_link {
             token.clone()
         } else {
             if folder.folder_id == "root" {
@@ -174,12 +176,22 @@ impl StreamingCrawler {
         {
             let conn = self.db.lock().map_err(|e| e.to_string())?;
             conn.execute("BEGIN TRANSACTION;").map_err(|e| e.to_string())?;
+            
+            struct TransactionGuard<'a>(&'a sqlite::Connection, bool);
+            impl<'a> Drop for TransactionGuard<'a> {
+                fn drop(&mut self) {
+                    if !self.1 {
+                        let _ = self.0.execute("ROLLBACK;");
+                    }
+                }
+            }
+            let mut guard = TransactionGuard(&conn, false);
 
             // 1. Insert child folders
             let mut stmt_folder = conn.prepare(
                 "INSERT OR IGNORE INTO folder_queue (
-                    job_id, folder_id, parent_id, folder_path, state
-                ) VALUES (?, ?, ?, ?, 'pending');"
+                    job_id, folder_id, parent_id, folder_path, state, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, 'pending', ?, ?);"
             ).map_err(|e| e.to_string())?;
             
             for child_folder in &folders_to_insert {
@@ -193,6 +205,8 @@ impl StreamingCrawler {
                 stmt_folder.bind((2, child_folder.id.as_str())).unwrap();
                 stmt_folder.bind((3, folder.folder_id.as_str())).unwrap();
                 stmt_folder.bind((4, child_path.as_str())).unwrap();
+                stmt_folder.bind((5, now)).unwrap();
+                stmt_folder.bind((6, now)).unwrap();
                 stmt_folder.next().ok();
                 stmt_folder.reset().ok();
             }
@@ -200,8 +214,8 @@ impl StreamingCrawler {
             // 2. Insert files
             let mut stmt_file = conn.prepare(
                 "INSERT OR IGNORE INTO migration_items (
-                    job_id, folder_id, source_item_id, name, source_path, size_bytes, item_type, pipeline_stage, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'queued_download', ?);"
+                    job_id, folder_id, source_item_id, name, path, size, item_category, pipeline_stage, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'queued_download', ?, ?);"
             ).map_err(|e| e.to_string())?;
 
             for child_file in &files_to_insert {
@@ -219,6 +233,7 @@ impl StreamingCrawler {
                 stmt_file.bind((6, child_file.size)).unwrap();
                 stmt_file.bind((7, child_file.item_type.as_str())).unwrap();
                 stmt_file.bind((8, now)).unwrap();
+                stmt_file.bind((9, now)).unwrap();
                 
                 stmt_file.next().ok();
                 
@@ -262,16 +277,14 @@ impl StreamingCrawler {
             // 3. Cập nhật thống kê job
             let mut upd_job = conn.prepare(
                 "UPDATE migration_jobs 
-                 SET total_folders = total_folders + ?, 
-                     total_files = total_files + ?, 
-                     total_bytes = total_bytes + ? 
+                 SET discovered_folders = discovered_folders + ?, 
+                     discovered_items = discovered_items + ?, 
+                     waiting_items = waiting_items + ?
                  WHERE id = ?;"
             ).unwrap();
             upd_job.bind((1, folders_to_insert.len() as i64)).unwrap();
             upd_job.bind((2, files_to_insert.len() as i64)).unwrap();
-            
-            let batch_bytes: i64 = files_to_insert.iter().map(|f| f.size).sum();
-            upd_job.bind((3, batch_bytes)).unwrap();
+            upd_job.bind((3, files_to_insert.len() as i64)).unwrap();
             upd_job.bind((4, self.job_id)).unwrap();
             upd_job.next().unwrap();
 
@@ -279,11 +292,12 @@ impl StreamingCrawler {
             let mut upd_folder = conn.prepare(
                 "UPDATE folder_queue 
                  SET state = ?, 
-                     next_page_token = ?, 
+                     next_page_link = ?, 
                      has_more = ?, 
-                     files_discovered = files_discovered + ?, 
-                     folders_discovered = folders_discovered + ?,
-                     last_error = NULL
+                     discovered_files_count = discovered_files_count + ?, 
+                     discovered_folders_count = discovered_folders_count + ?,
+                     last_error = NULL,
+                     updated_at = ?
                  WHERE id = ?;"
             ).unwrap();
             upd_folder.bind((1, state)).unwrap();
@@ -294,10 +308,12 @@ impl StreamingCrawler {
             upd_folder.bind((3, if has_more { 1i64 } else { 0i64 })).unwrap();
             upd_folder.bind((4, files_to_insert.len() as i64)).unwrap();
             upd_folder.bind((5, folders_to_insert.len() as i64)).unwrap();
-            upd_folder.bind((6, folder.id)).unwrap();
+            upd_folder.bind((6, now)).unwrap();
+            upd_folder.bind((7, folder.id)).unwrap();
             upd_folder.next().unwrap();
 
             conn.execute("COMMIT;").map_err(|e| e.to_string())?;
+            guard.1 = true;
         }
 
         // 5. Nạp thẳng các file mới quét được vào bounded channel

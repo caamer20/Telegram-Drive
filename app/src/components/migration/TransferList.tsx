@@ -50,7 +50,7 @@ export const TransferList: React.FC<TransferListProps> = ({ phase, item, progres
                     <div className="flex items-center justify-between gap-4 text-xs">
                         <div className="min-w-0">
                             <p className="font-semibold text-slate-200 truncate">{item.name}</p>
-                            <p className="text-slate-500 mt-1">{formatBytes(item.size_bytes)}</p>
+                            <p className="text-slate-500 mt-1">{formatBytes(item.size)}</p>
                         </div>
                         <span className="font-bold text-slate-200">{progress?.percent ?? 0}%</span>
                     </div>

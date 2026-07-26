@@ -10,14 +10,16 @@ import { acceptProgressEvent, mergeActivity, selectTransferLists } from './trans
 const item: MigrationItem = {
     id: 7,
     job_id: 3,
-    item_type: 'file',
+    folder_id: 'src',
+    source_item_id: '123',
     name: 'report.pdf',
-    source_path: 'report.pdf',
-    size_bytes: 42,
-    state: 'pending',
-    attempt_count: 0,
+    path: 'report.pdf',
+    size: 42,
+    item_category: 'document',
+    pipeline_stage: 'discovered',
+    retry_count: 0,
     created_at: 1,
-    queue_position: 0,
+    updated_at: 1,
 };
 
 const detail = {
@@ -78,12 +80,12 @@ describe('Auto Migration transfer state', () => {
     it('hydrates an active phase from persisted item state before the next event', () => {
         const hydrated = {
             ...detail,
-            files: [{ ...item, state: 'uploading' }],
+            files: [{ ...item, pipeline_stage: 'uploading' }],
         } as MigrationJobDetail;
         expect(selectTransferLists(hydrated, null)).toEqual({
             downloading: [],
             processing: [],
-            uploading: [{ ...item, state: 'uploading' }],
+            uploading: [{ ...item, pipeline_stage: 'uploading' }],
         });
     });
 

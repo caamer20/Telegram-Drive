@@ -20,7 +20,7 @@ export function selectTransferLists(
 
     if (progress && detail.job.id === progress.job_id) {
         const item = detail.files.find(
-            candidate => candidate.item_type === 'file' && candidate.id === progress.item_id,
+            candidate => candidate.id === progress.item_id,
         );
         if (item) {
             if (progress.phase === 'downloading') {
@@ -35,11 +35,11 @@ export function selectTransferLists(
 
     return {
         downloading: detail.files.filter(
-            item => item.item_type === 'file' && item.state === 'downloading',
+            item => item.pipeline_stage === 'downloading',
         ),
         processing: [],
         uploading: detail.files.filter(
-            item => item.item_type === 'file' && item.state === 'uploading',
+            item => item.pipeline_stage === 'uploading',
         ),
     };
 }

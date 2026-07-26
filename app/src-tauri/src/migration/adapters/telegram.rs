@@ -4,7 +4,7 @@
 //
 // Uses patched Grammers with explicit random_id support:
 //   - Binary upload via `upload_stream` (reuses existing machinery)
-//   - DB persistence for upload_attempt_id / telegram_random_id BEFORE network
+//   - DB persistence for telegram_attempt_id / telegram_random_id BEFORE network
 //   - `client.send_message_with_random_id(peer, message, persisted_random_id)`
 //   - Retry reuses same random_id from DB
 //   - Typed error mapping: FloodWait, FileTooLarge, Auth, Network, etc.
@@ -125,35 +125,35 @@ impl TelegramProductionAdapter {
     }
 
     /// Persist upload attempt to DB before any network operation.
-    /// Returns (upload_attempt_id, telegram_random_id).
+    /// Returns (telegram_attempt_id, telegram_random_id).
     pub fn persist_upload_attempt(
         db: &crate::migration::db::MigrationDb,
         item_id: i64,
         attempt_number: i32,
     ) -> Result<(String, i64), String> {
-        let upload_attempt_id = format!("job_item_{}_attempt_{}", item_id, attempt_number);
-        let telegram_random_id = get_deterministic_random_id(&upload_attempt_id);
+        let telegram_attempt_id = format!("job_item_{}_attempt_{}", item_id, attempt_number);
+        let telegram_random_id = get_deterministic_random_id(&telegram_attempt_id);
 
         if telegram_random_id == 0 {
             return Err(
-                "Upload: generated random_id is zero — upload_attempt_id collision?".into(),
+                "Upload: generated random_id is zero — telegram_attempt_id collision?".into(),
             );
         }
 
         let conn = db.lock().map_err(|e| e.to_string())?;
         let mut upd = conn
             .prepare(
-                "UPDATE migration_items SET upload_attempt_id = ?, telegram_random_id = ? WHERE id = ?;",
+                "UPDATE migration_items SET telegram_attempt_id = ?, telegram_random_id = ? WHERE id = ?;",
             )
             .map_err(|e| e.to_string())?;
-        upd.bind((1, upload_attempt_id.as_str()))
+        upd.bind((1, telegram_attempt_id.as_str()))
             .map_err(|e| e.to_string())?;
         upd.bind((2, telegram_random_id))
             .map_err(|e| e.to_string())?;
         upd.bind((3, item_id)).map_err(|e| e.to_string())?;
         upd.next().map_err(|e| e.to_string())?;
 
-        Ok((upload_attempt_id, telegram_random_id))
+        Ok((telegram_attempt_id, telegram_random_id))
     }
 
     /// Load existing upload attempt from DB (for retry).
@@ -164,7 +164,7 @@ impl TelegramProductionAdapter {
         let conn = db.lock().map_err(|e| e.to_string())?;
         let mut stmt = conn
             .prepare(
-                "SELECT upload_attempt_id, telegram_random_id FROM migration_items WHERE id = ?;",
+                "SELECT telegram_attempt_id, telegram_random_id FROM migration_items WHERE id = ?;",
             )
             .map_err(|e| e.to_string())?;
         stmt.bind((1, item_id)).map_err(|e| e.to_string())?;
@@ -281,17 +281,17 @@ impl TelegramUploader for TelegramProductionAdapter {
                     }
                     _ => {
                         // Use the random_id from the runner, and persist it
-                        let upload_attempt_id =
+                        let telegram_attempt_id =
                             format!("job_{}_item_{}_attempt_1", job_id, item_id);
                         // Persist the runner's random_id, not a new one
                         {
                             let conn = db.lock().map_err(|e| e.to_string())?;
                             let mut upd = conn
                                 .prepare(
-                                    "UPDATE migration_items SET upload_attempt_id = ?, telegram_random_id = ? WHERE id = ?;",
+                                    "UPDATE migration_items SET telegram_attempt_id = ?, telegram_random_id = ? WHERE id = ?;",
                                 )
                                 .map_err(|e| e.to_string())?;
-                            upd.bind((1, upload_attempt_id.as_str()))
+                            upd.bind((1, telegram_attempt_id.as_str()))
                                 .map_err(|e| e.to_string())?;
                             upd.bind((2, runner_random_id))
                                 .map_err(|e| e.to_string())?;
@@ -651,8 +651,8 @@ mod tests {
 
         {
             let conn = db.lock().unwrap();
-            conn.execute("INSERT INTO migration_jobs (id, state, pipeline_version, created_at, updated_at) VALUES (1, 'running', 2, 0, 0);").unwrap();
-            conn.execute("INSERT INTO migration_items (id, job_id, name, source_path, source_item_id, state, pipeline_stage, created_at) VALUES (1, 1, 'test.mp4', 'test.mp4', 'src_1', 'pending', 'queued_upload', 0);").unwrap();
+            conn.execute("INSERT INTO migration_jobs (id, source_folder_id, source_folder_path, telegram_destination_id, telegram_destination_name, local_backup_dir, workspace_dir, state, started_at, created_at, updated_at) VALUES (1, 'src', 'path', 'tg', 'tg', 'loc', 'ws', 'running', 0, 0, 0);").unwrap();
+            conn.execute("INSERT INTO migration_items (id, job_id, folder_id, name, path, source_item_id, size, item_category, pipeline_stage, created_at, updated_at) VALUES (1, 1, 'f', 'test.mp4', 'test.mp4', 'src_1', 100, 'video', 'discovered', 0, 0);").unwrap();
         }
 
         let (attempt_id, random_id) =
@@ -664,7 +664,7 @@ mod tests {
         let conn = db.lock().unwrap();
         let mut stmt = conn
             .prepare(
-                "SELECT upload_attempt_id, telegram_random_id FROM migration_items WHERE id = 1;",
+                "SELECT telegram_attempt_id, telegram_random_id FROM migration_items WHERE id = 1;",
             )
             .unwrap();
         assert_eq!(stmt.next().unwrap(), sqlite::State::Row);
@@ -682,8 +682,8 @@ mod tests {
 
         {
             let conn = db.lock().unwrap();
-            conn.execute("INSERT INTO migration_jobs (id, state, pipeline_version, created_at, updated_at) VALUES (1, 'running', 2, 0, 0);").unwrap();
-            conn.execute("INSERT INTO migration_items (id, job_id, name, source_path, source_item_id, state, pipeline_stage, created_at) VALUES (1, 1, 'test.mp4', 'test.mp4', 'src_1', 'pending', 'queued_upload', 0);").unwrap();
+            conn.execute("INSERT INTO migration_jobs (id, source_folder_id, source_folder_path, telegram_destination_id, telegram_destination_name, local_backup_dir, workspace_dir, state, started_at, created_at, updated_at) VALUES (1, 'src', 'path', 'tg', 'tg', 'loc', 'ws', 'running', 0, 0, 0);").unwrap();
+            conn.execute("INSERT INTO migration_items (id, job_id, folder_id, name, path, source_item_id, size, item_category, pipeline_stage, created_at, updated_at) VALUES (1, 1, 'f', 'test.mp4', 'test.mp4', 'src_1', 100, 'video', 'discovered', 0, 0);").unwrap();
         }
 
         let (attempt_id_1, random_id_1) =
@@ -707,8 +707,8 @@ mod tests {
 
         {
             let conn = db.lock().unwrap();
-            conn.execute("INSERT INTO migration_jobs (id, state, pipeline_version, created_at, updated_at) VALUES (1, 'running', 2, 0, 0);").unwrap();
-            conn.execute("INSERT INTO migration_items (id, job_id, name, source_path, source_item_id, state, pipeline_stage, created_at) VALUES (1, 1, 'test.mp4', 'test.mp4', 'src_1', 'pending', 'queued_upload', 0);").unwrap();
+            conn.execute("INSERT INTO migration_jobs (id, source_folder_id, source_folder_path, telegram_destination_id, telegram_destination_name, local_backup_dir, workspace_dir, state, started_at, created_at, updated_at) VALUES (1, 'src', 'path', 'tg', 'tg', 'loc', 'ws', 'running', 0, 0, 0);").unwrap();
+            conn.execute("INSERT INTO migration_items (id, job_id, folder_id, name, path, source_item_id, size, item_category, pipeline_stage, created_at, updated_at) VALUES (1, 1, 'f', 'test.mp4', 'test.mp4', 'src_1', 100, 'video', 'discovered', 0, 0);").unwrap();
         }
 
         let loaded = TelegramProductionAdapter::load_existing_attempt(&db, 1).unwrap();
@@ -724,7 +724,7 @@ mod tests {
     #[test]
     fn test_v2_telegram_adapter_uses_persisted_random_id() {
         // Verify that the production adapter:
-        // 1. Persists upload_attempt_id + telegram_random_id BEFORE any network call
+        // 1. Persists telegram_attempt_id + telegram_random_id BEFORE any network call
         // 2. Retry reuses same random_id
         // 3. Different attempts get different IDs
         // All operations here are synchronous DB access — no async needed.
@@ -734,8 +734,8 @@ mod tests {
 
         {
             let conn = db.lock().unwrap();
-            conn.execute("INSERT INTO migration_jobs (id, state, pipeline_version, created_at, updated_at) VALUES (1, 'running', 2, 0, 0);").unwrap();
-            conn.execute("INSERT INTO migration_items (id, job_id, name, source_path, source_item_id, state, pipeline_stage, created_at) VALUES (1, 1, 'test.mp4', 'test.mp4', 'src_1', 'pending', 'queued_upload', 0);").unwrap();
+            conn.execute("INSERT INTO migration_jobs (id, source_folder_id, source_folder_path, telegram_destination_id, telegram_destination_name, local_backup_dir, workspace_dir, state, started_at, created_at, updated_at) VALUES (1, 'src', 'path', 'tg', 'tg', 'loc', 'ws', 'running', 0, 0, 0);").unwrap();
+            conn.execute("INSERT INTO migration_items (id, job_id, folder_id, name, path, source_item_id, size, item_category, pipeline_stage, created_at, updated_at) VALUES (1, 1, 'f', 'test.mp4', 'test.mp4', 'src_1', 100, 'video', 'discovered', 0, 0);").unwrap();
         }
 
         // Test 1: The adapter's persist_upload_attempt writes to DB
@@ -747,13 +747,15 @@ mod tests {
         // Verify DB was updated
         let conn = db.lock().unwrap();
         let mut stmt = conn
-            .prepare("SELECT upload_attempt_id, telegram_random_id FROM migration_items WHERE id = 1;")
+            .prepare("SELECT telegram_attempt_id, telegram_random_id FROM migration_items WHERE id = 1;")
             .unwrap();
         assert_eq!(stmt.next().unwrap(), sqlite::State::Row);
         let db_attempt: String = stmt.read(0).unwrap();
         let db_random: i64 = stmt.read(1).unwrap();
         assert_eq!(db_attempt, "job_item_1_attempt_1");
         assert_eq!(db_random, random_id);
+        drop(stmt);
+        drop(conn);
 
         // Test 2: Retry with same attempt number reuses same ID
         let (_aid2, rid2) =
@@ -769,7 +771,7 @@ mod tests {
         let loaded = TelegramProductionAdapter::load_existing_attempt(&db, 1).unwrap();
         assert!(loaded.is_some());
         let (loaded_aid, loaded_rid) = loaded.unwrap();
-        assert_eq!(loaded_rid, random_id);
+        assert_eq!(loaded_rid, rid3);
         assert!(loaded_aid.contains("job_item_1"));
 
         // Test 5: The production adapter struct instantiates correctly.
@@ -779,13 +781,15 @@ mod tests {
         // Verify upload_attempt WAS persisted (happened in test steps 1-3 above)
         let conn = db.lock().unwrap();
         let mut stmt3 = conn
-            .prepare("SELECT upload_attempt_id FROM migration_items WHERE id = 1;")
+            .prepare("SELECT telegram_attempt_id FROM migration_items WHERE id = 1;")
             .unwrap();
         assert_eq!(stmt3.next().unwrap(), sqlite::State::Row);
         let attempt: Option<String> = stmt3.read(0).unwrap_or(None);
+        drop(stmt3);
+        drop(conn);
         assert!(
             attempt.is_some(),
-            "upload_attempt_id MUST be persisted before network call"
+            "telegram_attempt_id MUST be persisted before network call"
         );
     }
 }
