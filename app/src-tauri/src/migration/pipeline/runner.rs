@@ -525,12 +525,18 @@ impl PipelineRunner {
                             } else {
                                 println!("Downloader rename OK for item {}", item.id);
                                 item.original_sha256 = Some(sha256.clone());
-                                // Update original hash in DB
+                                // Update original hash + path + size in DB
                                 {
                                     let conn = db_clone.lock().unwrap();
-                                    let mut upd_hash = conn.prepare("UPDATE migration_items SET original_sha256 = ? WHERE id = ?;").unwrap();
+                                    let file_meta = std::fs::metadata(&final_path).ok();
+                                    let file_size = file_meta.map(|m| m.len() as i64).unwrap_or(0);
+                                    let mut upd_hash = conn.prepare(
+                                        "UPDATE migration_items SET original_sha256 = ?, original_artifact_path = ?, artifact_size = ? WHERE id = ?;"
+                                    ).unwrap();
                                     upd_hash.bind((1, sha256.as_str())).unwrap();
-                                    upd_hash.bind((2, item.id)).unwrap();
+                                    upd_hash.bind((2, final_path.to_str().unwrap_or_default())).unwrap();
+                                    upd_hash.bind((3, file_size)).unwrap();
+                                    upd_hash.bind((4, item.id)).unwrap();
                                     upd_hash.next().unwrap();
                                 }
 
@@ -653,16 +659,23 @@ impl PipelineRunner {
                 match inspector_clone.inspect_file(&input_path).await {
                     Ok(meta) => {
                         // Quyết định xử lý: passthrough | remux_copy | transcode
-                        let decision = if meta.video_codec == "h264" {
-                            // h264: pass-through if mp4/mov container, else remux
-                            let container = meta.container.to_ascii_lowercase();
-                            if container == "mp4" || container == "mov" {
-                                "passthrough"
-                            } else {
-                                "remux_copy"
-                            }
-                        } else {
+                        // Telegram supports: h264, h265/hevc in mp4/mov containers
+                        // Transcode if: codec unsupported, bitrate > 30Mbps, or resolution > 4K
+                        let codec = meta.video_codec.to_ascii_lowercase();
+                        let container = meta.container.to_ascii_lowercase();
+                        let is_telegram_codec = matches!(codec.as_str(), "h264" | "h265" | "hevc");
+                        let is_native_container = matches!(container.as_str(), "mp4" | "mov");
+                        let bitrate_mbps = meta.bitrate as f64 / 1_000_000.0;
+                        let too_high_bitrate = bitrate_mbps > 30.0 && meta.bitrate > 0;
+                        let too_high_res = meta.width > 3840 || meta.height > 2160;
+
+                        let decision = if too_high_bitrate || too_high_res || !is_telegram_codec {
                             "transcode"
+                        } else if is_telegram_codec && is_native_container {
+                            "passthrough"
+                        } else {
+                            // Telegram-compatible codec in non-native container (e.g. h264 in mkv)
+                            "remux_copy"
                         };
 
                         item.video_decision = Some(decision.to_string());
@@ -695,12 +708,18 @@ impl PipelineRunner {
                             {
                                 Ok(proc_hash) => {
                                     item.processed_sha256 = Some(proc_hash.clone());
-                                    // Update processed hash
+                                    // Update processed hash + path
                                     {
                                         let conn = db_clone.lock().unwrap();
-                                        let mut upd = conn.prepare("UPDATE migration_items SET processed_sha256 = ? WHERE id = ?;").unwrap();
+                                        let mut upd = conn.prepare(
+                                            "UPDATE migration_items SET processed_sha256 = ?, processed_artifact_path = ?, artifact_size = ? WHERE id = ?;"
+                                        ).unwrap();
                                         upd.bind((1, proc_hash.as_str())).unwrap();
-                                        upd.bind((2, item.id)).unwrap();
+                                        upd.bind((2, output_path.to_str().unwrap_or_default())).unwrap();
+                                        let out_meta = std::fs::metadata(&output_path).ok();
+                                        let out_size = out_meta.map(|m| m.len() as i64).unwrap_or(0);
+                                        upd.bind((3, out_size)).unwrap();
+                                        upd.bind((4, item.id)).unwrap();
                                         upd.next().unwrap();
                                     }
 
@@ -708,16 +727,12 @@ impl PipelineRunner {
                                     let _ = update_item_pipeline_stage(
                                         &db_clone,
                                         item_id,
-                                        PipelineStage::QueuedUpload,
+                                        PipelineStage::Processed,
                                     );
                                     println!("Processor sending item {} to upload_tx", item_id);
                                     let _ = upload_tx_clone.send(item).await;
-                                    println!(
-                                        "Processor successfully sent item {} to upload_tx",
-                                        item_id
-                                    );
 
-                                    // Dọn dẹp tệp tin gốc nếu transcode thành công
+                                    // Dọn dẹp tệp tin gốc sau remux/transcode thành công
                                     let _ = std::fs::remove_file(&input_path);
                                 }
                                 Err(_) => {
@@ -992,7 +1007,7 @@ impl PipelineRunner {
                         // Release quota on confirmed failure
                         {
                             let conn = db_clone.lock().unwrap();
-                            let _ = release_quota(&conn, item.id);
+                            let _ = release_quota(&conn, item.id, &date_string);
                         }
 
                         // Check if it's a FloodWait
