@@ -311,7 +311,8 @@ impl TelegramUploader for TelegramProductionAdapter {
                 return Err("Upload: no DB configured for random_id persistence".to_string());
             };
 
-            // 3. Binary upload via upload_stream
+            // 3. Binary upload via upload_stream — with timeout
+            let upload_timeout_secs: u64 = 600; // 10 minutes timeout for binary upload
             let (mut reader, total_size, _bytes_counter) =
                 crate::commands::fs::ProgressReader::new(path.to_str().unwrap_or(""))
                     .await
@@ -319,12 +320,16 @@ impl TelegramUploader for TelegramProductionAdapter {
 
             let client_for_upload = tg_client.clone();
             let fname_for_upload = filename.clone();
-            let upload_result = tokio::task::spawn(async move {
-                client_for_upload
-                    .upload_stream(&mut reader, total_size as usize, fname_for_upload)
-                    .await
-            })
+            let upload_result = tokio::time::timeout(
+                std::time::Duration::from_secs(upload_timeout_secs),
+                tokio::task::spawn(async move {
+                    client_for_upload
+                        .upload_stream(&mut reader, total_size as usize, fname_for_upload)
+                        .await
+                }),
+            )
             .await
+            .map_err(|_| "Upload: binary upload timed out".to_string())?
             .map_err(|e| format!("Upload: task join error: {}", e))?;
 
             let uploaded_file = match upload_result {
@@ -351,13 +356,29 @@ impl TelegramUploader for TelegramProductionAdapter {
                     .await
                     .map_err(|e| format!("Upload: peer resolution failed: {}", e))?;
 
-            // 5. Send with explicit persisted random_id
+            // 5. Send with explicit persisted random_id — with timeout
             //    Images and other files are always sent as document/file, not photo
-            let send_result = {
+            let send_timeout_secs: u64 = 120; // 2 minutes timeout for send
+            let send_future = async move {
                 let message = InputMessage::new().text("").file(uploaded_file);
                 tg_client
                     .send_message_with_random_id(&peer, message, persisted_random_id)
                     .await
+            };
+            
+            let send_result = match tokio::time::timeout(
+                std::time::Duration::from_secs(send_timeout_secs),
+                send_future,
+            )
+            .await
+            {
+                Ok(result) => result,
+                Err(_elapsed) => {
+                    return Err(format!(
+                        "Upload: send_message_with_random_id timed out after {}s (random_id={})",
+                        send_timeout_secs, persisted_random_id
+                    ));
+                }
             };
 
             match send_result {
