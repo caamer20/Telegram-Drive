@@ -1,14 +1,11 @@
-// Production adapter factory for Pipeline V2.
+// Production adapter factory for Pipeline.
 //
 // Wires together:
 //   - OneDriveDownloader (SourceDownloader trait)
 //   - FFmpegMediaAdapter (MediaInspector + VideoProcessor traits)
 //   - TelegramProductionAdapter (TelegramUploader trait)
 //   - LocalProductionAdapter (LocalFinalizer trait)
-//   - PipelineRunnerV2 (orchestrator)
-//
-// This function compiles in production but is NOT called from any Tauri command,
-// UI handler, or startup hook. Pipeline V2 is inactive in this round.
+//   - PipelineRunner (orchestrator)
 
 use crate::migration::adapters::local::LocalProductionAdapter;
 use crate::migration::adapters::media::FFmpegMediaAdapter;

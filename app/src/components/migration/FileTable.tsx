@@ -1,7 +1,7 @@
 import React from 'react';
 import { useTranslation } from 'react-i18next';
 import { MigrationItem } from '../../types';
-import { RotateCw, CheckCircle2, AlertCircle, SkipForward, Clock, Download, Upload } from 'lucide-react';
+import { RotateCw, CheckCircle2, AlertCircle, Clock, Download, Upload } from 'lucide-react';
 
 interface FileTableProps {
     files: MigrationItem[];
@@ -26,13 +26,6 @@ export const FileTable: React.FC<FileTableProps> = ({ files, onRetryItem }) => {
                     <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
                         <CheckCircle2 className="w-3.5 h-3.5" />
                         {t('migration.status_completed', 'Completed')}
-                    </span>
-                );
-            case 'skipped_duplicate':
-                return (
-                    <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-500/10 text-amber-400 border border-amber-500/20">
-                        <SkipForward className="w-3.5 h-3.5" />
-                        {t('migration.status_skipped', 'Skipped (Duplicate)')}
                     </span>
                 );
             case 'downloading':

@@ -83,7 +83,7 @@ pub async fn cmd_migration_start(
     app_handle: tauri::AppHandle,
     source_folder_id: String,
     source_folder_path: String,
-    telegram_destination_id: String,
+    telegram_destination_id: Option<i64>,
     telegram_destination_name: String,
     local_backup_dir: String,
 ) -> Result<i64, String> {
@@ -141,7 +141,7 @@ pub async fn cmd_migration_start(
             &conn,
             &source_folder_id,
             &source_folder_path,
-            &telegram_destination_id,
+            telegram_destination_id,
             &telegram_destination_name,
             &local_backup_dir,
             &workspace_dir,
@@ -176,7 +176,7 @@ pub async fn cmd_migration_start(
             job_id,
             PathBuf::from(&workspace_dir),
             PathBuf::from(&local_backup_dir),
-            telegram_destination_id.parse::<i64>().ok(),
+            telegram_destination_id,
         ) {
             Ok(services) => services,
             Err(e) => {
@@ -232,15 +232,22 @@ pub async fn cmd_migration_get_status(
 ) -> Result<MigrationJobDetail, String> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
     
-    // 1. Get Job
-    let mut job_stmt = conn.prepare("SELECT * FROM migration_jobs WHERE id = ?").map_err(|e| e.to_string())?;
+    // 1. Get Job with explicit columns
+    let mut job_stmt = conn.prepare(
+        "SELECT id, source_folder_id, source_folder_path, telegram_destination_id, \
+         telegram_destination_name, local_backup_dir, workspace_dir, state, \
+         started_at, completed_at, last_error, flood_wait_until, \
+         discovered_folders, completed_folders, discovered_items, completed_items, \
+         failed_items, waiting_items, created_at, updated_at \
+         FROM migration_jobs WHERE id = ?"
+    ).map_err(|e| e.to_string())?;
     job_stmt.bind((1, job_id)).map_err(|e| e.to_string())?;
     let job = if let Ok(sqlite::State::Row) = job_stmt.next() {
         MigrationJob {
             id: job_stmt.read(0).unwrap_or(0),
             source_folder_id: job_stmt.read(1).unwrap_or_default(),
             source_folder_path: job_stmt.read(2).unwrap_or_default(),
-            telegram_destination_id: job_stmt.read(3).unwrap_or_default(),
+            telegram_destination_id: job_stmt.read(3).ok(),
             telegram_destination_name: job_stmt.read(4).unwrap_or_default(),
             local_backup_dir: job_stmt.read(5).unwrap_or_default(),
             workspace_dir: job_stmt.read(6).unwrap_or_default(),
@@ -262,8 +269,15 @@ pub async fn cmd_migration_get_status(
         return Err("Job not found".into());
     };
 
-    // 2. Get Files
-    let mut files_stmt = conn.prepare("SELECT * FROM migration_items WHERE job_id = ?").map_err(|e| e.to_string())?;
+    // 2. Get Files with explicit columns
+    let mut files_stmt = conn.prepare(
+        "SELECT id, job_id, folder_id, source_item_id, name, path, size, item_category, \
+         pipeline_stage, original_artifact_path, processed_artifact_path, \
+         original_sha256, processed_sha256, video_decision, artifact_size, \
+         telegram_attempt_id, telegram_random_id, telegram_message_id, \
+         retry_count, last_error, created_at, updated_at, completed_at \
+         FROM migration_items WHERE job_id = ?"
+    ).map_err(|e| e.to_string())?;
     files_stmt.bind((1, job_id)).map_err(|e| e.to_string())?;
     let mut files = Vec::new();
     while let Ok(sqlite::State::Row) = files_stmt.next() {
@@ -294,42 +308,51 @@ pub async fn cmd_migration_get_status(
         });
     }
 
-    // 3. Stats
+    // 3. Stats - use terminal stages properly
     let total_folders = job.discovered_folders;
     let total_files = files.len() as i64;
     let total_bytes: i64 = files.iter().map(|f| f.size).sum();
-    let completed_files = files.iter().filter(|f| f.pipeline_stage == "completed").count() as i64;
-    let completed_bytes: i64 = files.iter().filter(|f| f.pipeline_stage == "completed").map(|f| f.size).sum();
+    let completed_telegram = files.iter().filter(|f| f.pipeline_stage == "completed_telegram").count() as i64;
+    let completed_local = files.iter().filter(|f| f.pipeline_stage == "completed_local").count() as i64;
+    let completed_bytes: i64 = files.iter()
+        .filter(|f| f.pipeline_stage == "completed_telegram" || f.pipeline_stage == "completed_local")
+        .map(|f| f.size).sum();
     let failed_files = files.iter().filter(|f| f.pipeline_stage == "failed").count() as i64;
-    let skipped_duplicates = files.iter().filter(|f| f.pipeline_stage == "skipped_duplicate").count() as i64;
-    let pending_files = files.iter().filter(|f| !["completed", "failed", "skipped_duplicate"].contains(&f.pipeline_stage.as_str())).count() as i64;
+    let waiting_files = files.iter().filter(|f| f.pipeline_stage == "waiting_for_quota").count() as i64;
+    let terminal_stages = ["completed_telegram", "completed_local", "failed", "reconciliation_required"];
+    let pending_files = files.iter().filter(|f| !terminal_stages.contains(&f.pipeline_stage.as_str())).count() as i64;
 
     let stats = MigrationStats {
         total_folders,
         total_files,
         total_bytes,
-        completed_files,
+        completed_telegram,
+        completed_local,
         completed_bytes,
         failed_files,
-        skipped_duplicates,
+        waiting_files,
         pending_files,
     };
 
-    // 4. Folders
-    let _folders_stmt = conn.prepare("SELECT folder_path, COUNT(*), SUM(size) FROM migration_items WHERE job_id = ? GROUP BY folder_path").map_err(|e| e.to_string())?;
-    // Wait, folder_path is not in migration_items. The path contains it. Let's just group by folder_id, but folder_queue has folder_path.
-    // Instead of complex join, let's just use folder_queue for folders.
+    // 4. Folders from folder_queue
     let mut folders = Vec::new();
-    let mut fq_stmt = conn.prepare("SELECT folder_path FROM folder_queue WHERE job_id = ?").map_err(|e| e.to_string())?;
+    let mut fq_stmt = conn.prepare(
+        "SELECT fq.folder_path, COUNT(mi.id) as file_count, COALESCE(SUM(mi.size), 0) as total_size \
+         FROM folder_queue fq \
+         LEFT JOIN migration_items mi ON mi.folder_id = fq.folder_id AND mi.job_id = fq.job_id \
+         WHERE fq.job_id = ? \
+         GROUP BY fq.folder_path \
+         ORDER BY fq.id"
+    ).map_err(|e| e.to_string())?;
     fq_stmt.bind((1, job_id)).map_err(|e| e.to_string())?;
     while let Ok(sqlite::State::Row) = fq_stmt.next() {
         let fpath: String = fq_stmt.read(0).unwrap_or_default();
-        let fname = fpath.split('/').next_back().unwrap_or("").to_string();
+        let fname = fpath.rsplit('/').next().unwrap_or("").to_string();
         folders.push(FolderSummary {
             source_path: fpath,
             name: fname,
-            file_count: 0,
-            total_size: 0,
+            file_count: fq_stmt.read(1).unwrap_or(0),
+            total_size: fq_stmt.read(2).unwrap_or(0),
         });
     }
 
@@ -347,17 +370,63 @@ pub async fn cmd_migration_retry_failed(
     job_id: i64,
 ) -> Result<(), String> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
-    let mut stmt = conn.prepare(
-        "UPDATE migration_items SET pipeline_stage = 'discovered' WHERE job_id = ? AND pipeline_stage = 'failed';"
-    ).map_err(|e| e.to_string())?;
-    stmt.bind((1, job_id)).map_err(|e| e.to_string())?;
-    stmt.next().map_err(|e| e.to_string())?;
     
-    let mut stmt2 = conn.prepare(
-        "UPDATE folder_queue SET state = 'pending' WHERE job_id = ? AND state = 'failed';"
+    // Load failed items
+    let mut load_stmt = conn.prepare(
+        "SELECT id, pipeline_stage, original_artifact_path, processed_artifact_path, \
+         original_sha256, processed_sha256, video_decision, retry_count \
+         FROM migration_items WHERE job_id = ? AND pipeline_stage = 'failed'"
     ).map_err(|e| e.to_string())?;
-    stmt2.bind((1, job_id)).map_err(|e| e.to_string())?;
-    stmt2.next().map_err(|e| e.to_string())?;
+    load_stmt.bind((1, job_id)).map_err(|e| e.to_string())?;
+    
+    let mut updates: Vec<(i64, String, i64)> = Vec::new();
+    while let Ok(sqlite::State::Row) = load_stmt.next() {
+        let item_id: i64 = load_stmt.read(0).unwrap_or(0);
+        let processed_path: Option<String> = load_stmt.read(3).ok();
+        let original_path: Option<String> = load_stmt.read(2).ok();
+        let retry_count: i64 = load_stmt.read(7).unwrap_or(0);
+        
+        let new_stage = if processed_path.is_some() {
+            // Has processed artifact -> retry from upload
+            "queued_upload"
+        } else if original_path.is_some() {
+            // Has original artifact -> retry from processing/routing
+            "queued_processing"
+        } else {
+            // No artifacts -> retry from download
+            "queued_download"
+        };
+        
+        updates.push((item_id, new_stage.to_string(), retry_count + 1));
+    }
+    
+    // Apply updates
+    for (item_id, stage, new_retry) in updates {
+        let mut upd = conn.prepare(
+            "UPDATE migration_items SET pipeline_stage = ?, retry_count = ?, last_error = NULL, updated_at = ? WHERE id = ?"
+        ).map_err(|e| e.to_string())?;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as i64;
+        upd.bind((1, stage.as_str())).map_err(|e| e.to_string())?;
+        upd.bind((2, new_retry)).map_err(|e| e.to_string())?;
+        upd.bind((3, now)).map_err(|e| e.to_string())?;
+        upd.bind((4, item_id)).map_err(|e| e.to_string())?;
+        upd.next().map_err(|e| e.to_string())?;
+    }
+    
+    // Also retry failed folders in folder_queue
+    let mut fq_upd = conn.prepare(
+        "UPDATE folder_queue SET state = 'pending', last_error = NULL, updated_at = ? WHERE job_id = ? AND state = 'failed'"
+    ).map_err(|e| e.to_string())?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as i64;
+    fq_upd.bind((1, now)).map_err(|e| e.to_string())?;
+    fq_upd.bind((2, job_id)).map_err(|e| e.to_string())?;
+    fq_upd.next().map_err(|e| e.to_string())?;
     
     Ok(())
 }
@@ -366,6 +435,14 @@ pub async fn cmd_migration_retry_failed(
 pub async fn cmd_migration_reset_database(
     state: State<'_, MigrationState>,
 ) -> Result<(), String> {
+    // Check if pipeline is running
+    {
+        let guard = state.active_pipeline.lock().await;
+        if guard.is_some() {
+            return Err("Cannot reset database while a migration pipeline is active. Stop the pipeline first.".into());
+        }
+    }
+    
     let conn = state.db.lock().map_err(|e| e.to_string())?;
     crate::migration::db::reset_database(&conn)?;
     Ok(())

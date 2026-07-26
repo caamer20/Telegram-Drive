@@ -15,14 +15,41 @@ import {
     JobStatePayload,
     ItemCompletePayload,
     StatsPayload,
-    AutoMigrationProfile,
     DailyMigrationQuota,
     MigrationActivity,
-    AutoMigrationStatus,
-    ScanProgressPayload,
     ProcessingLogEntry,
 } from '../types';
 import { acceptProgressEvent, mergeActivity } from '../components/migration/transferState';
+
+// Legacy local types (removed from main types.ts but still used in this hook)
+interface ScanProgressPayload {
+    phase: string;
+    pages_scanned: number;
+    discovered_files: number;
+    discovered_folders: number;
+    elapsed_ms: number;
+}
+
+interface AutoMigrationProfile {
+    id: number;
+    account_id: string;
+    enabled: boolean;
+    default_telegram_dest_id?: number | null;
+    default_telegram_dest_name?: string | null;
+    local_temp_dir?: string | null;
+    last_auto_scan_at?: number | null;
+    created_at: number;
+    updated_at: number;
+    active_job_id?: number | null;
+    pause_reason?: string | null;
+}
+
+interface AutoMigrationStatus {
+    profile: AutoMigrationProfile | null;
+    account: MsAccountInfo | null;
+    active_job: MigrationJobDetail | null;
+    scan_progress: ScanProgressPayload | null;
+}
 
 const formatLogBytes = (bytes: number): string => {
     if (bytes <= 0) return '0 B';
@@ -432,7 +459,7 @@ export function useMigration() {
 
         listen<ItemCompletePayload>('migration:item-complete', (e) => {
             void queryClient.invalidateQueries({ queryKey: ['bandwidth'] });
-            if (e.payload.status === 'completed') {
+            if (e.payload.status === 'completed_telegram' || e.payload.status === 'completed_local') {
                 void queryClient.invalidateQueries({ queryKey: ['files'] });
             }
             setItemProgress(previous =>
@@ -447,14 +474,10 @@ export function useMigration() {
                 category: 'system',
                 level: e.payload.status === 'failed'
                     ? 'error'
-                    : e.payload.status === 'skipped_duplicate'
-                        ? 'warning'
-                        : 'success',
+                    : 'success',
                 message_key: e.payload.status === 'failed'
                     ? 'migration.log_item_failed'
-                    : e.payload.status === 'skipped_duplicate'
-                        ? 'migration.log_item_skipped'
-                        : 'migration.log_item_completed',
+                    : 'migration.log_item_completed',
                 params: {
                     name: e.payload.item_name,
                     error: e.payload.error_message || e.payload.error_type || '',
@@ -464,7 +487,7 @@ export function useMigration() {
             setCurrentJobDetail(prev => {
                 if (!prev || prev.job.id !== e.payload.job_id) return prev;
                 const updatedFiles = prev.files.map(f =>
-                    f.id === e.payload.item_id ? { ...f, state: e.payload.status } : f
+                    f.id === e.payload.item_id ? { ...f, pipeline_stage: e.payload.status } : f
                 );
                 return { ...prev, files: updatedFiles };
             });
@@ -731,12 +754,12 @@ export function useMigration() {
             ));
             return true;
         } catch (e: any) {
-            setScanProgress(previous => previous
+            setScanProgress((previous: any) => previous
                 ? { ...previous, phase: 'failed' }
                 : null);
             setSnapshotLoading(false);
-            setMigrationActivity(previous => previous.filter(
-                entry => !(entry.job_id === 0 && entry.status === 'starting'),
+            setMigrationActivity((previous: any) => previous.filter(
+                (entry: any) => !(entry.job_id === 0 && entry.status === 'starting'),
             ));
             appendProcessingLog({
                 category: 'system',
@@ -763,7 +786,7 @@ export function useMigration() {
     );
 
     const stopAutoScan = useCallback(async () => {
-        setScanProgress(previous => previous
+        setScanProgress((previous: any) => previous
             ? { ...previous, phase: 'stopping' }
             : {
                 phase: 'stopping',

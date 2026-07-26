@@ -22,10 +22,6 @@ impl StreamingCrawler {
             if self.cancel_token.is_cancelled() || self.cancel_token.is_stopped() {
                 break;
             }
-            if self.cancel_token.is_paused() {
-                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-                continue;
-            }
 
             // 1. Lấy một folder pending hoặc fetching từ database
             let folder_queue_item = self.get_next_folder()?;
@@ -244,7 +240,7 @@ impl StreamingCrawler {
                     let stage = last_id_stmt.read::<String, _>(1).unwrap_or_default();
                     
                     // Do not enqueue if completed, failed, or skipped
-                    let terminal_states = ["completed_telegram", "completed_local", "failed", "skipped_duplicate", "reconciliation_required"];
+                    let terminal_states = ["completed_telegram", "completed_local", "failed", "reconciliation_required"];
                     if !terminal_states.contains(&stage.as_str()) {
                         db_pipeline_items.push(PipelineItem {
                             id: item_id,
@@ -260,7 +256,7 @@ impl StreamingCrawler {
                             state: stage,
                             original_sha256: None,
                             processed_sha256: None,
-                            local_dest_path: None,
+                            local_artifact_path: None,
                             telegram_random_id: None,
                             video_decision: None,
 

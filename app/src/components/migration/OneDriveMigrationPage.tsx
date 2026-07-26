@@ -103,20 +103,20 @@ export const OneDriveMigrationPage: React.FC = () => {
     };
 
     const handleListFolders = async (parentId?: string) => {
-        return invoke<OneDriveItem[]>('cmd_migration_get_folder_children', { folderId: parentId || 'root' });
+        return invoke<OneDriveItem[]>('cmd_migration_get_folder_children', { parentId: parentId || null });
     };
 
-    const handleSetFolder = (_jobId: number, folderId: string, path: string) => {
+    const handleSetFolder = (folderId: string, path: string) => {
         setSourceId(folderId);
         setSourcePath(path);
     };
 
-    const handleSetTelegram = (_jobId: number, dId: number | null, dName: string) => {
+    const handleSetTelegram = (dId: number | null, dName: string) => {
         setDestId(dId);
         setDestName(dName);
     };
 
-    const handleSetLocalDir = (_jobId: number, dir: string) => {
+    const handleSetLocalDir = (dir: string) => {
         setLocalDir(dir);
     };
 
@@ -144,19 +144,9 @@ export const OneDriveMigrationPage: React.FC = () => {
         }
     };
 
-    const handlePause = async () => {
-        if (!currentDetail?.job?.id) return;
-        try {
-            await invoke('cmd_migration_stop', { jobId: currentDetail.job.id, pause: true });
-        } catch (e: any) {
-            setError(e.toString());
-        }
-    };
-
     const handleStop = async () => {
-        if (!currentDetail?.job?.id) return;
         try {
-            await invoke('cmd_migration_stop', { jobId: currentDetail.job.id, pause: false });
+            await invoke('cmd_migration_stop');
         } catch (e: any) {
             setError(e.toString());
         }
@@ -204,15 +194,16 @@ export const OneDriveMigrationPage: React.FC = () => {
                     <div className="max-w-4xl mx-auto space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
                         <SetupSection
                             msAccount={msAccount}
-                            currentDetail={currentDetail}
                             loading={loading}
+                            sourceFolderPath={sourcePath}
+                            telegramDestName={destName}
+                            localDir={localDir}
                             onConnectMs={handleConnectMs}
                             onDisconnectMs={handleDisconnectMs}
                             onListOneDriveFolders={handleListFolders}
-                            onSetOneDriveFolder={handleSetFolder}
+                            onSetSourceFolder={handleSetFolder}
                             onSetTelegramDest={handleSetTelegram}
                             onSetLocalDir={handleSetLocalDir}
-                            onScan={() => {}}
                         />
                         
                         {/* Start Button Area */}
@@ -239,9 +230,7 @@ export const OneDriveMigrationPage: React.FC = () => {
                                     progress={progress}
                                     cooldown={null}
                                     onStart={handleStart}
-                                    onPause={handlePause}
-                                    onResume={handleStart}
-                                    onCancel={handleStop}
+                                    onStop={handleStop}
                                     onRetryAllFailed={handleRetry}
                                 />
                             )}

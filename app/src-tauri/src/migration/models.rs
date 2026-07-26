@@ -25,7 +25,7 @@ pub struct MigrationJob {
     pub id: i64,
     pub source_folder_id: String,
     pub source_folder_path: String,
-    pub telegram_destination_id: String,
+    pub telegram_destination_id: Option<i64>,
     pub telegram_destination_name: String,
     pub local_backup_dir: String,
     pub workspace_dir: String,
@@ -102,10 +102,11 @@ pub struct MigrationStats {
     pub total_folders: i64,
     pub total_files: i64,
     pub total_bytes: i64,
-    pub completed_files: i64,
+    pub completed_telegram: i64,
+    pub completed_local: i64,
     pub completed_bytes: i64,
     pub failed_files: i64,
-    pub skipped_duplicates: i64,
+    pub waiting_files: i64,
     pub pending_files: i64,
 }
 

@@ -19,9 +19,8 @@ use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
 pub const STATE_RUNNING: u8 = 0;
-pub const STATE_PAUSED: u8 = 1;
-pub const STATE_STOPPED: u8 = 2;
-pub const STATE_CANCELLED: u8 = 3;
+pub const STATE_STOPPED: u8 = 1;
+pub const STATE_CANCELLED: u8 = 2;
 
 #[derive(Debug, Clone)]
 pub struct CancellationToken {
@@ -44,14 +43,8 @@ impl CancellationToken {
     pub fn cancel(&self) {
         self.state.store(STATE_CANCELLED, Ordering::Relaxed);
     }
-    pub fn pause(&self) {
-        self.state.store(STATE_PAUSED, Ordering::Relaxed);
-    }
     pub fn stop(&self) {
         self.state.store(STATE_STOPPED, Ordering::Relaxed);
-    }
-    pub fn resume(&self) {
-        self.state.store(STATE_RUNNING, Ordering::Relaxed);
     }
 
     pub fn is_cancelled(&self) -> bool {
@@ -60,8 +53,8 @@ impl CancellationToken {
     pub fn is_stopped(&self) -> bool {
         self.state.load(Ordering::Relaxed) == STATE_STOPPED
     }
-    pub fn is_paused(&self) -> bool {
-        self.state.load(Ordering::Relaxed) == STATE_PAUSED
+    pub fn is_running(&self) -> bool {
+        self.state.load(Ordering::Relaxed) == STATE_RUNNING
     }
 }
 
@@ -243,16 +236,97 @@ impl PipelineRunner {
     }
 
     pub async fn run_to_completion(&self) -> Result<(), String> {
-        // 1. Drain active tasks (5 main loop tasks)
+        // Drain active tasks (5 main loop tasks)
         let main_tasks: Vec<JoinHandle<()>> = {
             let mut guard = self.active_tasks.lock().unwrap();
             std::mem::take(&mut *guard)
         };
 
+        let mut first_error: Option<String> = None;
         for handle in main_tasks {
-            let _ = handle.await;
+            match handle.await {
+                Ok(_) => {}
+                Err(e) => {
+                    let err_msg = if e.is_panic() {
+                        format!("Worker panicked: {:?}", e)
+                    } else {
+                        format!("Worker cancelled: {}", e)
+                    };
+                    log::error!("Pipeline task error: {}", err_msg);
+                    if first_error.is_none() {
+                        first_error = Some(err_msg);
+                    }
+                }
+            }
         }
 
+        // Finalize job state
+        self.finalize_job().await?;
+
+        if let Some(err) = first_error {
+            Err(err)
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Finalize job state based on item outcomes
+    async fn finalize_job(&self) -> Result<(), String> {
+        let conn = self.db.lock().map_err(|e| e.to_string())?;
+        
+        // Count items by stage
+        let mut stmt = conn.prepare(
+            "SELECT pipeline_stage, COUNT(*) FROM migration_items WHERE job_id = ? GROUP BY pipeline_stage"
+        ).map_err(|e| e.to_string())?;
+        stmt.bind((1, self.job_id)).map_err(|e| e.to_string())?;
+        
+        let mut failed_count: i64 = 0;
+        let mut completed_telegram: i64 = 0;
+        let mut completed_local: i64 = 0;
+        let mut waiting_quota: i64 = 0;
+        let mut reconciliation: i64 = 0;
+        let mut pending_count: i64 = 0;
+        
+        while let Ok(sqlite::State::Row) = stmt.next() {
+            let stage: String = stmt.read(0).unwrap_or_default();
+            let count: i64 = stmt.read(1).unwrap_or(0);
+            match stage.as_str() {
+                "completed_telegram" => completed_telegram = count,
+                "completed_local" => completed_local = count,
+                "failed" => failed_count = count,
+                "waiting_for_quota" => waiting_quota = count,
+                "reconciliation_required" => reconciliation = count,
+                _ => pending_count += count,
+            }
+        }
+        
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as i64;
+        
+        let job_state = if self.cancel_token.is_stopped() {
+            "stopped"
+        } else if waiting_quota > 0 && pending_count == 0 {
+            "waiting_for_quota"
+        } else if failed_count > 0 || reconciliation > 0 {
+            "completed_with_errors"
+        } else {
+            "completed"
+        };
+        
+        let mut upd = conn.prepare(
+            "UPDATE migration_jobs SET state = ?, completed_items = ?, failed_items = ?, waiting_items = ?, completed_at = ?, updated_at = ? WHERE id = ?"
+        ).map_err(|e| e.to_string())?;
+        upd.bind((1, job_state)).map_err(|e| e.to_string())?;
+        upd.bind((2, completed_telegram + completed_local)).map_err(|e| e.to_string())?;
+        upd.bind((3, failed_count)).map_err(|e| e.to_string())?;
+        upd.bind((4, waiting_quota + reconciliation)).map_err(|e| e.to_string())?;
+        upd.bind((5, now)).map_err(|e| e.to_string())?;
+        upd.bind((6, now)).map_err(|e| e.to_string())?;
+        upd.bind((7, self.job_id)).map_err(|e| e.to_string())?;
+        upd.next().map_err(|e| e.to_string())?;
+        
         Ok(())
     }
 
@@ -301,7 +375,7 @@ impl PipelineRunner {
                     state: state.clone(),
                     original_sha256,
                     processed_sha256,
-                    local_dest_path: None,
+                    local_artifact_path: None,
                     telegram_random_id: None,
                     video_decision,
                 });
@@ -349,7 +423,7 @@ impl PipelineRunner {
             Err(_) => return true, // assume pending on error
         };
         let mut stmt = match conn.prepare(
-            "SELECT COUNT(*) FROM migration_items WHERE job_id = ? AND pipeline_stage NOT IN ('completed_telegram', 'completed_local', 'skipped_duplicate', 'failed', 'reconciliation_required');"
+            "SELECT COUNT(*) FROM migration_items WHERE job_id = ? AND pipeline_stage NOT IN ('completed_telegram', 'completed_local', 'failed', 'reconciliation_required');"
         ) {
             Ok(s) => s,
             Err(_) => return true,
@@ -392,10 +466,6 @@ impl PipelineRunner {
                 loop {
                     if cancel.is_cancelled() || cancel.is_stopped() {
                         break;
-                    }
-                    if cancel.is_paused() {
-                        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-                        continue;
                     }
 
                     let item_opt = {
@@ -528,12 +598,18 @@ impl PipelineRunner {
         }
 
         for w in workers {
-            let _ = w.await;
+            if let Err(e) = w.await {
+                let err_msg = if e.is_panic() {
+                    format!("Downloader worker panicked: {:?}", e)
+                } else {
+                    format!("Downloader worker cancelled: {}", e)
+                };
+                log::error!("{}", err_msg);
+                return Err(err_msg);
+            }
         }
         Ok(())
     }
-
-    /// Task Processor phân tích và chuyển mã video (FFmpeg)
     async fn run_processor(
         &self,
         rx: mpsc::Receiver<PipelineItem>,
@@ -557,10 +633,6 @@ impl PipelineRunner {
                 loop {
                     if cancel.is_cancelled() || cancel.is_stopped() {
                         break;
-                    }
-                    if cancel.is_paused() {
-                        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-                        continue;
                     }
                     
                     let item_opt = {
@@ -669,7 +741,15 @@ impl PipelineRunner {
         }
         
         for w in workers {
-            let _ = w.await;
+            if let Err(e) = w.await {
+                let err_msg = if e.is_panic() {
+                    format!("Processor worker panicked: {:?}", e)
+                } else {
+                    format!("Processor worker cancelled: {}", e)
+                };
+                log::error!("{}", err_msg);
+                return Err(err_msg);
+            }
         }
         Ok(())
     }
@@ -694,10 +774,6 @@ impl PipelineRunner {
                 loop {
                     if cancel.is_cancelled() || cancel.is_stopped() {
                         break;
-                    }
-                    if cancel.is_paused() {
-                        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-                        continue;
                     }
                     
                     let item_opt = {
@@ -839,7 +915,7 @@ impl PipelineRunner {
                                 let conn = db_clone.lock().unwrap();
                                 let mut upd = conn
                                     .prepare(
-                                        "UPDATE migration_items SET artifact_size_bytes = ? WHERE id = ?;",
+                                        "UPDATE migration_items SET artifact_size = ? WHERE id = ?;",
                                     )
                                     .unwrap();
                                 upd.bind((1, artifact_size)).unwrap();
@@ -896,7 +972,7 @@ impl PipelineRunner {
                                 let conn = db_clone.lock().unwrap();
                                 let mut upd = conn
                                     .prepare(
-                                        "UPDATE migration_items SET telegram_random_id = ?, last_error_message = ? WHERE id = ?;",
+                                        "UPDATE migration_items SET telegram_random_id = ?, last_error = ? WHERE id = ?;",
                                     )
                                     .unwrap();
                                 upd.bind((1, rec_random_id)).unwrap();
@@ -964,7 +1040,15 @@ impl PipelineRunner {
         }
         
         for w in workers {
-            let _ = w.await;
+            if let Err(e) = w.await {
+                let err_msg = if e.is_panic() {
+                    format!("Uploader worker panicked: {:?}", e)
+                } else {
+                    format!("Uploader worker cancelled: {}", e)
+                };
+                log::error!("{}", err_msg);
+                return Err(err_msg);
+            }
         }
         Ok(())
     }
@@ -990,10 +1074,6 @@ impl PipelineRunner {
                 loop {
                     if cancel.is_cancelled() || cancel.is_stopped() {
                         break;
-                    }
-                    if cancel.is_paused() {
-                        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-                        continue;
                     }
                     
                     let item_opt = {
@@ -1034,12 +1114,12 @@ impl PipelineRunner {
                         .await
                     {
                         Ok(_) => {
-                            // Cập nhật local path
+                            // Cập nhật local artifact path
                             {
                                 let conn = db_clone.lock().unwrap();
                                 let mut upd = conn
                                     .prepare(
-                                        "UPDATE migration_items SET local_dest_path = ? WHERE id = ?;",
+                                        "UPDATE migration_items SET original_artifact_path = ? WHERE id = ?;",
                                     )
                                     .unwrap();
                                 upd.bind((1, dest_path.to_str().unwrap_or_default()))
@@ -1068,7 +1148,15 @@ impl PipelineRunner {
         }
         
         for w in workers {
-            let _ = w.await;
+            if let Err(e) = w.await {
+                let err_msg = if e.is_panic() {
+                    format!("Local finalizer worker panicked: {:?}", e)
+                } else {
+                    format!("Local finalizer worker cancelled: {}", e)
+                };
+                log::error!("{}", err_msg);
+                return Err(err_msg);
+            }
         }
         Ok(())
     }

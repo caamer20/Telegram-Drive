@@ -5,70 +5,73 @@ use std::pin::Pin;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PipelineStage {
     Discovered,
-    DedupeCheck,
-    WaitingForCanonical,
     QueuedDownload,
     Downloading,
     Downloaded,
     QueuedProcessing,
     Processing,
+    Processed,
     QueuedUpload,
     Uploading,
+    WaitingForQuota,
     SavingLocal,
     CompletedTelegram,
     CompletedLocal,
-    SkippedDuplicate,
-    RetryWait,
     ReconciliationRequired,
     Failed,
-    WaitingForQuota,
 }
 
 impl PipelineStage {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Discovered => "discovered",
-            Self::DedupeCheck => "dedupe_check",
-            Self::WaitingForCanonical => "waiting_for_canonical",
             Self::QueuedDownload => "queued_download",
             Self::Downloading => "downloading",
             Self::Downloaded => "downloaded",
             Self::QueuedProcessing => "queued_processing",
             Self::Processing => "processing",
+            Self::Processed => "processed",
             Self::QueuedUpload => "queued_upload",
             Self::Uploading => "uploading",
+            Self::WaitingForQuota => "waiting_for_quota",
             Self::SavingLocal => "saving_local",
             Self::CompletedTelegram => "completed_telegram",
             Self::CompletedLocal => "completed_local",
-            Self::SkippedDuplicate => "skipped_duplicate",
-            Self::RetryWait => "retry_wait",
             Self::ReconciliationRequired => "reconciliation_required",
             Self::Failed => "failed",
-            Self::WaitingForQuota => "waiting_for_quota",
         }
     }
 
     pub fn from_str(s: &str) -> Self {
         match s {
             "discovered" => Self::Discovered,
-            "dedupe_check" => Self::DedupeCheck,
-            "waiting_for_canonical" => Self::WaitingForCanonical,
             "queued_download" => Self::QueuedDownload,
             "downloading" => Self::Downloading,
             "downloaded" => Self::Downloaded,
             "queued_processing" => Self::QueuedProcessing,
             "processing" => Self::Processing,
+            "processed" => Self::Processed,
             "queued_upload" => Self::QueuedUpload,
             "uploading" => Self::Uploading,
+            "waiting_for_quota" => Self::WaitingForQuota,
             "saving_local" => Self::SavingLocal,
             "completed_telegram" => Self::CompletedTelegram,
             "completed_local" => Self::CompletedLocal,
-            "skipped_duplicate" => Self::SkippedDuplicate,
-            "retry_wait" => Self::RetryWait,
             "reconciliation_required" => Self::ReconciliationRequired,
-            "waiting_for_quota" => Self::WaitingForQuota,
+            "failed" => Self::Failed,
             _ => Self::Failed,
         }
+    }
+
+    /// Trả về true nếu stage là terminal (không thể chuyển tiếp)
+    pub fn is_terminal(&self) -> bool {
+        matches!(
+            self,
+            Self::CompletedTelegram
+                | Self::CompletedLocal
+                | Self::ReconciliationRequired
+                | Self::Failed
+        )
     }
 }
 
@@ -88,10 +91,9 @@ pub struct PipelineItem {
     pub state: String,
     pub original_sha256: Option<String>,
     pub processed_sha256: Option<String>,
-    pub local_dest_path: Option<String>,
-    pub telegram_random_id: Option<String>,
+    pub local_artifact_path: Option<String>,
+    pub telegram_random_id: Option<i64>,
     pub video_decision: Option<String>,
-
 }
 
 // Media metadata return from ffprobe
