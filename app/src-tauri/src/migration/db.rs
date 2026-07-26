@@ -13,14 +13,26 @@ pub fn init_migration_db(app: &AppHandle) -> Result<MigrationDb, String> {
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let db_path = dir.join("migration.db");
     
-    // Check if we need to reset the schema from legacy V1/V2 to canonical.
-    // We can do this by checking if a legacy table like `migrated_fingerprints` exists.
+    // Check if schema is outdated and needs reset.
+    // We detect this by checking if migration_jobs has the `created_at` column.
     let mut needs_reset = false;
     if db_path.exists() {
         if let Ok(conn) = sqlite::open(&db_path) {
-            let mut stmt = conn.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='migrated_fingerprints';").unwrap();
-            if let Ok(sqlite::State::Row) = stmt.next() {
-                needs_reset = true;
+            // Check for legacy table
+            if let Ok(mut stmt) = conn.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='migrated_fingerprints';") {
+                if let Ok(sqlite::State::Row) = stmt.next() {
+                    needs_reset = true;
+                }
+            }
+            // Also check if migration_jobs is missing canonical columns
+            if !needs_reset {
+                let has_created_at = conn
+                    .prepare("SELECT created_at FROM migration_jobs LIMIT 0;")
+                    .is_ok();
+                if !has_created_at {
+                    log::warn!("migration_jobs missing created_at column — forcing schema reset");
+                    needs_reset = true;
+                }
             }
         }
     }
@@ -28,7 +40,7 @@ pub fn init_migration_db(app: &AppHandle) -> Result<MigrationDb, String> {
     let db = open_migration_db_at_path(db_path)?;
     
     if needs_reset {
-        log::info!("Legacy schema detected. Resetting to canonical schema.");
+        log::info!("Legacy/outdated schema detected. Resetting to canonical schema.");
         reset_database(&db.lock().unwrap())?;
     }
     

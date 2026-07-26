@@ -71,6 +71,22 @@ export const SetupSection: React.FC<SetupSectionProps> = ({
         onSetSourceFolder(item.id, fullPath);
     };
 
+    const handleSelectRoot = () => {
+        // Select the current directory itself (root or subfolder)
+        const isRoot = pathHistory.length === 1;
+        if (isRoot) {
+            onSetSourceFolder('root', '/');
+        } else {
+            // Select current subfolder
+            const currentFolder = pathHistory[pathHistory.length - 1];
+            const fullPath = pathHistory
+                .map((p) => p.name)
+                .join('/')
+                .replace('OneDrive Root/', '/');
+            onSetSourceFolder(currentFolder.id || 'root', fullPath || '/');
+        }
+    };
+
     const handleNavigateInto = (item: OneDriveItem) => {
         setCurrentParentId(item.id);
         setPathHistory((prev) => [...prev, { id: item.id, name: item.name }]);
@@ -205,6 +221,24 @@ export const SetupSection: React.FC<SetupSectionProps> = ({
 
                     {/* Folder List Tree */}
                     <div className="bg-slate-950/80 rounded-lg border border-slate-800/80 divide-y divide-slate-800/50 max-h-56 overflow-y-auto custom-scrollbar">
+                        {/* Select current folder button */}
+                        <div className="flex items-center justify-between px-4 py-2.5 hover:bg-indigo-900/20 transition-colors bg-slate-900/50">
+                            <div className="flex items-center gap-2.5 flex-1 min-w-0">
+                                <FolderCheck className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+                                <span className="text-xs font-medium text-emerald-300 truncate">
+                                    {pathHistory.length === 1
+                                        ? t('migration.select_root', 'Select Root (Entire OneDrive)')
+                                        : t('migration.select_current', 'Select: {{name}}', { name: pathHistory[pathHistory.length - 1].name })}
+                                </span>
+                            </div>
+                            <button
+                                onClick={handleSelectRoot}
+                                className="inline-flex items-center gap-1 px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-xs font-medium transition-colors ml-2"
+                            >
+                                <Check className="w-3 h-3" />
+                                {t('migration.btn_select_this', 'Select This')}
+                            </button>
+                        </div>
                         {treeItems.length === 0 ? (
                             <div className="p-4 text-center text-xs text-slate-500">
                                 {t('migration.empty_folder', 'No subfolders found in this directory')}
