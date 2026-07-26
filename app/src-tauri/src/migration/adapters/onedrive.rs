@@ -1,6 +1,6 @@
 use crate::migration::db::MigrationDb;
 use crate::migration::microsoft::{self, MicrosoftSession};
-use crate::migration::pipeline_v2::stages::SourceDownloader;
+use crate::migration::pipeline::stages::SourceDownloader;
 
 use reqwest::Client;
 use sha2::Digest;

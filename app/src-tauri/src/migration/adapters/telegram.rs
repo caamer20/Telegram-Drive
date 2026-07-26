@@ -13,7 +13,7 @@
 // Does NOT change the existing upload adapter behavior.
 // Does NOT send as photo — always sends as document/file.
 
-use crate::migration::pipeline_v2::stages::{
+use crate::migration::pipeline::stages::{
     TelegramUploadRequest, TelegramUploadResult, TelegramUploader,
 };
 use crate::migration::telegram_idempotency::{
@@ -100,7 +100,7 @@ pub trait BinaryUploader: Send + Sync {
 // ---------------------------------------------------------------------------
 
 pub struct TelegramProductionAdapter {
-    client: Arc<std::sync::Mutex<Option<grammers_client::Client>>>,
+    client: Arc<tokio::sync::Mutex<Option<grammers_client::Client>>>,
     peer_cache: Arc<RwLock<HashMap<i64, Peer>>>,
     cancel_token: Arc<AtomicBool>,
     destination_folder_id: Option<i64>,
@@ -109,7 +109,7 @@ pub struct TelegramProductionAdapter {
 
 impl TelegramProductionAdapter {
     pub fn new(
-        client: Arc<std::sync::Mutex<Option<grammers_client::Client>>>,
+        client: Arc<tokio::sync::Mutex<Option<grammers_client::Client>>>,
         peer_cache: Arc<RwLock<HashMap<i64, Peer>>>,
         cancel_token: Arc<AtomicBool>,
         destination_folder_id: Option<i64>,
@@ -259,9 +259,7 @@ impl TelegramUploader for TelegramProductionAdapter {
 
             // 1. Get the shared Client
             let tg_client = {
-                let guard = client
-                    .lock()
-                    .map_err(|e| format!("Upload: lock error: {}", e))?;
+                let guard = client.lock().await;
                 guard
                     .as_ref()
                     .ok_or_else(|| "Upload: no Telegram client available".to_string())?

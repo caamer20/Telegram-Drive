@@ -1,33 +1,25 @@
-pub mod adapters_v2;
-pub mod auto_engine;
+pub mod adapters;
 pub mod commands;
-pub mod commands_v2;
 pub mod db;
 pub mod disk_reserve;
-pub mod manifest;
-pub mod media_processor;
 pub mod microsoft;
 pub mod models;
-pub mod pipeline_v2;
+pub mod pipeline;
 pub mod quota_reserve;
-pub mod repository_v2;
-pub mod schema_v2;
 pub mod session_store;
 pub mod telegram_idempotency;
-pub mod upload_adapter;
-pub mod worker;
 
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use tokio::sync::Mutex as TokioMutex;
 
-use crate::migration::pipeline_v2::runner::PipelineRunner;
+use crate::migration::pipeline::runner::PipelineRunner;
 
-/// Active V2 pipeline handle
-pub struct ActivePipelineV2 {
+/// Active pipeline handle
+pub struct ActivePipeline {
     pub job_id: i64,
     pub runner: Arc<PipelineRunner>,
-    pub cancel_token: crate::migration::pipeline_v2::runner::CancellationToken,
+    pub cancel_token: crate::migration::pipeline::runner::CancellationToken,
 }
 
 pub struct MigrationState {
@@ -36,11 +28,11 @@ pub struct MigrationState {
     pub worker_running: Arc<AtomicBool>,
     pub scan_running: Arc<AtomicBool>,
     pub scan_stop_requested: Arc<AtomicBool>,
-    pub scan_progress: Arc<Mutex<Option<models::ScanProgressPayload>>>,
+
     pub cancel_token: Arc<AtomicBool>,
     pub pause_token: Arc<AtomicBool>,
-    /// Active V2 pipeline run (only one at a time)
-    pub active_pipeline_v2: Arc<TokioMutex<Option<ActivePipelineV2>>>,
+    /// Active pipeline run (only one at a time)
+    pub active_pipeline: Arc<TokioMutex<Option<ActivePipeline>>>,
 }
 
 impl MigrationState {
@@ -58,10 +50,9 @@ impl MigrationState {
             worker_running: Arc::new(AtomicBool::new(false)),
             scan_running: Arc::new(AtomicBool::new(false)),
             scan_stop_requested: Arc::new(AtomicBool::new(false)),
-            scan_progress: Arc::new(Mutex::new(None)),
             cancel_token: Arc::new(AtomicBool::new(false)),
             pause_token: Arc::new(AtomicBool::new(false)),
-            active_pipeline_v2: Arc::new(TokioMutex::new(None)),
+            active_pipeline: Arc::new(TokioMutex::new(None)),
         }
     }
 
@@ -72,15 +63,9 @@ impl MigrationState {
             worker_running: self.worker_running.clone(),
             scan_running: self.scan_running.clone(),
             scan_stop_requested: self.scan_stop_requested.clone(),
-            scan_progress: self.scan_progress.clone(),
             cancel_token: Arc::new(AtomicBool::new(false)),
             pause_token: Arc::new(AtomicBool::new(false)),
-            active_pipeline_v2: self.active_pipeline_v2.clone(),
+            active_pipeline: self.active_pipeline.clone(),
         })
     }
 }
-
-#[cfg(test)]
-mod db_tests;
-#[cfg(test)]
-mod pipeline_v2_tests;

@@ -10,7 +10,7 @@
 //   - No silent overwrite
 //   - Persist resolved path
 
-use crate::migration::pipeline_v2::stages::LocalFinalizer;
+use crate::migration::pipeline::stages::LocalFinalizer;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;

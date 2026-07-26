@@ -1,13 +1,13 @@
 use crate::migration::db::MigrationDb;
 use crate::migration::disk_reserve::{release_disk_space, reserve_disk_space};
-use crate::migration::pipeline_v2::classifier::{classify_file, FileCategory};
-use crate::migration::pipeline_v2::config::PipelineConfig;
-use crate::migration::pipeline_v2::stages::{
+use crate::migration::pipeline::classifier::{classify_file, FileCategory};
+use crate::migration::pipeline::config::PipelineConfig;
+use crate::migration::pipeline::stages::{
     LocalFinalizer, MediaInspector, PipelineItem, PipelineStage, SourceDownloader,
     TelegramMediaKind, TelegramUploadRequest, TelegramUploadResult, TelegramUploader,
     VideoProcessor,
 };
-use crate::migration::pipeline_v2::transitions::update_item_pipeline_stage;
+use crate::migration::pipeline::transitions::update_item_pipeline_stage;
 use crate::migration::quota_reserve::{commit_quota, release_quota, reserve_quota};
 use crate::migration::telegram_idempotency::get_deterministic_random_id;
 use chrono::Utc;
@@ -130,6 +130,7 @@ pub struct PipelineRunner {
     channel_tx: std::sync::Mutex<Option<(
         mpsc::Sender<PipelineItem>, // download_tx
     )>>,
+    pub ms_session: Arc<tokio::sync::Mutex<Option<crate::migration::microsoft::MicrosoftSession>>>,
 }
 
 impl PipelineRunner {
@@ -139,6 +140,7 @@ impl PipelineRunner {
         job_id: i64,
         workspace_dir: PathBuf,
         backup_dir: PathBuf,
+        ms_session: Arc<tokio::sync::Mutex<Option<crate::migration::microsoft::MicrosoftSession>>>,
     ) -> Self {
         let _ = std::fs::create_dir_all(&workspace_dir);
         let _ = std::fs::create_dir_all(&backup_dir);
@@ -152,6 +154,7 @@ impl PipelineRunner {
             active_tasks: std::sync::Mutex::new(vec![]),
             item_tasks: Arc::new(std::sync::Mutex::new(vec![])),
             channel_tx: std::sync::Mutex::new(None),
+            ms_session,
         }
     }
 
@@ -178,9 +181,16 @@ impl PipelineRunner {
         let runner_clone = self.clone();
         let cancel = self.cancel_token.clone();
 
-        // 1. Task Planner (quét DB và đưa item vào download queue)
+        // 1. Task Crawler (quét DB và đưa item vào download queue)
+        let crawler = crate::migration::pipeline::crawler::StreamingCrawler {
+            db: self.db.clone(),
+            job_id: self.job_id,
+            ms_session: self.ms_session.clone(),
+            cancel_token: self.cancel_token.clone(),
+        };
+        let crawler_arc = Arc::new(crawler);
         let planner_handle = tokio::spawn(async move {
-            let _ = runner_clone.run_planner(download_tx).await;
+            let _ = crawler_arc.run(download_tx).await;
         });
 
         // 2. Task Downloader (tải tệp từ nguồn)
@@ -286,85 +296,7 @@ impl PipelineRunner {
         }
     }
 
-    /// Task Planner quét DB tìm tệp pending đưa vào download queue (Backpressure tự động qua bounded channel)
-    async fn run_planner(&self, tx: mpsc::Sender<PipelineItem>) -> Result<(), String> {
-        loop {
-            if self.cancel_token.is_cancelled() || self.cancel_token.is_stopped() {
-                // Break loop: planner stops, dropping tx channel which gracefully shuts down workers.
-                break;
-            }
-            if self.cancel_token.is_paused() {
-                tokio::time::sleep(tokio::time::Duration::from_millis(250)).await;
-                continue;
-            }
 
-            // Quét DB lấy các tệp pending của job v2
-            let items = {
-                let conn = self.db.lock().map_err(|e| e.to_string())?;
-                let mut stmt = conn.prepare(
-                    "SELECT id, job_id, name, source_path, source_item_id, size_bytes, source_etag, source_last_modified, source_fingerprint_type, source_fingerprint_value, state, original_sha256, processed_sha256, local_dest_path, telegram_random_id, video_decision, duplicate_of_item_id
-                     FROM migration_items
-                     WHERE job_id = ? AND pipeline_stage = 'discovered' AND duplicate_of_item_id IS NULL
-                     LIMIT 10;"
-                ).map_err(|e| e.to_string())?;
-                stmt.bind((1, self.job_id)).map_err(|e| e.to_string())?;
-
-                let mut res = vec![];
-                while let Ok(sqlite::State::Row) = stmt.next() {
-                    res.push(PipelineItem {
-                        id: stmt.read(0).unwrap_or(0),
-                        job_id: stmt.read(1).unwrap_or(0),
-                        name: stmt.read(2).unwrap_or_default(),
-                        source_path: stmt.read(3).unwrap_or_default(),
-                        source_item_id: stmt.read(4).unwrap_or(None),
-                        size_bytes: stmt.read(5).unwrap_or(0),
-                        source_etag: stmt.read(6).unwrap_or(None),
-                        source_last_modified: stmt.read(7).unwrap_or(None),
-                        source_fingerprint_type: stmt.read(8).unwrap_or(None),
-                        source_fingerprint_value: stmt.read(9).unwrap_or(None),
-                        state: stmt.read(10).unwrap_or_else(|_| "pending".into()),
-                        original_sha256: stmt.read(11).unwrap_or(None),
-                        processed_sha256: stmt.read(12).unwrap_or(None),
-                        local_dest_path: stmt.read(13).unwrap_or(None),
-                        telegram_random_id: stmt.read(14).unwrap_or(None),
-                        video_decision: stmt.read(15).unwrap_or(None),
-                        duplicate_of_item_id: stmt.read(16).unwrap_or(None),
-                    });
-                }
-                res
-            };
-
-            if items.is_empty() {
-                tokio::time::sleep(tokio::time::Duration::from_millis(250)).await;
-                continue;
-            }
-
-            println!(
-                "Planner found {} items for job {}",
-                items.len(),
-                self.job_id
-            );
-
-            for item in items {
-                // Đổi stage sang QueuedDownload trước khi gửi vào channel
-                if let Err(e) =
-                    update_item_pipeline_stage(&self.db, item.id, PipelineStage::QueuedDownload)
-                {
-                    println!("Planner failed to update stage for item {}: {}", item.id, e);
-                    log::error!("Planner failed to update stage: {}", e);
-                    continue;
-                }
-
-                println!("Planner successfully enqueued item {}", item.id);
-
-                // Gửi vào channel (sẽ block ở đây nếu download queue bị đầy -> BACKPRESSURE)
-                if tx.send(item).await.is_err() {
-                    return Ok(());
-                }
-            }
-        }
-        Ok(())
-    }
 
     /// Task Downloader tải tệp và định tuyến
     async fn run_downloader(
@@ -496,7 +428,7 @@ impl PipelineRunner {
 
                                 // 3.5. Dedupe check
                                 if let Ok(true) =
-                                    crate::migration::pipeline_v2::transitions::post_download_dedupe(
+                                    crate::migration::pipeline::transitions::post_download_dedupe(
                                         &db_clone, item.id, &sha256,
                                     )
                                 {
@@ -720,6 +652,38 @@ impl PipelineRunner {
                 break;
             }
 
+            // Enforce flood wait check before uploading
+            loop {
+                let wait_until = {
+                    let conn = self.db.lock().unwrap();
+                    let mut stmt = conn.prepare("SELECT flood_wait_until FROM migration_jobs WHERE id = ? LIMIT 1").unwrap();
+                    stmt.bind((1, item.job_id)).unwrap();
+                    if let Ok(sqlite::State::Row) = stmt.next() {
+                        stmt.read::<i64, _>(0).unwrap_or(0)
+                    } else {
+                        0
+                    }
+                };
+
+                let now = Utc::now().timestamp();
+                if wait_until > now {
+                    let sleep_secs = (wait_until - now) as u64;
+                    log::info!("Upload: Job {} is under FloodWait, sleeping for {} seconds", item.job_id, sleep_secs);
+                    
+                    // Sleep in small increments to remain responsive to cancellation
+                    let mut slept = 0;
+                    while slept < sleep_secs {
+                        if self.cancel_token.is_cancelled() {
+                            return Ok(());
+                        }
+                        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                        slept += 1;
+                    }
+                } else {
+                    break;
+                }
+            }
+
             let permit = sem
                 .clone()
                 .acquire_owned()
@@ -911,11 +875,11 @@ impl PipelineRunner {
                                 let conn = db_clone.lock().unwrap();
                                 let mut upd = conn
                                     .prepare(
-                                        "INSERT OR REPLACE INTO migration_pacing_state (key, next_allowed_at, updated_at) VALUES ('next_allowed_at', ?, ?);",
+                                        "UPDATE migration_jobs SET flood_wait_until = ? WHERE id = ?;",
                                     )
                                     .unwrap();
                                 upd.bind((1, next_allowed)).unwrap();
-                                upd.bind((2, now)).unwrap();
+                                upd.bind((2, item.job_id)).unwrap();
                                 upd.next().unwrap();
                             }
                             // Sleep outside of DB lock
@@ -933,7 +897,7 @@ impl PipelineRunner {
 
                         if e.contains("permanent_error") {
                             let _ =
-                                crate::migration::pipeline_v2::transitions::promote_canonical(
+                                crate::migration::pipeline::transitions::promote_canonical(
                                     &db_clone, item.id,
                                 );
                         }

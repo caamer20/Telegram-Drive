@@ -10,13 +10,13 @@
 // This function compiles in production but is NOT called from any Tauri command,
 // UI handler, or startup hook. Pipeline V2 is inactive in this round.
 
-use crate::migration::adapters_v2::local::LocalProductionAdapter;
-use crate::migration::adapters_v2::media::FFmpegMediaAdapter;
-use crate::migration::adapters_v2::onedrive::OneDriveDownloader;
-use crate::migration::adapters_v2::telegram::TelegramProductionAdapter;
+use crate::migration::adapters::local::LocalProductionAdapter;
+use crate::migration::adapters::media::FFmpegMediaAdapter;
+use crate::migration::adapters::onedrive::OneDriveDownloader;
+use crate::migration::adapters::telegram::TelegramProductionAdapter;
 use crate::migration::db::MigrationDb;
-use crate::migration::pipeline_v2::config::PipelineConfig;
-use crate::migration::pipeline_v2::runner::PipelineRunner;
+use crate::migration::pipeline::config::PipelineConfig;
+use crate::migration::pipeline::runner::PipelineRunner;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -39,10 +39,10 @@ use std::sync::Arc;
 /// A configured `PipelineRunner` (NOT started — call `.start()` separately)
 /// and a cancel token.
 #[allow(clippy::too_many_arguments)]
-pub fn build_pipeline_v2_services(
+pub fn build_pipeline_services(
     db: MigrationDb,
     ms_session: Arc<tokio::sync::Mutex<Option<crate::migration::microsoft::MicrosoftSession>>>,
-    tg_client: Arc<std::sync::Mutex<Option<grammers_client::Client>>>,
+    tg_client: Arc<tokio::sync::Mutex<Option<grammers_client::Client>>>,
     tg_peer_cache: Arc<tokio::sync::RwLock<HashMap<i64, grammers_client::types::Peer>>>,
     job_id: i64,
     workspace_dir: PathBuf,
@@ -81,7 +81,7 @@ pub fn build_pipeline_v2_services(
     // Build adapters
     let http_client = reqwest::Client::new();
 
-    let downloader = Arc::new(OneDriveDownloader::new(http_client, ms_session, db.clone()));
+    let downloader = Arc::new(OneDriveDownloader::new(http_client, ms_session.clone(), db.clone()));
 
     let media_adapter = Arc::new(FFmpegMediaAdapter::new(
         ffprobe_path,
@@ -108,6 +108,7 @@ pub fn build_pipeline_v2_services(
         job_id,
         workspace_dir,
         backup_dir,
+        ms_session.clone(),
     ));
 
     Ok((
@@ -127,13 +128,13 @@ pub fn build_pipeline_v2_services(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::migration::adapters_v2::local::LocalProductionAdapter;
-    use crate::migration::adapters_v2::media::{FFmpegMediaAdapter, ProcessOutput, ProcessRunner};
-    use crate::migration::adapters_v2::onedrive::OneDriveDownloader;
+    use crate::migration::adapters::local::LocalProductionAdapter;
+    use crate::migration::adapters::media::{FFmpegMediaAdapter, ProcessOutput, ProcessRunner};
+    use crate::migration::adapters::onedrive::OneDriveDownloader;
     use crate::migration::db::open_migration_db_at_path;
     use crate::migration::microsoft::MicrosoftSession;
     use crate::migration::models::MsAccountInfo;
-    use crate::migration::pipeline_v2::stages::{
+    use crate::migration::pipeline::stages::{
         LocalFinalizer, MediaInspector, SourceDownloader,
     };
     use std::fs;

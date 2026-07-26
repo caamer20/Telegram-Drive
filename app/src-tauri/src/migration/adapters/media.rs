@@ -5,7 +5,7 @@
 // Test seam: the `ProcessRunner` trait allows injecting a fake process runner
 // for automated tests without requiring FFmpeg on the test machine.
 
-use crate::migration::pipeline_v2::stages::{MediaInspector, VideoMetadata, VideoProcessor};
+use crate::migration::pipeline::stages::{MediaInspector, VideoMetadata, VideoProcessor};
 use serde::Deserialize;
 use std::future::Future;
 use std::path::{Path, PathBuf};

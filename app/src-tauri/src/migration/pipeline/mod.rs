@@ -1,4 +1,5 @@
 pub mod classifier;
+pub mod crawler;
 pub mod config;
 pub mod recovery;
 pub mod runner;

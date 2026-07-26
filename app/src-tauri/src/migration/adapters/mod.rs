@@ -4,4 +4,4 @@ pub mod media;
 pub mod onedrive;
 pub mod telegram;
 
-pub use factory::build_pipeline_v2_services;
+pub use factory::build_pipeline_services;

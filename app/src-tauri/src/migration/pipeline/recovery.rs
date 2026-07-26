@@ -1,5 +1,5 @@
 use crate::migration::db::MigrationDb;
-use crate::migration::pipeline_v2::stages::PipelineStage;
+use crate::migration::pipeline::stages::PipelineStage;
 use sqlite::State;
 
 /// Khôi phục trạng thái an toàn cho các item bị gián đoạn (crash/shutdown)
