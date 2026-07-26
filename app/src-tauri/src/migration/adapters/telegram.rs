@@ -25,7 +25,7 @@ use grammers_client::InputMessage;
 use grammers_tl_types as tl;
 use std::collections::HashMap;
 use std::future::Future;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -432,7 +432,9 @@ fn parse_flood_wait_seconds(err_str: &str) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::migration::db::open_migration_db_at_path;
+    use crate::migration::db::{init_migration_db, open_migration_db_at_path};
+    use std::fs;
+    use std::path::PathBuf;
     use crate::migration::telegram_idempotency::get_deterministic_random_id;
     use grammers_tl_types as tl;
 

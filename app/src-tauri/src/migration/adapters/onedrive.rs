@@ -5,7 +5,7 @@ use crate::migration::pipeline::stages::SourceDownloader;
 use reqwest::Client;
 use sha2::Digest;
 use std::future::Future;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::pin::Pin;
 use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
@@ -56,7 +56,7 @@ impl SourceDownloader for OneDriveDownloader {
     ) -> Pin<Box<dyn Future<Output = Result<String, String>> + Send>> {
         let http = self.http.clone();
         let ms_session = self.ms_session.clone();
-        let db = self.db.clone();
+        let _db = self.db.clone();
         let source_item_id = source_item_id.to_string();
         let dest_path = dest_path.to_path_buf();
         let base_url = self.base_url.clone();
@@ -160,6 +160,8 @@ impl SourceDownloader for OneDriveDownloader {
 mod tests {
     use super::*;
     use crate::migration::db::open_migration_db_at_path;
+    use std::fs;
+    use std::path::PathBuf;
     use crate::migration::models::MsAccountInfo;
     use wiremock::matchers::{header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};

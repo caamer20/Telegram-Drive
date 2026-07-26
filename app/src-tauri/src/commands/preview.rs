@@ -234,7 +234,7 @@ pub async fn cmd_get_preview(
                     // the download and renamed its .part file to the final path.
                     if tokio::fs::metadata(&save_path)
                         .await
-                        .map_or(false, |m| m.len() > 0)
+                        .is_ok_and(|m| m.len() > 0)
                     {
                         log::info!(
                             "Preview already downloaded by concurrent request (final file exists)"
@@ -261,7 +261,7 @@ pub async fn cmd_get_preview(
                                     Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                                         if tokio::fs::metadata(&save_path)
                                             .await
-                                            .map_or(false, |m| m.len() > 0)
+                                            .is_ok_and(|m| m.len() > 0)
                                         {
                                             log::info!(
                                                 "Preview already downloaded by concurrent request"
@@ -316,7 +316,7 @@ pub async fn cmd_get_preview(
                                                 {
                                                     if tokio::fs::metadata(&save_path)
                                                         .await
-                                                        .map_or(false, |m| m.len() > 0)
+                                                        .is_ok_and(|m| m.len() > 0)
                                                     {
                                                         log::info!("Preview already downloaded by concurrent request");
                                                         download_ok = true;
@@ -530,7 +530,7 @@ pub async fn cmd_get_thumbnail(
                 // the download and renamed its .part file to the final path.
                 if tokio::fs::metadata(&save_path)
                     .await
-                    .map_or(false, |m| m.len() > 0)
+                    .is_ok_and(|m| m.len() > 0)
                 {
                     download_ok = true;
                 }

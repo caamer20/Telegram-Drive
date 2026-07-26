@@ -1,8 +1,8 @@
 use crate::migration::db::MigrationDb;
 use crate::migration::microsoft::{parse_graph_item, send_graph_request};
-use crate::migration::models::{FolderQueueItem, MigrationItem};
+use crate::migration::models::FolderQueueItem;
 use crate::migration::pipeline::runner::CancellationToken;
-use crate::migration::pipeline::stages::{PipelineItem, PipelineStage};
+use crate::migration::pipeline::stages::PipelineItem;
 use chrono::Utc;
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -86,7 +86,7 @@ impl StreamingCrawler {
         }
     }
 
-    async fn process_folder(&self, mut folder: FolderQueueItem, tx: &mpsc::Sender<PipelineItem>) -> Result<(), String> {
+    async fn process_folder(&self, folder: FolderQueueItem, tx: &mpsc::Sender<PipelineItem>) -> Result<(), String> {
         // Cập nhật state sang 'fetching'
         {
             let conn = self.db.lock().map_err(|e| e.to_string())?;
@@ -107,19 +107,16 @@ impl StreamingCrawler {
             }
         };
 
-        let request_url = if let Some(token) = &folder.next_page_link {
-            token.clone()
+        let request_url = if let Some(link) = &folder.next_page_link {
+            link.clone()
+        } else if folder.folder_id == "root" {
+            "https://graph.microsoft.com/v1.0/me/drive/root/children?$top=200".to_string()
         } else {
-            if folder.folder_id == "root" {
-                "https://graph.microsoft.com/v1.0/me/drive/root/children?$top=200".to_string()
-            } else {
-                format!(
-                    "https://graph.microsoft.com/v1.0/me/drive/items/{}/children?$top=200",
-                    folder.folder_id
-                )
-            }
+            format!(
+                "https://graph.microsoft.com/v1.0/me/drive/items/{}/children?$top=200",
+                folder.folder_id
+            )
         };
-
         let http = reqwest::Client::new();
         
         let cancel_future = async {
@@ -266,7 +263,7 @@ impl StreamingCrawler {
                             local_dest_path: None,
                             telegram_random_id: None,
                             video_decision: None,
-                            duplicate_of_item_id: None,
+
                         });
                     }
                 }

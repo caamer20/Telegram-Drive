@@ -1,9 +1,8 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri::{AppHandle, Manager};
 
-use crate::migration::models::*;
 
 pub type MigrationDb = Arc<Mutex<sqlite::Connection>>;
 
@@ -206,7 +205,7 @@ pub fn create_job(
     conn: &sqlite::Connection,
     source_folder_id: &str,
     source_folder_path: &str,
-    telegram_destination_id: Option<i64>,
+    telegram_destination_id: &str,
     telegram_destination_name: &str,
     local_backup_dir: &str,
     workspace_dir: &str,
@@ -226,11 +225,7 @@ pub fn create_job(
 
     stmt.bind((1, source_folder_id)).map_err(|e| e.to_string())?;
     stmt.bind((2, source_folder_path)).map_err(|e| e.to_string())?;
-    if let Some(tid) = telegram_destination_id {
-        stmt.bind((3, tid)).map_err(|e| e.to_string())?;
-    } else {
-        stmt.bind((3, ())).map_err(|e| e.to_string())?;
-    }
+    stmt.bind((3, telegram_destination_id)).map_err(|e| e.to_string())?;
     stmt.bind((4, telegram_destination_name)).map_err(|e| e.to_string())?;
     stmt.bind((5, local_backup_dir)).map_err(|e| e.to_string())?;
     stmt.bind((6, workspace_dir)).map_err(|e| e.to_string())?;

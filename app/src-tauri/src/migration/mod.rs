@@ -10,7 +10,7 @@ pub mod session_store;
 pub mod telegram_idempotency;
 
 use std::sync::atomic::AtomicBool;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use tokio::sync::Mutex as TokioMutex;
 
 use crate::migration::pipeline::runner::PipelineRunner;

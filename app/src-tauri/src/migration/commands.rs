@@ -76,13 +76,14 @@ pub async fn cmd_migration_get_folder_children(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn cmd_migration_start(
     state: State<'_, MigrationState>,
     tg_state: State<'_, crate::commands::TelegramState>,
     app_handle: tauri::AppHandle,
     source_folder_id: String,
     source_folder_path: String,
-    telegram_destination_id: Option<i64>,
+    telegram_destination_id: String,
     telegram_destination_name: String,
     local_backup_dir: String,
 ) -> Result<i64, String> {
@@ -140,7 +141,7 @@ pub async fn cmd_migration_start(
             &conn,
             &source_folder_id,
             &source_folder_path,
-            telegram_destination_id,
+            &telegram_destination_id,
             &telegram_destination_name,
             &local_backup_dir,
             &workspace_dir,
@@ -175,7 +176,7 @@ pub async fn cmd_migration_start(
             job_id,
             PathBuf::from(&workspace_dir),
             PathBuf::from(&local_backup_dir),
-            telegram_destination_id,
+            telegram_destination_id.parse::<i64>().ok(),
         ) {
             Ok(services) => services,
             Err(e) => {
@@ -315,7 +316,7 @@ pub async fn cmd_migration_get_status(
     };
 
     // 4. Folders
-    let mut folders_stmt = conn.prepare("SELECT folder_path, COUNT(*), SUM(size) FROM migration_items WHERE job_id = ? GROUP BY folder_path").map_err(|e| e.to_string())?;
+    let _folders_stmt = conn.prepare("SELECT folder_path, COUNT(*), SUM(size) FROM migration_items WHERE job_id = ? GROUP BY folder_path").map_err(|e| e.to_string())?;
     // Wait, folder_path is not in migration_items. The path contains it. Let's just group by folder_id, but folder_queue has folder_path.
     // Instead of complex join, let's just use folder_queue for folders.
     let mut folders = Vec::new();
@@ -323,7 +324,7 @@ pub async fn cmd_migration_get_status(
     fq_stmt.bind((1, job_id)).map_err(|e| e.to_string())?;
     while let Ok(sqlite::State::Row) = fq_stmt.next() {
         let fpath: String = fq_stmt.read(0).unwrap_or_default();
-        let fname = fpath.split('/').last().unwrap_or("").to_string();
+        let fname = fpath.split('/').next_back().unwrap_or("").to_string();
         folders.push(FolderSummary {
             source_path: fpath,
             name: fname,

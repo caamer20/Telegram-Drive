@@ -15,7 +15,7 @@ use chrono::Utc;
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
-use tokio::sync::{mpsc, Semaphore};
+use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
 pub const STATE_RUNNING: u8 = 0;
@@ -26,6 +26,12 @@ pub const STATE_CANCELLED: u8 = 3;
 #[derive(Debug, Clone)]
 pub struct CancellationToken {
     state: Arc<std::sync::atomic::AtomicU8>,
+}
+
+impl Default for CancellationToken {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl CancellationToken {
@@ -164,7 +170,7 @@ impl PipelineRunner {
         let (upload_tx, upload_rx) = mpsc::channel(self.config.upload_queue_capacity);
         let (local_tx, local_rx) = mpsc::channel(self.config.local_finalizer_queue_capacity);
 
-        let runner_clone = self.clone();
+        let _runner_clone = self.clone();
         let cancel = self.cancel_token.clone();
 
         let crawler = crate::migration::pipeline::crawler::StreamingCrawler {
@@ -298,7 +304,6 @@ impl PipelineRunner {
                     local_dest_path: None,
                     telegram_random_id: None,
                     video_decision,
-                    duplicate_of_item_id: None,
                 });
             }
             items
@@ -344,7 +349,7 @@ impl PipelineRunner {
             Err(_) => return true, // assume pending on error
         };
         let mut stmt = match conn.prepare(
-            "SELECT COUNT(*) FROM migration_items WHERE job_id = ? AND pipeline_stage NOT IN ('completed_telegram', 'completed_local', 'skipped_duplicate', 'failed', 'reconciliation_required') AND duplicate_of_item_id IS NULL;"
+            "SELECT COUNT(*) FROM migration_items WHERE job_id = ? AND pipeline_stage NOT IN ('completed_telegram', 'completed_local', 'skipped_duplicate', 'failed', 'reconciliation_required');"
         ) {
             Ok(s) => s,
             Err(_) => return true,
@@ -467,21 +472,9 @@ impl PipelineRunner {
                                     println!("Downloader failed to update stage to Downloaded for item {}: {}", item.id, e);
                                 }
 
-                                // 3.5. Dedupe check
-                                if let Ok(true) =
-                                    crate::migration::pipeline::transitions::post_download_dedupe(
-                                        &db_clone, item.id, &sha256,
-                                    )
-                                {
-                                    println!("Downloader item {} deduped successfully!", item.id);
-                                    let _ = std::fs::remove_file(&final_path);
-                                    let conn = db_clone.lock().unwrap();
-                                    return;
-                                }
-
                                 // 4. Giải phóng disk reservation
                                 {
-                                    let conn = db_clone.lock().unwrap();
+                                    let _conn = db_clone.lock().unwrap();
                                 }
 
                                 println!("Downloader routing item {} as {:?}", item.id, category);
@@ -711,7 +704,7 @@ impl PipelineRunner {
                         let mut guard = rx_clone.lock().await;
                         guard.recv().await
                     };
-                    let mut item = match item_opt {
+                    let item = match item_opt {
                         Some(i) => i,
                         None => break,
                     };
@@ -961,10 +954,7 @@ impl PipelineRunner {
                         );
 
                         if e.contains("permanent_error") {
-                            let _ =
-                                crate::migration::pipeline::transitions::promote_canonical(
-                                    &db_clone, item.id,
-                                );
+                            // Dedupe promotion removed for canonical flow
                         }
                     }
                 }

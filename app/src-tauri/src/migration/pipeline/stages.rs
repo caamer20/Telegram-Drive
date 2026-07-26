@@ -91,7 +91,7 @@ pub struct PipelineItem {
     pub local_dest_path: Option<String>,
     pub telegram_random_id: Option<String>,
     pub video_decision: Option<String>,
-    pub duplicate_of_item_id: Option<i64>,
+
 }
 
 // Media metadata return from ffprobe
