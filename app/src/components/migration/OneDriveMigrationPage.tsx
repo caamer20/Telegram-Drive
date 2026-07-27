@@ -5,7 +5,7 @@ import { SetupSection } from './SetupSection';
 import { ProgressPanel } from './ProgressPanel';
 import { ActivityStream } from './ActivityStream';
 import { FileTable } from './FileTable';
-import { MigrationJobDetail, ItemProgressPayload, MigrationActivity, MsAccountInfo, OneDriveItem } from '../../types';
+import { MigrationJobDetail, ItemProgressPayload, ItemCompletePayload, MigrationActivity, MsAccountInfo, OneDriveItem } from '../../types';
 import { useTranslation } from 'react-i18next';
 import { Play, RefreshCw, AlertTriangle } from 'lucide-react';
 
@@ -15,8 +15,8 @@ export const OneDriveMigrationPage: React.FC = () => {
     // States
     const [msAccount, setMsAccount] = useState<MsAccountInfo | null>(null);
     const [currentDetail, setCurrentDetail] = useState<MigrationJobDetail | null>(null);
-    const [progress, setProgress] = useState<ItemProgressPayload | null>(null);
-    const [activities] = useState<MigrationActivity[]>([]);
+    const [activeProgresses, setActiveProgresses] = useState<Record<number, ItemProgressPayload>>({});
+    const [activities, setActivities] = useState<MigrationActivity[]>([]);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     
@@ -34,19 +34,18 @@ export const OneDriveMigrationPage: React.FC = () => {
         const fetchStatus = async () => {
             try {
                 // MS Account status
-                const msStatus = await invoke<MsAccountInfo>('cmd_migration_ms_status');
+                const msStatus = await invoke<MsAccountInfo | null>('cmd_migration_ms_status');
                 if (isMounted) setMsAccount(msStatus);
                 
-                // Job status (assuming we fetch the active one if we don't know the ID yet)
-                // For now, if currentDetail exists, we poll it.
-                if (currentDetail?.job?.id) {
-                    const detail = await invoke<MigrationJobDetail>('cmd_migration_get_status', { jobId: currentDetail.job.id });
+                let jobId = currentDetail?.job?.id;
+                if (!jobId) {
+                    jobId = await invoke<number | null>('cmd_migration_get_resumable_job') ?? undefined;
+                }
+                if (jobId) {
+                    const detail = await invoke<MigrationJobDetail>('cmd_migration_get_status', { jobId });
                     if (isMounted) {
                         setCurrentDetail(detail);
-                        // Also fetch items to update the file table? Wait, cmd_migration_get_status returns full MigrationJobDetail!
                     }
-                } else {
-                    // Try to fetch active job ID if available? No, wait for user to start or resume.
                 }
             } catch (err: any) {
                 console.error("Status fetch error", err);
@@ -64,23 +63,49 @@ export const OneDriveMigrationPage: React.FC = () => {
     // Tauri Event listeners for progress
     useEffect(() => {
         let unlistenProgress: UnlistenFn | null = null;
+        let unlistenComplete: UnlistenFn | null = null;
         
         const setupListeners = async () => {
-            unlistenProgress = await listen<ItemProgressPayload>('migration-item-progress', (event) => {
-                setProgress(event.payload);
+            unlistenProgress = await listen<ItemProgressPayload>('migration:item-progress', (event) => {
+                setActiveProgresses(prev => ({
+                    ...prev,
+                    [event.payload.item_id]: { ...event.payload, timestamp: Date.now() }
+                }));
+            });
+
+            unlistenComplete = await listen<ItemCompletePayload>('migration:item-complete', (event) => {
+                const { job_id, item_id, item_name, phase, status, error_message, timestamp } = event.payload;
+                setActiveProgresses(prev => {
+                    const next = { ...prev };
+                    delete next[item_id];
+                    return next;
+                });
+                setActivities(prev => [{
+                    id: timestamp,
+                    job_id,
+                    item_id,
+                    item_name,
+                    phase: phase as MigrationActivity['phase'],
+                    status,
+                    attempt: 0,
+                    revision: 0,
+                    message: error_message || '',
+                    created_at: Math.floor(timestamp / 1000),
+                }, ...prev].slice(0, 300));
             });
         };
         
         setupListeners();
         return () => {
             if (unlistenProgress) unlistenProgress();
+            if (unlistenComplete) unlistenComplete();
         };
     }, []);
 
     const handleConnectMs = async (clientId?: string, tenant?: string) => {
         setLoading(true);
         try {
-            await invoke('cmd_migration_ms_connect', { clientId, tenantId: tenant });
+            await invoke('cmd_migration_ms_connect', { clientId, tenant });
             const msStatus = await invoke<MsAccountInfo>('cmd_migration_ms_status');
             setMsAccount(msStatus);
         } catch (e: any) {
@@ -121,6 +146,22 @@ export const OneDriveMigrationPage: React.FC = () => {
     };
 
     const handleStart = async () => {
+        const resumableJob = currentDetail?.job;
+        if (resumableJob && ['stopped', 'waiting_for_quota'].includes(resumableJob.state)) {
+            setLoading(true);
+            setError(null);
+            try {
+                await invoke('cmd_migration_resume', { jobId: resumableJob.id });
+                const detail = await invoke<MigrationJobDetail>('cmd_migration_get_status', { jobId: resumableJob.id });
+                setCurrentDetail(detail);
+            } catch (e: any) {
+                setError(e.toString());
+            } finally {
+                setLoading(false);
+            }
+            return;
+        }
+
         if (!sourceId || !destName || !localDir) {
             setError("Please fill all required settings before starting.");
             return;
@@ -147,6 +188,11 @@ export const OneDriveMigrationPage: React.FC = () => {
     const handleStop = async () => {
         try {
             await invoke('cmd_migration_stop');
+            setActiveProgresses({});
+            if (currentDetail?.job?.id) {
+                const detail = await invoke<MigrationJobDetail>('cmd_migration_get_status', { jobId: currentDetail.job.id });
+                setCurrentDetail(detail);
+            }
         } catch (e: any) {
             setError(e.toString());
         }
@@ -162,7 +208,10 @@ export const OneDriveMigrationPage: React.FC = () => {
     };
     
     // We determine if we are in Setup phase or Execution phase
-    const showSetup = !currentDetail || currentDetail.job.state === 'failed' || currentDetail.job.state === 'completed';
+    const showSetup = !currentDetail
+        || !msAccount
+        || currentDetail.job.state === 'failed'
+        || currentDetail.job.state === 'completed';
 
     return (
         <div className="h-full flex flex-col bg-slate-950 text-slate-200 overflow-hidden">
@@ -227,7 +276,7 @@ export const OneDriveMigrationPage: React.FC = () => {
                             {currentDetail && (
                                 <ProgressPanel
                                     detail={currentDetail}
-                                    progress={progress}
+                                    activeProgresses={activeProgresses}
                                     cooldown={null}
                                     onStart={handleStart}
                                     onStop={handleStop}

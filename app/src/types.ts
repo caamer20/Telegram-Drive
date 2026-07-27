@@ -360,9 +360,9 @@ export interface ItemProgressPayload {
     bytes_done: number;
     bytes_total: number;
     speed_bytes_per_sec: number;
-    event_id: string;
-    attempt: number;
-    revision: number;
+    event_id?: string;
+    attempt?: number;
+    revision?: number;
     timestamp: number;
 }
 
@@ -370,9 +370,11 @@ export interface ItemCompletePayload {
     job_id: number;
     item_id: number;
     item_name: string;
+    phase: 'uploading' | 'saving_local' | 'processing' | 'downloading';
     status: ItemState;
-    error_type?: string;
-    error_message?: string;
+    error_type?: string | null;
+    error_message?: string | null;
+    timestamp: number;
 }
 
 export interface StatsPayload {

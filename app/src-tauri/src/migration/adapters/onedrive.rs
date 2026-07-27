@@ -1,4 +1,5 @@
 use crate::migration::db::MigrationDb;
+use crate::migration::events::{emit_item_progress, now_millis, ItemProgressPayload};
 use crate::migration::microsoft::{self, MicrosoftSession};
 use crate::migration::pipeline::stages::SourceDownloader;
 
@@ -16,6 +17,8 @@ pub struct OneDriveDownloader {
     ms_session: Arc<TokioMutex<Option<MicrosoftSession>>>,
     db: MigrationDb,
     base_url: String,
+    cancel_token: tokio_util::sync::CancellationToken,
+    app_handle: Option<tauri::AppHandle>,
 }
 
 impl OneDriveDownloader {
@@ -23,12 +26,16 @@ impl OneDriveDownloader {
         http: Client,
         ms_session: Arc<TokioMutex<Option<MicrosoftSession>>>,
         db: MigrationDb,
+        cancel_token: tokio_util::sync::CancellationToken,
+        app_handle: Option<tauri::AppHandle>,
     ) -> Self {
         Self {
             http,
             ms_session,
             db,
             base_url: "https://graph.microsoft.com".to_string(),
+            cancel_token,
+            app_handle,
         }
     }
 
@@ -43,6 +50,26 @@ impl OneDriveDownloader {
             ms_session,
             db,
             base_url,
+            cancel_token: tokio_util::sync::CancellationToken::new(),
+            app_handle: None,
+        }
+    }
+
+    #[cfg(test)]
+    pub fn new_with_base_url_and_cancel(
+        http: Client,
+        ms_session: Arc<TokioMutex<Option<MicrosoftSession>>>,
+        db: MigrationDb,
+        base_url: String,
+        cancel_token: tokio_util::sync::CancellationToken,
+    ) -> Self {
+        Self {
+            http,
+            ms_session,
+            db,
+            base_url,
+            cancel_token,
+            app_handle: None,
         }
     }
 }
@@ -56,32 +83,72 @@ impl SourceDownloader for OneDriveDownloader {
     ) -> Pin<Box<dyn Future<Output = Result<String, String>> + Send>> {
         let http = self.http.clone();
         let ms_session = self.ms_session.clone();
-        let _db = self.db.clone();
+        let db = self.db.clone();
         let source_item_id = source_item_id.to_string();
         let dest_path = dest_path.to_path_buf();
         let base_url = self.base_url.clone();
+        let cancel = self.cancel_token.clone();
+        let app_handle = self.app_handle.clone();
 
         Box::pin(async move {
-            // 1. Refresh token if expired
-            let access_token = {
-                let mut session_guard = ms_session.lock().await;
-                if let Some(ref mut session) = *session_guard {
-                    if session.is_expired() {
-                        if let Err(e) = microsoft::refresh_access_token(session).await {
-                            return Err(format!("Authentication: failed to refresh token: {}", e));
-                        }
-                    }
-                    session.access_token.clone()
-                } else {
-                    return Err("Authentication: No active Microsoft session".to_string());
+            let remove_partial = || async {
+                match tokio::fs::remove_file(&dest_path).await {
+                    Ok(()) => {}
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(error) => log::warn!(
+                        "Download: failed to remove partial artifact {:?}: {}",
+                        dest_path,
+                        error
+                    ),
                 }
             };
 
-            // 2. Fetch metadata from OneDrive
+            let (job_id, item_name) = {
+                let conn = db.lock().map_err(|error| error.to_string())?;
+                let mut stmt = conn
+                    .prepare("SELECT job_id, name FROM migration_items WHERE id = ? LIMIT 1")
+                    .map_err(|error| error.to_string())?;
+                stmt.bind((1, item_id)).map_err(|error| error.to_string())?;
+                if let Ok(sqlite::State::Row) = stmt.next() {
+                    (
+                        stmt.read::<i64, _>(0).unwrap_or(0),
+                        stmt.read::<String, _>(1).unwrap_or_default(),
+                    )
+                } else {
+                    return Err("Download: migration item not found".to_string());
+                }
+            };
+
+            // 1. Refresh token if expired
+            let access_token = tokio::select! {
+                _ = cancel.cancelled() => {
+                    remove_partial().await;
+                    return Err("Download: cancelled".to_string());
+                }
+                result = async {
+                    let mut session_guard = ms_session.lock().await;
+                    if let Some(ref mut session) = *session_guard {
+                        if session.is_expired() {
+                            microsoft::refresh_access_token(session)
+                                .await
+                                .map_err(|e| format!("Authentication: failed to refresh token: {}", e))?;
+                        }
+                        Ok(session.access_token.clone())
+                    } else {
+                        Err("Authentication: No active Microsoft session".to_string())
+                    }
+                } => result?,
+            };
+
             let item_url = format!("{}/v1.0/me/drive/items/{}", base_url, source_item_id);
-            let resp = match http.get(&item_url).bearer_auth(&access_token).send().await {
-                Ok(r) => r,
-                Err(e) => return Err(format!("TransientNetwork: {}", e)),
+            let resp = tokio::select! {
+                _ = cancel.cancelled() => {
+                    remove_partial().await;
+                    return Err("Download: cancelled".to_string());
+                }
+                result = http.get(&item_url).bearer_auth(&access_token).send() => {
+                    result.map_err(|e| format!("TransientNetwork: {}", e))?
+                }
             };
 
             let status = resp.status();
@@ -97,9 +164,14 @@ impl SourceDownloader for OneDriveDownloader {
                 return Err(format!("InvalidResponse: HTTP {}", status));
             }
 
-            let json: serde_json::Value = match resp.json().await {
-                Ok(j) => j,
-                Err(e) => return Err(format!("InvalidResponse: {}", e)),
+            let json: serde_json::Value = tokio::select! {
+                _ = cancel.cancelled() => {
+                    remove_partial().await;
+                    return Err("Download: cancelled".to_string());
+                }
+                result = resp.json() => {
+                    result.map_err(|e| format!("InvalidResponse: {}", e))?
+                }
             };
 
             let download_url = match json["@microsoft.graph.downloadUrl"].as_str() {
@@ -107,12 +179,15 @@ impl SourceDownloader for OneDriveDownloader {
                 None => return Err("InvalidResponse: Missing download URL".to_string()),
             };
 
-
-
             // 3. Download the file streamingly
-            let mut stream_resp = match http.get(&download_url).send().await {
-                Ok(r) => r,
-                Err(e) => return Err(format!("TransientNetwork: {}", e)),
+            let mut stream_resp = tokio::select! {
+                _ = cancel.cancelled() => {
+                    remove_partial().await;
+                    return Err("Download: cancelled".to_string());
+                }
+                result = http.get(&download_url).send() => {
+                    result.map_err(|e| format!("TransientNetwork: {}", e))?
+                }
             };
 
             if !stream_resp.status().is_success() {
@@ -127,27 +202,89 @@ impl SourceDownloader for OneDriveDownloader {
 
             let mut hasher = sha2::Sha256::new();
             let mut downloaded_bytes = 0u64;
+            let started_at = std::time::Instant::now();
+            let mut last_emit = std::time::Instant::now()
+                .checked_sub(std::time::Duration::from_millis(250))
+                .unwrap_or_else(std::time::Instant::now);
 
-            while let Some(chunk) = match stream_resp.chunk().await {
-                Ok(c) => c,
-                Err(e) => return Err(format!("TransientNetwork: chunk error: {}", e)),
-            } {
-                if let Err(e) = file.write_all(&chunk).await {
-                    return Err(format!("Local filesystem error: {}", e));
+            loop {
+                let chunk = tokio::select! {
+                    _ = cancel.cancelled() => {
+                        drop(file);
+                        remove_partial().await;
+                        return Err("Download: cancelled".to_string());
+                    }
+                    result = stream_resp.chunk() => {
+                        result.map_err(|e| format!("TransientNetwork: chunk error: {}", e))?
+                    }
+                };
+                let Some(chunk) = chunk else { break };
+                tokio::select! {
+                    _ = cancel.cancelled() => {
+                        drop(file);
+                        remove_partial().await;
+                        return Err("Download: cancelled".to_string());
+                    }
+                    result = file.write_all(&chunk) => {
+                        result.map_err(|e| format!("Local filesystem error: {}", e))?;
+                    }
                 }
                 sha2::Digest::update(&mut hasher, &chunk);
                 downloaded_bytes += chunk.len() as u64;
 
-                log::info!(
-                    "Download progress for item {}: {}/{}",
-                    item_id,
-                    downloaded_bytes,
-                    total_bytes
-                );
+                if last_emit.elapsed() >= std::time::Duration::from_millis(250) {
+                    if let Some(ref app) = app_handle {
+                        let elapsed = started_at.elapsed().as_secs_f64().max(0.001);
+                        emit_item_progress(
+                            app,
+                            ItemProgressPayload {
+                                job_id,
+                                item_id,
+                                item_name: item_name.clone(),
+                                phase: "downloading".to_string(),
+                                percent: if total_bytes > 0 {
+                                    downloaded_bytes as f64 * 100.0 / total_bytes as f64
+                                } else {
+                                    0.0
+                                },
+                                bytes_done: downloaded_bytes,
+                                bytes_total: total_bytes,
+                                speed_bytes_per_sec: downloaded_bytes as f64 / elapsed,
+                                timestamp: now_millis(),
+                            },
+                        );
+                    }
+                    last_emit = std::time::Instant::now();
+                }
             }
 
-            if let Err(e) = file.flush().await {
-                return Err(format!("Local filesystem error: {}", e));
+            tokio::select! {
+                _ = cancel.cancelled() => {
+                    drop(file);
+                    remove_partial().await;
+                    return Err("Download: cancelled".to_string());
+                }
+                result = file.flush() => {
+                    result.map_err(|e| format!("Local filesystem error: {}", e))?;
+                }
+            }
+
+            if let Some(ref app) = app_handle {
+                let elapsed = started_at.elapsed().as_secs_f64().max(0.001);
+                emit_item_progress(
+                    app,
+                    ItemProgressPayload {
+                        job_id,
+                        item_id,
+                        item_name,
+                        phase: "downloading".to_string(),
+                        percent: 100.0,
+                        bytes_done: downloaded_bytes,
+                        bytes_total: total_bytes.max(downloaded_bytes),
+                        speed_bytes_per_sec: downloaded_bytes as f64 / elapsed,
+                        timestamp: now_millis(),
+                    },
+                );
             }
 
             let hex_hash = format!("{:x}", hasher.finalize());
@@ -160,9 +297,8 @@ impl SourceDownloader for OneDriveDownloader {
 mod tests {
     use super::*;
     use crate::migration::db::open_migration_db_at_path;
-    use std::fs;
-    use std::path::PathBuf;
     use crate::migration::models::MsAccountInfo;
+    use std::path::PathBuf;
     use wiremock::matchers::{header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -255,8 +391,6 @@ mod tests {
         assert!(dest.exists());
         let content = std::fs::read_to_string(&dest).unwrap();
         assert_eq!(content, "hello world");
-
-
     }
 
     #[tokio::test]
@@ -265,6 +399,11 @@ mod tests {
         let tmp = TempDir::new();
         let db_path = tmp.path.join("test_od_err.db");
         let db = open_migration_db_at_path(db_path).unwrap();
+        {
+            let conn = db.lock().unwrap();
+            conn.execute("INSERT INTO migration_jobs (id, source_folder_id, source_folder_path, telegram_destination_id, telegram_destination_name, local_backup_dir, workspace_dir, state, started_at, created_at, updated_at) VALUES (1, 'src', 'path', 'tg', 'tg', 'loc', 'ws', 'running', 0, 0, 0);").unwrap();
+            conn.execute("INSERT INTO migration_items (id, job_id, folder_id, name, path, source_item_id, size, item_category, pipeline_stage, created_at, updated_at) VALUES (1, 1, 'f', 'test.txt', 'test.txt', 'missing', 100, 'file', 'queued_download', 0, 0);").unwrap();
+        }
 
         let session = MicrosoftSession {
             client_id: "client123".to_string(),
@@ -312,5 +451,67 @@ mod tests {
             .await
             .unwrap_err();
         assert!(err.contains("RateLimited"));
+    }
+
+    #[tokio::test]
+    async fn test_cancel_during_active_download_removes_partial_file() {
+        let mock_server = MockServer::start().await;
+        let tmp = TempDir::new();
+        let db = open_migration_db_at_path(tmp.path.join("test_od_cancel.db")).unwrap();
+        {
+            let conn = db.lock().unwrap();
+            conn.execute("INSERT INTO migration_jobs (id, source_folder_id, source_folder_path, telegram_destination_id, telegram_destination_name, local_backup_dir, workspace_dir, state, started_at, created_at, updated_at) VALUES (1, 'src', 'path', 'tg', 'tg', 'loc', 'ws', 'running', 0, 0, 0);").unwrap();
+            conn.execute("INSERT INTO migration_items (id, job_id, folder_id, name, path, source_item_id, size, item_category, pipeline_stage, created_at, updated_at) VALUES (1, 1, 'f', 'slow.bin', 'slow.bin', 'slow', 100, 'file', 'downloading', 0, 0);").unwrap();
+        }
+        let session = MicrosoftSession {
+            client_id: "client123".to_string(),
+            access_token: "fake_token".to_string(),
+            refresh_token: "ref_token".to_string(),
+            expires_at: chrono::Utc::now().timestamp() + 3600,
+            tenant: "common".to_string(),
+            redirect_uri: "http://redirect".to_string(),
+            account_info: MsAccountInfo {
+                account_name: "Test".to_string(),
+                account_email: "test@mail.com".to_string(),
+            },
+        };
+        Mock::given(method("GET"))
+            .and(path("/v1.0/me/drive/items/slow"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "@microsoft.graph.downloadUrl": format!("{}/slow-download", mock_server.uri())
+            })))
+            .mount(&mock_server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/slow-download"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_delay(std::time::Duration::from_secs(10))
+                    .set_body_raw(vec![7u8; 1024], "application/octet-stream"),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let downloader = OneDriveDownloader::new_with_base_url_and_cancel(
+            Client::new(),
+            Arc::new(TokioMutex::new(Some(session))),
+            db,
+            mock_server.uri(),
+            cancel.clone(),
+        );
+        let dest = tmp.path.join("slow.part");
+        let download = downloader.download_file(1, "slow", &dest);
+        let result = tokio::time::timeout(std::time::Duration::from_secs(2), async move {
+            tokio::join!(download, async move {
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                cancel.cancel();
+            })
+            .0
+        })
+        .await
+        .expect("download request must stop promptly");
+        assert!(result.unwrap_err().contains("cancelled"));
+        assert!(!dest.exists());
     }
 }

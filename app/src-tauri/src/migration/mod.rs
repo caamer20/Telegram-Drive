@@ -1,6 +1,7 @@
 pub mod adapters;
 pub mod commands;
 pub mod db;
+pub mod events;
 
 pub mod microsoft;
 pub mod models;
@@ -11,7 +12,7 @@ pub mod telegram_idempotency;
 
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
-use tokio::sync::Mutex as TokioMutex;
+use tokio::sync::{watch, Mutex as TokioMutex};
 
 use crate::migration::pipeline::runner::PipelineRunner;
 
@@ -19,7 +20,8 @@ use crate::migration::pipeline::runner::PipelineRunner;
 pub struct ActivePipeline {
     pub job_id: i64,
     pub runner: Arc<PipelineRunner>,
-    pub cancel_token: crate::migration::pipeline::runner::CancellationToken,
+    pub cancel_token: tokio_util::sync::CancellationToken,
+    pub completion: watch::Receiver<Option<Result<(), String>>>,
 }
 
 pub struct MigrationState {
@@ -29,10 +31,12 @@ pub struct MigrationState {
     pub scan_running: Arc<AtomicBool>,
     pub scan_stop_requested: Arc<AtomicBool>,
 
-    pub cancel_token: Arc<AtomicBool>,
+    pub cancel_token: tokio_util::sync::CancellationToken,
     pub pause_token: Arc<AtomicBool>,
     /// Active pipeline run (only one at a time)
     pub active_pipeline: Arc<TokioMutex<Option<ActivePipeline>>>,
+    /// Serializes setup, teardown, resume, retry, and database reset operations.
+    pub lifecycle_lock: Arc<TokioMutex<()>>,
 }
 
 impl MigrationState {
@@ -50,9 +54,10 @@ impl MigrationState {
             worker_running: Arc::new(AtomicBool::new(false)),
             scan_running: Arc::new(AtomicBool::new(false)),
             scan_stop_requested: Arc::new(AtomicBool::new(false)),
-            cancel_token: Arc::new(AtomicBool::new(false)),
+            cancel_token: tokio_util::sync::CancellationToken::new(),
             pause_token: Arc::new(AtomicBool::new(false)),
             active_pipeline: Arc::new(TokioMutex::new(None)),
+            lifecycle_lock: Arc::new(TokioMutex::new(())),
         }
     }
 
@@ -63,9 +68,10 @@ impl MigrationState {
             worker_running: self.worker_running.clone(),
             scan_running: self.scan_running.clone(),
             scan_stop_requested: self.scan_stop_requested.clone(),
-            cancel_token: Arc::new(AtomicBool::new(false)),
-            pause_token: Arc::new(AtomicBool::new(false)),
+            cancel_token: self.cancel_token.clone(),
+            pause_token: self.pause_token.clone(),
             active_pipeline: self.active_pipeline.clone(),
+            lifecycle_lock: self.lifecycle_lock.clone(),
         })
     }
 }

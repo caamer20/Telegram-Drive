@@ -92,6 +92,7 @@ pub struct PipelineItem {
     pub original_sha256: Option<String>,
     pub processed_sha256: Option<String>,
     pub local_artifact_path: Option<String>,
+    pub processed_artifact_path: Option<String>,
     pub telegram_random_id: Option<i64>,
     pub video_decision: Option<String>,
 }
@@ -99,9 +100,12 @@ pub struct PipelineItem {
 // Media metadata return from ffprobe
 #[derive(Debug, Clone, Default)]
 pub struct VideoMetadata {
-    pub container: String,
+    /// Full format_name string from ffprobe (e.g. "mov,mp4,m4a,3gp,3g2,mj2")
+    pub container_format_names: String,
     pub video_codec: String,
     pub audio_codec: String,
+    pub audio_channels: u32,
+    pub audio_sample_rate: u32,
     pub duration: f64,
     pub width: u32,
     pub height: u32,
@@ -109,6 +113,197 @@ pub struct VideoMetadata {
     pub is_valid: bool,
     pub rotation: i32,
     pub file_size: u64,
+    pub color_transfer: String,
+    pub color_primaries: String,
+    pub profile: String,
+    pub pixel_format: String,
+    pub fps: f64,
+    /// ISO BMFF major_brand from ffprobe format.tags.major_brand.
+    pub major_brand: String,
+}
+
+impl VideoMetadata {
+    /// Check if the container format is MP4-compatible (MP4 family)
+    pub fn is_mp4_compatible(&self) -> bool {
+        let formats: Vec<&str> = self
+            .container_format_names
+            .split(',')
+            .map(|s| s.trim())
+            .collect();
+        formats.iter().any(|f| {
+            matches!(
+                *f,
+                "mp4" | "mov" | "m4a" | "3gp" | "3g2" | "mj2" | "ismv" | "ipod"
+            )
+        })
+    }
+
+    /// Source passthrough is stricter than output validation: a QuickTime `.mov`
+    /// must not become canonical merely because FFprobe reports the shared MOV/MP4 demuxer.
+    pub fn is_mp4_source(&self, source_path: &Path) -> bool {
+        let has_mp4_extension = source_path
+            .extension()
+            .and_then(|value| value.to_str())
+            .map(|value| value.eq_ignore_ascii_case("mp4"))
+            .unwrap_or(false);
+        let brand = self.major_brand.trim().to_ascii_lowercase();
+        let has_mp4_brand = matches!(
+            brand.as_str(),
+            "isom"
+                | "iso2"
+                | "iso3"
+                | "iso4"
+                | "iso5"
+                | "iso6"
+                | "mp41"
+                | "mp42"
+                | "avc1"
+                | "dash"
+                | "mmp4"
+                | "msnv"
+        );
+        self.is_mp4_compatible() && (has_mp4_extension || has_mp4_brand)
+    }
+
+    /// Check if this is a valid HEVC Main 8-bit passthrough candidate
+    pub fn is_canonical_main8(&self) -> bool {
+        self.is_valid
+            && self.duration > 0.0
+            && self.video_codec == "hevc"
+            && self.profile.to_ascii_lowercase() == "main"
+            && self.pixel_format == "yuv420p"
+            && self.is_mp4_compatible()
+            && (self.audio_codec.is_empty() || self.audio_codec == "aac")
+            && self.width <= 1920
+            && self.height <= 1080
+            && self.fps > 0.0
+            && self.fps <= 60.0
+            && self.color_transfer != "smpte2084"
+            && self.color_transfer != "arib-std-b67"
+    }
+
+    /// Check if this is a valid HEVC Main10 passthrough candidate
+    pub fn is_canonical_main10(&self) -> bool {
+        let profile_lower = self.profile.to_ascii_lowercase().replace(' ', "");
+        let valid_10bit_pix_fmt = matches!(
+            self.pixel_format.as_str(),
+            "yuv420p10le" | "yuv420p10be" | "p010le" | "p010be"
+        );
+        self.is_valid
+            && self.duration > 0.0
+            && self.video_codec == "hevc"
+            && profile_lower == "main10"
+            && valid_10bit_pix_fmt
+            && self.is_mp4_compatible()
+            && (self.audio_codec.is_empty() || self.audio_codec == "aac")
+            && self.width <= 1920
+            && self.height <= 1080
+            && self.fps > 0.0
+            && self.fps <= 60.0
+    }
+
+    /// Check if source is HDR (PQ or HLG transfer)
+    pub fn is_hdr(&self) -> bool {
+        self.color_transfer == "smpte2084" || self.color_transfer == "arib-std-b67"
+    }
+
+    /// Check if source has 10-bit pixel format
+    pub fn is_10bit(&self) -> bool {
+        self.pixel_format.contains("10")
+            || self.pixel_format.contains("p010")
+            || self
+                .profile
+                .to_ascii_lowercase()
+                .replace(' ', "")
+                .contains("10")
+            || self.is_hdr()
+    }
+}
+
+/// Canonical video profile for encoding decisions
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CanonicalVideoProfile {
+    Main8,
+    Main10,
+}
+
+impl CanonicalVideoProfile {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Main8 => "main",
+            Self::Main10 => "main10",
+        }
+    }
+
+    pub fn pixel_format(&self) -> &'static str {
+        match self {
+            Self::Main8 => "yuv420p",
+            Self::Main10 => "yuv420p10le",
+        }
+    }
+}
+
+/// Validate encoded output against canonical policy
+pub fn validate_canonical_output(
+    source: &VideoMetadata,
+    output: &VideoMetadata,
+    expected_profile: CanonicalVideoProfile,
+) -> Result<(), String> {
+    if output.video_codec.is_empty() {
+        return Err("Output has no video stream".into());
+    }
+    if !output.is_mp4_compatible() {
+        return Err(format!(
+            "Output container '{}' is not MP4-compatible",
+            output.container_format_names
+        ));
+    }
+    if output.video_codec != "hevc" {
+        return Err(format!("Output codec '{}' is not HEVC", output.video_codec));
+    }
+    let expected_profile_str = expected_profile.as_str();
+    if output.profile.to_ascii_lowercase().replace(' ', "") != expected_profile_str {
+        return Err(format!(
+            "Output profile '{}' does not match expected '{}'",
+            output.profile, expected_profile_str
+        ));
+    }
+    let expected_pix_fmt = expected_profile.pixel_format();
+    if output.pixel_format != expected_pix_fmt {
+        return Err(format!(
+            "Output pixel format '{}' does not match expected '{}'",
+            output.pixel_format, expected_pix_fmt
+        ));
+    }
+    if !output.audio_codec.is_empty() && output.audio_codec != "aac" {
+        return Err(format!(
+            "Output audio codec '{}' is not AAC",
+            output.audio_codec
+        ));
+    }
+    if output.width == 0 || output.height == 0 {
+        return Err("Output has zero dimensions".into());
+    }
+    if output.width > 1920 || output.height > 1080 {
+        return Err(format!(
+            "Output resolution {}x{} exceeds 1920x1080",
+            output.width, output.height
+        ));
+    }
+    if output.fps <= 0.0 || output.fps > 60.0 {
+        return Err(format!("Output FPS {} is out of range (0, 60]", output.fps));
+    }
+    if output.duration <= 0.0 {
+        return Err("Output has zero duration".into());
+    }
+    let tolerance = f64::max(2.0, source.duration * 0.02);
+    if (output.duration - source.duration).abs() > tolerance {
+        return Err(format!(
+            "Output duration {} differs from source {} by more than tolerance {}",
+            output.duration, source.duration, tolerance
+        ));
+    }
+    Ok(())
 }
 
 // Decoupling dependency traits
@@ -156,12 +351,21 @@ pub trait MediaInspector: Send + Sync {
     ) -> Pin<Box<dyn Future<Output = Result<VideoMetadata, String>> + Send>>;
 }
 
+#[derive(Debug, Clone)]
+pub struct VideoProcessRequest {
+    pub input_path: PathBuf,
+    pub output_path: PathBuf,
+    pub decision: String,
+    pub item_id: i64,
+    pub job_id: i64,
+    pub item_name: String,
+    pub metadata: VideoMetadata,
+}
+
 pub trait VideoProcessor: Send + Sync {
     fn process_video(
         &self,
-        input_path: &Path,
-        output_path: &Path,
-        decision: &str,
+        request: VideoProcessRequest,
     ) -> Pin<Box<dyn Future<Output = Result<String, String>> + Send>>;
 }
 

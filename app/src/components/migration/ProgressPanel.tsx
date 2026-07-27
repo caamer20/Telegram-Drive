@@ -5,7 +5,7 @@ import { Play, XCircle, RotateCcw, AlertTriangle, CheckCircle2, Clock } from 'lu
 
 interface ProgressPanelProps {
     detail: MigrationJobDetail;
-    progress: ItemProgressPayload | null;
+    activeProgresses: Record<number, ItemProgressPayload>;
     cooldown: CooldownPayload | null;
     onStart: () => void;
     onStop: () => void;
@@ -14,7 +14,7 @@ interface ProgressPanelProps {
 
 export const ProgressPanel: React.FC<ProgressPanelProps> = ({
     detail,
-    progress,
+    activeProgresses,
     cooldown,
     onStart,
     onStop,
@@ -37,6 +37,7 @@ export const ProgressPanel: React.FC<ProgressPanelProps> = ({
         : 0;
 
     const isActive = job.state === 'running';
+    const isResumable = job.state === 'stopped' || job.state === 'waiting_for_quota';
 
     return (
         <div className="bg-slate-900/60 rounded-xl border border-slate-800 p-5 space-y-5">
@@ -64,13 +65,13 @@ export const ProgressPanel: React.FC<ProgressPanelProps> = ({
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2">
-                    {!isActive && job.state !== 'completed' && (
+                    {isResumable && (
                         <button
                             onClick={onStart}
                             className="inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white rounded-lg text-xs font-semibold shadow-lg transition-all"
                         >
                             <Play className="w-4 h-4 fill-current" />
-                            {t('migration.btn_start', 'Start Migration')}
+                            {t('migration.btn_resume', 'Resume Migration')}
                         </button>
                     )}
 
@@ -149,24 +150,30 @@ export const ProgressPanel: React.FC<ProgressPanelProps> = ({
                 </div>
             </div>
 
-            {/* Current Item Progress */}
-            {progress && (
-                <div className="p-4 bg-blue-950/20 border border-blue-900/40 rounded-xl space-y-2">
-                    <div className="flex justify-between items-center text-xs">
-                        <span className="font-semibold text-blue-300 truncate max-w-[70%]" title={progress.item_name}>
-                            {progress.phase === 'downloading' ? t('migration.phase_downloading', 'Downloading') : t('migration.phase_uploading', 'Uploading')}: {progress.item_name}
-                        </span>
-                        <span className="text-blue-400 font-mono font-bold">{progress.percent}%</span>
-                    </div>
-                    <div className="w-full h-2 bg-slate-950 rounded-full overflow-hidden">
-                        <div
-                            className="h-full bg-blue-500 transition-all duration-200"
-                            style={{ width: `${progress.percent}%` }}
-                        />
-                    </div>
-                    <div className="flex justify-between text-[11px] text-slate-400 font-mono">
-                        <span>{formatBytes(progress.bytes_done)} / {formatBytes(progress.bytes_total)}</span>
-                    </div>
+            {/* Current Active Progresses */}
+            {Object.values(activeProgresses).length > 0 && (
+                <div className="space-y-3">
+                    {Object.values(activeProgresses).map(progress => (
+                        <div key={progress.item_id} className="p-4 bg-blue-950/20 border border-blue-900/40 rounded-xl space-y-2">
+                            <div className="flex justify-between items-center text-xs">
+                                <span className="font-semibold text-blue-300 truncate max-w-[70%]" title={progress.item_name}>
+                                    {progress.phase === 'downloading' ? t('migration.phase_downloading', 'Downloading') :
+                                     progress.phase === 'processing' ? t('migration.phase_processing', 'Processing') :
+                                     t('migration.phase_uploading', 'Uploading')}: {progress.item_name}
+                                </span>
+                                <span className="text-blue-400 font-mono font-bold">{progress.percent}%</span>
+                            </div>
+                            <div className="w-full h-2 bg-slate-950 rounded-full overflow-hidden">
+                                <div
+                                    className="h-full bg-blue-500 transition-all duration-200"
+                                    style={{ width: `${progress.percent}%` }}
+                                />
+                            </div>
+                            <div className="flex justify-between text-[11px] text-slate-400 font-mono">
+                                <span>{formatBytes(progress.bytes_done)} / {formatBytes(progress.bytes_total)}</span>
+                            </div>
+                        </div>
+                    ))}
                 </div>
             )}
         </div>

@@ -11,12 +11,10 @@ pub fn validate_stage_transition(from: PipelineStage, to: PipelineStage) -> bool
     }
 
     match from {
-        PipelineStage::Discovered => {
-            to == PipelineStage::QueuedDownload
-        }
+        PipelineStage::Discovered => to == PipelineStage::QueuedDownload,
         PipelineStage::QueuedDownload => to == PipelineStage::Downloading,
         PipelineStage::Downloading => {
-            to == PipelineStage::Downloaded
+            to == PipelineStage::Downloaded || to == PipelineStage::QueuedDownload
         }
         PipelineStage::Downloaded => {
             to == PipelineStage::QueuedProcessing
@@ -25,27 +23,26 @@ pub fn validate_stage_transition(from: PipelineStage, to: PipelineStage) -> bool
         }
         PipelineStage::QueuedProcessing => to == PipelineStage::Processing,
         PipelineStage::Processing => {
-            to == PipelineStage::Processed
+            to == PipelineStage::Processed || to == PipelineStage::QueuedProcessing
         }
-        PipelineStage::Processed => {
-            to == PipelineStage::QueuedUpload
+        PipelineStage::Processed => to == PipelineStage::QueuedUpload,
+        PipelineStage::QueuedUpload => {
+            to == PipelineStage::Uploading || to == PipelineStage::WaitingForQuota
         }
-        PipelineStage::QueuedUpload => to == PipelineStage::Uploading,
         PipelineStage::Uploading => {
             to == PipelineStage::CompletedTelegram
+                || to == PipelineStage::WaitingForQuota
+                || to == PipelineStage::QueuedUpload
         }
-        PipelineStage::WaitingForQuota => {
-            to == PipelineStage::QueuedUpload
-        }
-        PipelineStage::SavingLocal => {
-            to == PipelineStage::CompletedLocal
-        }
+        PipelineStage::WaitingForQuota => to == PipelineStage::QueuedUpload,
+        PipelineStage::SavingLocal => to == PipelineStage::CompletedLocal,
         // Recovery transitions:
         // Allow retry from failed back to appropriate queue stage
         PipelineStage::Failed => {
             to == PipelineStage::QueuedDownload
                 || to == PipelineStage::QueuedProcessing
                 || to == PipelineStage::QueuedUpload
+                || to == PipelineStage::SavingLocal
         }
         PipelineStage::CompletedTelegram
         | PipelineStage::CompletedLocal
@@ -111,8 +108,6 @@ pub fn update_item_pipeline_stage(
     Ok(())
 }
 
-
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -158,6 +153,30 @@ mod tests {
         assert!(validate_stage_transition(
             PipelineStage::Downloading,
             PipelineStage::Failed
+        ));
+        assert!(validate_stage_transition(
+            PipelineStage::QueuedUpload,
+            PipelineStage::WaitingForQuota
+        ));
+        assert!(validate_stage_transition(
+            PipelineStage::Uploading,
+            PipelineStage::WaitingForQuota
+        ));
+        assert!(validate_stage_transition(
+            PipelineStage::WaitingForQuota,
+            PipelineStage::QueuedUpload
+        ));
+        assert!(validate_stage_transition(
+            PipelineStage::Downloading,
+            PipelineStage::QueuedDownload
+        ));
+        assert!(validate_stage_transition(
+            PipelineStage::Processing,
+            PipelineStage::QueuedProcessing
+        ));
+        assert!(validate_stage_transition(
+            PipelineStage::Uploading,
+            PipelineStage::QueuedUpload
         ));
 
         // Invalid transitions

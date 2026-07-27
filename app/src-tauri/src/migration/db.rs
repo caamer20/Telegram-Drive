@@ -3,7 +3,6 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri::{AppHandle, Manager};
 
-
 pub type MigrationDb = Arc<Mutex<sqlite::Connection>>;
 
 const MAX_DB_INIT_RETRIES: u32 = 5;
@@ -12,7 +11,7 @@ pub fn init_migration_db(app: &AppHandle) -> Result<MigrationDb, String> {
     let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let db_path = dir.join("migration.db");
-    
+
     // Check if schema is outdated and needs reset.
     // We detect this by checking if migration_jobs has the `created_at` column.
     let mut needs_reset = false;
@@ -36,14 +35,14 @@ pub fn init_migration_db(app: &AppHandle) -> Result<MigrationDb, String> {
             }
         }
     }
-    
+
     let db = open_migration_db_at_path(db_path)?;
-    
+
     if needs_reset {
         log::info!("Legacy/outdated schema detected. Resetting to canonical schema.");
         reset_database(&db.lock().unwrap())?;
     }
-    
+
     Ok(db)
 }
 
@@ -86,15 +85,18 @@ pub fn open_migration_db_at_path(db_path: PathBuf) -> Result<MigrationDb, String
 pub fn reset_database(conn: &sqlite::Connection) -> Result<(), String> {
     log::warn!("Resetting migration database to canonical schema");
     let mut tables = Vec::new();
-    let mut stmt = conn.prepare("SELECT name FROM sqlite_master WHERE type='table';").unwrap();
+    let mut stmt = conn
+        .prepare("SELECT name FROM sqlite_master WHERE type='table';")
+        .unwrap();
     while let Ok(sqlite::State::Row) = stmt.next() {
         let table_name = stmt.read::<String, _>(0).unwrap();
         if table_name != "sqlite_sequence" {
             tables.push(table_name);
         }
     }
-    
-    conn.execute("BEGIN EXCLUSIVE TRANSACTION;").map_err(|e| e.to_string())?;
+
+    conn.execute("BEGIN EXCLUSIVE TRANSACTION;")
+        .map_err(|e| e.to_string())?;
     for table in tables {
         if let Err(e) = conn.execute(format!("DROP TABLE IF EXISTS {};", table)) {
             let _ = conn.execute("ROLLBACK;");
@@ -102,7 +104,7 @@ pub fn reset_database(conn: &sqlite::Connection) -> Result<(), String> {
         }
     }
     conn.execute("COMMIT;").map_err(|e| e.to_string())?;
-    
+
     conn.execute("VACUUM;").map_err(|e| e.to_string())?;
     create_schema(conn)
 }
@@ -131,8 +133,9 @@ pub fn create_schema(conn: &sqlite::Connection) -> Result<(), String> {
             waiting_items               INTEGER NOT NULL DEFAULT 0,
             created_at                  INTEGER NOT NULL,
             updated_at                  INTEGER NOT NULL
-        );"
-    ).map_err(|e| format!("Failed to create migration_jobs: {}", e))?;
+        );",
+    )
+    .map_err(|e| format!("Failed to create migration_jobs: {}", e))?;
 
     // 2. Folder Queue
     conn.execute(
@@ -152,8 +155,9 @@ pub fn create_schema(conn: &sqlite::Connection) -> Result<(), String> {
             created_at                  INTEGER NOT NULL,
             updated_at                  INTEGER NOT NULL,
             UNIQUE(job_id, folder_id)
-        );"
-    ).map_err(|e| format!("Failed to create folder_queue: {}", e))?;
+        );",
+    )
+    .map_err(|e| format!("Failed to create folder_queue: {}", e))?;
 
     // 3. Migration Items
     conn.execute(
@@ -182,9 +186,10 @@ pub fn create_schema(conn: &sqlite::Connection) -> Result<(), String> {
             updated_at                  INTEGER NOT NULL,
             completed_at                INTEGER,
             UNIQUE(job_id, source_item_id)
-        );"
-    ).map_err(|e| format!("Failed to create migration_items: {}", e))?;
-    
+        );",
+    )
+    .map_err(|e| format!("Failed to create migration_items: {}", e))?;
+
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_items_job_stage ON migration_items(job_id, pipeline_stage);"
     ).map_err(|e| format!("Failed to create idx_items_job_stage: {}", e))?;
@@ -195,8 +200,9 @@ pub fn create_schema(conn: &sqlite::Connection) -> Result<(), String> {
             date_string         TEXT PRIMARY KEY,
             used_bytes          INTEGER NOT NULL DEFAULT 0,
             reset_at            INTEGER NOT NULL DEFAULT 0
-        );"
-    ).map_err(|e| format!("Failed to create daily_migration_quota: {}", e))?;
+        );",
+    )
+    .map_err(|e| format!("Failed to create daily_migration_quota: {}", e))?;
 
     conn.execute(
         "CREATE TABLE IF NOT EXISTS quota_reservations (
@@ -207,8 +213,9 @@ pub fn create_schema(conn: &sqlite::Connection) -> Result<(), String> {
             reserved_at     INTEGER NOT NULL,
             expires_at      INTEGER NOT NULL,
             status          TEXT NOT NULL DEFAULT 'active'
-        );"
-    ).map_err(|e| format!("Failed to create quota_reservations: {}", e))?;
+        );",
+    )
+    .map_err(|e| format!("Failed to create quota_reservations: {}", e))?;
 
     Ok(())
 }
@@ -226,27 +233,34 @@ pub fn create_job(
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_millis() as i64;
-        
-    let mut stmt = conn.prepare(
-        "INSERT INTO migration_jobs (
+
+    let mut stmt = conn
+        .prepare(
+            "INSERT INTO migration_jobs (
             source_folder_id, source_folder_path, telegram_destination_id, 
             telegram_destination_name, local_backup_dir, workspace_dir, state,
             started_at, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, 'running', ?, ?, ?)"
-    ).map_err(|e| e.to_string())?;
+        ) VALUES (?, ?, ?, ?, ?, ?, 'running', ?, ?, ?)",
+        )
+        .map_err(|e| e.to_string())?;
 
-    stmt.bind((1, source_folder_id)).map_err(|e| e.to_string())?;
-    stmt.bind((2, source_folder_path)).map_err(|e| e.to_string())?;
-    stmt.bind((3, telegram_destination_id)).map_err(|e| e.to_string())?;
-    stmt.bind((4, telegram_destination_name)).map_err(|e| e.to_string())?;
-    stmt.bind((5, local_backup_dir)).map_err(|e| e.to_string())?;
+    stmt.bind((1, source_folder_id))
+        .map_err(|e| e.to_string())?;
+    stmt.bind((2, source_folder_path))
+        .map_err(|e| e.to_string())?;
+    stmt.bind((3, telegram_destination_id))
+        .map_err(|e| e.to_string())?;
+    stmt.bind((4, telegram_destination_name))
+        .map_err(|e| e.to_string())?;
+    stmt.bind((5, local_backup_dir))
+        .map_err(|e| e.to_string())?;
     stmt.bind((6, workspace_dir)).map_err(|e| e.to_string())?;
     stmt.bind((7, now)).map_err(|e| e.to_string())?;
     stmt.bind((8, now)).map_err(|e| e.to_string())?;
     stmt.bind((9, now)).map_err(|e| e.to_string())?;
-    
+
     stmt.next().map_err(|e| e.to_string())?;
-    
+
     let mut last_id_stmt = conn.prepare("SELECT last_insert_rowid();").unwrap();
     if let Ok(sqlite::State::Row) = last_id_stmt.next() {
         Ok(last_id_stmt.read::<i64, _>(0).unwrap())
@@ -254,4 +268,3 @@ pub fn create_job(
         Err("Failed to get last insert rowid".into())
     }
 }
-

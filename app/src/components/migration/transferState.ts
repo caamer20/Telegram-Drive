@@ -52,13 +52,17 @@ export function acceptProgressEvent(
         current?.job_id === incoming.job_id &&
         current.item_id === incoming.item_id
     ) {
-        if (incoming.attempt < current.attempt) return current;
-        if (incoming.attempt === current.attempt) {
+        const incAttempt = incoming.attempt ?? 0;
+        const curAttempt = current.attempt ?? 0;
+        if (incAttempt < curAttempt) return current;
+        if (incAttempt === curAttempt) {
             const phaseRank = { downloading: 0, analyzing: 1, processing: 2, uploading: 3 };
             if (phaseRank[incoming.phase] < phaseRank[current.phase]) return current;
+            const incRevision = incoming.revision ?? 0;
+            const curRevision = current.revision ?? 0;
             if (
                 incoming.phase === current.phase &&
-                incoming.revision <= current.revision
+                incRevision <= curRevision
             ) {
                 return current;
             }
