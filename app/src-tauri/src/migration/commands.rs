@@ -169,7 +169,7 @@ pub async fn cmd_migration_start(
     tauri::async_runtime::spawn(async move {
         use std::path::PathBuf;
 
-        let (runner, downloader, media_adapter, uploader, finalizer, _cancel) =
+        let (runner, downloader, media_adapter, uploader, finalizer, cancel_token) =
             match crate::migration::adapters::factory::build_pipeline_services(
                 mig_state.db.clone(),
                 mig_state.ms_session.clone(),
@@ -188,7 +188,7 @@ pub async fn cmd_migration_start(
                 }
             };
 
-        let cancel_token = runner.clone().start(
+        runner.clone().start(
             downloader,
             media_adapter.clone(),
             media_adapter,
@@ -219,7 +219,12 @@ pub async fn cmd_migration_start(
 pub async fn cmd_migration_stop(state: State<'_, MigrationState>) -> Result<(), String> {
     let guard = state.active_pipeline.lock().await;
     if let Some(active) = guard.as_ref() {
-        active.cancel_token.stop();
+        // Set stopped_by_user flag before cancelling
+        active
+            .runner
+            .stopped_by_user
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        active.cancel_token.cancel();
         Ok(())
     } else {
         Err("No active migration".into())
@@ -396,40 +401,94 @@ pub async fn cmd_migration_get_status(
 #[tauri::command]
 pub async fn cmd_migration_retry_failed(
     state: State<'_, MigrationState>,
+    tg_state: State<'_, crate::commands::TelegramState>,
+    app_handle: tauri::AppHandle,
     job_id: i64,
 ) -> Result<(), String> {
+    // Check if a pipeline is already active
+    {
+        let guard = state.active_pipeline.lock().await;
+        if let Some(active) = guard.as_ref() {
+            if active.job_id == job_id {
+                return Err(
+                    "A pipeline is already active for this job. Stop it first before retrying."
+                        .into(),
+                );
+            }
+            return Err("Another migration pipeline is active. Stop it first.".into());
+        }
+    }
+
     let conn = state.db.lock().map_err(|e| e.to_string())?;
 
-    // Load failed items
-    let mut load_stmt = conn
-        .prepare(
-            "SELECT id, pipeline_stage, original_artifact_path, processed_artifact_path, \
-         original_sha256, processed_sha256, video_decision, retry_count \
-         FROM migration_items WHERE job_id = ? AND pipeline_stage = 'failed'",
-        )
+    // Verify the job exists
+    let mut job_stmt = conn
+        .prepare("SELECT workspace_dir, local_backup_dir, telegram_destination_id FROM migration_jobs WHERE id = ?")
         .map_err(|e| e.to_string())?;
-    load_stmt.bind((1, job_id)).map_err(|e| e.to_string())?;
-
-    let mut updates: Vec<(i64, String, i64)> = Vec::new();
-    while let Ok(sqlite::State::Row) = load_stmt.next() {
-        let item_id: i64 = load_stmt.read(0).unwrap_or(0);
-        let processed_path: Option<String> = load_stmt.read(3).ok();
-        let original_path: Option<String> = load_stmt.read(2).ok();
-        let retry_count: i64 = load_stmt.read(7).unwrap_or(0);
-
-        let new_stage = if processed_path.is_some() {
-            // Has processed artifact -> retry from upload
-            "queued_upload"
-        } else if original_path.is_some() {
-            // Has original artifact -> retry from processing/routing
-            "queued_processing"
+    job_stmt.bind((1, job_id)).map_err(|e| e.to_string())?;
+    let (workspace_dir, backup_dir, telegram_destination_id): (String, String, Option<i64>) =
+        if let Ok(sqlite::State::Row) = job_stmt.next() {
+            (
+                job_stmt.read(0).unwrap_or_default(),
+                job_stmt.read(1).unwrap_or_default(),
+                job_stmt.read(2).ok(),
+            )
         } else {
-            // No artifacts -> retry from download
-            "queued_download"
+            return Err("Job not found".into());
         };
+    drop(job_stmt);
 
-        updates.push((item_id, new_stage.to_string(), retry_count + 1));
-    }
+    // Load failed items
+    let updates: Vec<(i64, String, i64)> = {
+        let mut load_stmt = conn
+            .prepare(
+                "SELECT id, name, path, pipeline_stage, original_artifact_path, processed_artifact_path, \
+                 original_sha256, processed_sha256, video_decision, retry_count \
+                 FROM migration_items WHERE job_id = ? AND pipeline_stage = 'failed'",
+            )
+            .map_err(|e| e.to_string())?;
+        load_stmt.bind((1, job_id)).map_err(|e| e.to_string())?;
+
+        let mut updates = Vec::new();
+        while let Ok(sqlite::State::Row) = load_stmt.next() {
+            let item_id: i64 = load_stmt.read(0).unwrap_or(0);
+            let processed_path: Option<String> = load_stmt.read(5).ok();
+            let original_path: Option<String> = load_stmt.read(4).ok();
+            let retry_count: i64 = load_stmt.read(9).unwrap_or(0);
+
+            // Validate artifact files
+            let processed_valid = processed_path
+                .as_deref()
+                .map(|p| {
+                    let path = std::path::Path::new(p);
+                    path.exists()
+                        && path.is_file()
+                        && path.metadata().map(|m| m.len() > 0).unwrap_or(false)
+                })
+                .unwrap_or(false);
+
+            let original_valid = original_path
+                .as_deref()
+                .map(|p| {
+                    let path = std::path::Path::new(p);
+                    path.exists()
+                        && path.is_file()
+                        && path.metadata().map(|m| m.len() > 0).unwrap_or(false)
+                })
+                .unwrap_or(false);
+
+            let new_stage = if processed_valid {
+                "queued_upload"
+            } else if original_valid {
+                "queued_processing"
+            } else {
+                "queued_download"
+            };
+
+            updates.push((item_id, new_stage.to_string(), retry_count + 1));
+        }
+        updates
+    };
 
     // Apply updates
     for (item_id, stage, new_retry) in updates {
@@ -448,16 +507,69 @@ pub async fn cmd_migration_retry_failed(
     }
 
     // Also retry failed folders in folder_queue
-    let mut fq_upd = conn.prepare(
-        "UPDATE folder_queue SET state = 'pending', last_error = NULL, updated_at = ? WHERE job_id = ? AND state = 'failed'"
-    ).map_err(|e| e.to_string())?;
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as i64;
-    fq_upd.bind((1, now)).map_err(|e| e.to_string())?;
-    fq_upd.bind((2, job_id)).map_err(|e| e.to_string())?;
-    fq_upd.next().map_err(|e| e.to_string())?;
+    {
+        let mut fq_upd = conn.prepare(
+            "UPDATE folder_queue SET state = 'pending', last_error = NULL, updated_at = ? WHERE job_id = ? AND state = 'failed'"
+        ).map_err(|e| e.to_string())?;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as i64;
+        fq_upd.bind((1, now)).map_err(|e| e.to_string())?;
+        fq_upd.bind((2, job_id)).map_err(|e| e.to_string())?;
+        fq_upd.next().map_err(|e| e.to_string())?;
+    }
+
+    drop(conn);
+
+    // Start a new pipeline for this job
+    let mig_state = state.inner().clone_state();
+    let tg_client_arc = tg_state.client.clone();
+    let tg_peer_cache_arc = tg_state.peer_cache.clone();
+
+    tauri::async_runtime::spawn(async move {
+        let (runner, downloader, media_adapter, uploader, finalizer, cancel_token) =
+            match crate::migration::adapters::factory::build_pipeline_services(
+                mig_state.db.clone(),
+                mig_state.ms_session.clone(),
+                tg_client_arc,
+                tg_peer_cache_arc,
+                job_id,
+                std::path::PathBuf::from(&workspace_dir),
+                std::path::PathBuf::from(&backup_dir),
+                telegram_destination_id,
+                Some(app_handle.clone()),
+            ) {
+                Ok(services) => services,
+                Err(e) => {
+                    log::error!("Retry: Failed to build pipeline services: {}", e);
+                    return;
+                }
+            };
+
+        runner.clone().start(
+            downloader,
+            media_adapter.clone(),
+            media_adapter,
+            uploader,
+            finalizer,
+        );
+
+        let mut active_guard = mig_state.active_pipeline.lock().await;
+        *active_guard = Some(crate::migration::ActivePipeline {
+            job_id,
+            runner: runner.clone(),
+            cancel_token,
+        });
+        drop(active_guard);
+
+        if let Err(e) = runner.run_to_completion().await {
+            log::error!("Retry: Pipeline failed for job {}: {}", job_id, e);
+        }
+
+        let mut active_guard = mig_state.active_pipeline.lock().await;
+        *active_guard = None;
+    });
 
     Ok(())
 }

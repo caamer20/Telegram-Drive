@@ -19,7 +19,7 @@ use crate::migration::pipeline::runner::PipelineRunner;
 pub struct ActivePipeline {
     pub job_id: i64,
     pub runner: Arc<PipelineRunner>,
-    pub cancel_token: crate::migration::pipeline::runner::CancellationToken,
+    pub cancel_token: tokio_util::sync::CancellationToken,
 }
 
 pub struct MigrationState {
@@ -63,8 +63,8 @@ impl MigrationState {
             worker_running: self.worker_running.clone(),
             scan_running: self.scan_running.clone(),
             scan_stop_requested: self.scan_stop_requested.clone(),
-            cancel_token: tokio_util::sync::CancellationToken::new(),
-            pause_token: Arc::new(AtomicBool::new(false)),
+            cancel_token: self.cancel_token.clone(),
+            pause_token: self.pause_token.clone(),
             active_pipeline: self.active_pipeline.clone(),
         })
     }

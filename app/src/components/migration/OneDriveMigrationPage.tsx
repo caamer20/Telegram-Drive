@@ -16,7 +16,7 @@ export const OneDriveMigrationPage: React.FC = () => {
     const [msAccount, setMsAccount] = useState<MsAccountInfo | null>(null);
     const [currentDetail, setCurrentDetail] = useState<MigrationJobDetail | null>(null);
     const [activeProgresses, setActiveProgresses] = useState<Record<number, ItemProgressPayload>>({});
-    const [activities] = useState<MigrationActivity[]>([]);
+    const [activities, setActivities] = useState<MigrationActivity[]>([]);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     
@@ -64,19 +64,42 @@ export const OneDriveMigrationPage: React.FC = () => {
     // Tauri Event listeners for progress
     useEffect(() => {
         let unlistenProgress: UnlistenFn | null = null;
+        let unlistenComplete: UnlistenFn | null = null;
         
         const setupListeners = async () => {
-            unlistenProgress = await listen<ItemProgressPayload>('migration-item-progress', (event) => {
+            unlistenProgress = await listen<ItemProgressPayload>('migration:item-progress', (event) => {
                 setActiveProgresses(prev => ({
                     ...prev,
                     [event.payload.item_id]: { ...event.payload, timestamp: Date.now() }
                 }));
+            });
+
+            unlistenComplete = await listen<{ item_id: number; item_name: string; phase: string; status: string }>('migration:item-complete', (event) => {
+                const { item_id, item_name, phase, status } = event.payload;
+                setActiveProgresses(prev => {
+                    const next = { ...prev };
+                    delete next[item_id];
+                    return next;
+                });
+                setActivities(prev => [{
+                    id: Date.now(),
+                    job_id: 0,
+                    item_id,
+                    item_name,
+                    phase: phase as MigrationActivity['phase'],
+                    status,
+                    attempt: 0,
+                    revision: 0,
+                    message: '',
+                    created_at: Math.floor(Date.now() / 1000),
+                }, ...prev].slice(0, 300));
             });
         };
         
         setupListeners();
         return () => {
             if (unlistenProgress) unlistenProgress();
+            if (unlistenComplete) unlistenComplete();
         };
     }, []);
 

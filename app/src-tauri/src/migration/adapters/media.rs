@@ -5,12 +5,13 @@
 // Test seam: the `ProcessRunner` trait allows injecting a fake process runner
 // for automated tests without requiring FFmpeg on the test machine.
 
-use crate::migration::pipeline::stages::{MediaInspector, VideoMetadata, VideoProcessor};
+use crate::migration::pipeline::stages::{
+    validate_canonical_output, CanonicalVideoProfile, MediaInspector, VideoMetadata, VideoProcessor,
+};
 use serde::Deserialize;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 // ---------------------------------------------------------------------------
@@ -139,7 +140,6 @@ pub struct FFmpegMediaAdapter {
     ffmpeg_path: PathBuf,
     process_runner: Arc<dyn ProcessRunner>,
     cancel_token: tokio_util::sync::CancellationToken,
-    max_threads: usize,
     app_handle: Option<tauri::AppHandle>,
     hevc_encoder: String,
 }
@@ -149,7 +149,6 @@ impl FFmpegMediaAdapter {
         ffprobe_path: PathBuf,
         ffmpeg_path: PathBuf,
         cancel_token: tokio_util::sync::CancellationToken,
-        max_threads: usize,
         app_handle: Option<tauri::AppHandle>,
     ) -> Self {
         let mut hevc_encoder = "libx265".to_string();
@@ -170,7 +169,6 @@ impl FFmpegMediaAdapter {
             ffmpeg_path,
             process_runner: Arc::new(RealProcessRunner),
             cancel_token,
-            max_threads,
             app_handle,
             hevc_encoder,
         }
@@ -182,7 +180,6 @@ impl FFmpegMediaAdapter {
         ffmpeg_path: PathBuf,
         process_runner: Arc<dyn ProcessRunner>,
         cancel_token: tokio_util::sync::CancellationToken,
-        max_threads: usize,
         app_handle: Option<tauri::AppHandle>,
     ) -> Self {
         Self {
@@ -190,7 +187,6 @@ impl FFmpegMediaAdapter {
             ffmpeg_path,
             process_runner,
             cancel_token,
-            max_threads,
             app_handle,
             hevc_encoder: "libx265".to_string(),
         }
@@ -205,30 +201,6 @@ impl FFmpegMediaAdapter {
             "-of".to_string(),
             "json".to_string(),
             source_path.to_string_lossy().to_string(),
-        ]
-    }
-
-    fn build_remux_args(input_path: &Path, output_path: &Path) -> Vec<String> {
-        vec![
-            "-y".to_string(),
-            "-i".to_string(),
-            input_path.to_string_lossy().to_string(),
-            "-map".to_string(),
-            "0:v:0".to_string(),
-            "-map".to_string(),
-            "0:a:0?".to_string(),
-            "-sn".to_string(),
-            "-dn".to_string(),
-            "-c".to_string(),
-            "copy".to_string(),
-            "-max_muxing_queue_size".to_string(),
-            "1024".to_string(),
-            "-movflags".to_string(),
-            "+faststart".to_string(),
-            "-progress".to_string(),
-            "pipe:1".to_string(),
-            "-nostats".to_string(),
-            output_path.to_string_lossy().to_string(),
         ]
     }
 
@@ -345,17 +317,25 @@ impl VideoProcessor for FFmpegMediaAdapter {
         item_name: &str,
     ) -> Pin<Box<dyn Future<Output = Result<String, String>> + Send>> {
         let ffmpeg = self.ffmpeg_path.to_string_lossy().to_string();
+        let is_10bit = match decision {
+            "canonical_transcode_main10" => true,
+            _ => false,
+        };
         let args = match decision {
             "canonical_transcode_main8" | "transcode" => Self::build_transcode_args(
                 input_path,
                 output_path,
                 false,
                 &self.hevc_encoder,
-                0.0, /* Will need to pass fps */
+                source_fps,
             ),
-            "canonical_transcode_main10" => {
-                Self::build_transcode_args(input_path, output_path, true, &self.hevc_encoder, 0.0)
-            }
+            "canonical_transcode_main10" => Self::build_transcode_args(
+                input_path,
+                output_path,
+                true,
+                &self.hevc_encoder,
+                source_fps,
+            ),
             other => {
                 let msg = format!("Processor: unsupported decision: {}", other);
                 return Box::pin(async move { Err(msg) });
@@ -367,6 +347,9 @@ impl VideoProcessor for FFmpegMediaAdapter {
         let app_handle = self.app_handle.clone();
         let duration_us = duration * 1_000_000.0;
         let item_name = item_name.to_string();
+        let ffprobe_path = self.ffprobe_path.to_string_lossy().to_string();
+        let process_runner = self.process_runner.clone();
+        let source_fps_val = source_fps;
 
         Box::pin(async move {
             if cancel.is_cancelled() {
@@ -396,10 +379,14 @@ impl VideoProcessor for FFmpegMediaAdapter {
                                     "item_id": item_id,
                                     "job_id": job_id,
                                     "item_name": item_name,
+                                    "phase": "processing",
                                     "percent": percent,
-                                    "phase": "processing"
+                                    "bytes_done": (time_us / 1_000_000.0 * source_fps_val) as u64,
+                                    "bytes_total": (duration_us / 1_000_000.0 * source_fps_val) as u64,
+                                    "speed_bytes_per_sec": 0.0,
+                                    "timestamp": now_ms as i64,
                                 });
-                                let _ = app.emit("migration:compression-progress", payload);
+                                let _ = app.emit("migration:item-progress", payload);
                             }
                         }
                     }
@@ -451,7 +438,61 @@ impl VideoProcessor for FFmpegMediaAdapter {
                 hasher.update(&buffer[..count]);
             }
             let hash = hasher.finalize();
-            Ok(format!("{:x}", hash))
+            let hash_hex = format!("{:x}", hash);
+
+            // Validate output with FFprobe
+            let ffprobe_args = Self::build_ffprobe_args(&output_path_owned);
+            let probe_result = process_runner
+                .run_command(&ffprobe_path, &ffprobe_args, None, cancel.clone())
+                .await;
+            match probe_result {
+                Ok(probe_output) if probe_output.exit_code == 0 => {
+                    match parse_ffprobe_json(&probe_output.stdout) {
+                        Ok(output_meta) => {
+                            let expected_profile = if is_10bit {
+                                CanonicalVideoProfile::Main10
+                            } else {
+                                CanonicalVideoProfile::Main8
+                            };
+                            // Create source metadata with just duration for tolerance check
+                            let source_meta = VideoMetadata {
+                                duration,
+                                fps: source_fps_val,
+                                ..Default::default()
+                            };
+                            if let Err(validation_err) = validate_canonical_output(
+                                &source_meta,
+                                &output_meta,
+                                expected_profile,
+                            ) {
+                                let _ = tokio::fs::remove_file(&output_path_owned).await;
+                                return Err(format!(
+                                    "Processor: output validation failed: {}",
+                                    validation_err
+                                ));
+                            }
+                        }
+                        Err(e) => {
+                            let _ = tokio::fs::remove_file(&output_path_owned).await;
+                            return Err(format!("Processor: ffprobe on output failed: {}", e));
+                        }
+                    }
+                }
+                Ok(probe_output) => {
+                    let _ = tokio::fs::remove_file(&output_path_owned).await;
+                    let stderr = String::from_utf8_lossy(&probe_output.stderr).to_string();
+                    return Err(format!(
+                        "Processor: ffprobe on output non-zero exit: {} — {}",
+                        probe_output.exit_code, stderr
+                    ));
+                }
+                Err(e) => {
+                    let _ = tokio::fs::remove_file(&output_path_owned).await;
+                    return Err(format!("Processor: ffprobe on output failed: {}", e));
+                }
+            }
+
+            Ok(hash_hex)
         })
     }
 }
@@ -593,11 +634,11 @@ pub fn parse_ffprobe_json(bytes: &[u8]) -> Result<VideoMetadata, String> {
             .format
             .as_ref()
             .and_then(|f| f.format_name.as_deref())
-            .map(|n| n.split(',').next().unwrap_or(n).to_string())
-            .unwrap_or_default();
+            .unwrap_or_default()
+            .to_string();
 
         Ok(VideoMetadata {
-            container,
+            container_format_names: container,
             video_codec: video
                 .codec_name
                 .as_ref()
@@ -635,12 +676,12 @@ pub fn parse_ffprobe_json(bytes: &[u8]) -> Result<VideoMetadata, String> {
     } else {
         // No video stream
         Ok(VideoMetadata {
-            container: document
+            container_format_names: document
                 .format
                 .as_ref()
                 .and_then(|f| f.format_name.as_deref())
-                .map(|n| n.split(',').next().unwrap_or(n).to_string())
-                .unwrap_or_default(),
+                .unwrap_or_default()
+                .to_string(),
             video_codec: String::new(),
             audio_codec: audio
                 .and_then(|a| a.codec_name.as_deref())
@@ -666,3 +707,442 @@ pub fn parse_ffprobe_json(bytes: &[u8]) -> Result<VideoMetadata, String> {
 // Tests
 // ---------------------------------------------------------------------------
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::migration::pipeline::stages::{validate_canonical_output, CanonicalVideoProfile};
+
+    fn make_ffprobe_json(
+        video_codec: &str,
+        profile: &str,
+        pix_fmt: &str,
+        format_name: &str,
+        audio_codec: &str,
+        width: u32,
+        height: u32,
+        fps_num: u32,
+        fps_den: u32,
+        duration: f64,
+        color_transfer: &str,
+    ) -> String {
+        serde_json::json!({
+            "streams": [{
+                "codec_type": "video",
+                "codec_name": video_codec,
+                "profile": profile,
+                "pix_fmt": pix_fmt,
+                "width": width,
+                "height": height,
+                "duration": duration.to_string(),
+                "r_frame_rate": format!("{}/{}", fps_num, fps_den),
+                "color_transfer": color_transfer,
+            }, {
+                "codec_type": "audio",
+                "codec_name": audio_codec,
+            }],
+            "format": {
+                "format_name": format_name,
+                "duration": duration.to_string(),
+                "bit_rate": "1000000"
+            }
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn test_parse_hevc_main8_mp4() {
+        let json = make_ffprobe_json(
+            "hevc",
+            "Main",
+            "yuv420p",
+            "mov,mp4,m4a,3gp,3g2,mj2",
+            "aac",
+            1920,
+            1080,
+            30000,
+            1001,
+            60.0,
+            "",
+        );
+        let meta = parse_ffprobe_json(json.as_bytes()).unwrap();
+        assert!(meta.is_mp4_compatible());
+        assert!(meta.is_canonical_main8());
+        assert_eq!(meta.fps, 30000.0 / 1001.0);
+        assert_eq!(meta.container_format_names, "mov,mp4,m4a,3gp,3g2,mj2");
+    }
+
+    #[test]
+    fn test_parse_hevc_main10_mp4() {
+        let json = make_ffprobe_json(
+            "hevc",
+            "Main 10",
+            "yuv420p10le",
+            "mov,mp4,m4a,3gp,3g2,mj2",
+            "aac",
+            1920,
+            1080,
+            24000,
+            1001,
+            120.0,
+            "smpte2084",
+        );
+        let meta = parse_ffprobe_json(json.as_bytes()).unwrap();
+        assert!(meta.is_mp4_compatible());
+        assert!(meta.is_canonical_main10());
+        assert!(meta.is_hdr());
+        assert!(meta.is_10bit());
+    }
+
+    #[test]
+    fn test_parse_h264_not_canonical() {
+        let json = make_ffprobe_json(
+            "h264", "High", "yuv420p", "mp4", "aac", 1920, 1080, 30000, 1001, 60.0, "",
+        );
+        let meta = parse_ffprobe_json(json.as_bytes()).unwrap();
+        assert!(!meta.is_canonical_main8());
+    }
+
+    #[test]
+    fn test_container_not_mp4_family() {
+        let json = make_ffprobe_json(
+            "hevc",
+            "Main",
+            "yuv420p",
+            "matroska,webm",
+            "aac",
+            1920,
+            1080,
+            30000,
+            1001,
+            60.0,
+            "",
+        );
+        let meta = parse_ffprobe_json(json.as_bytes()).unwrap();
+        assert!(!meta.is_mp4_compatible());
+        assert!(!meta.is_canonical_main8());
+    }
+
+    #[test]
+    fn test_opus_audio_not_canonical() {
+        let json = make_ffprobe_json(
+            "hevc", "Main", "yuv420p", "mp4", "opus", 1920, 1080, 30000, 1001, 60.0, "",
+        );
+        let meta = parse_ffprobe_json(json.as_bytes()).unwrap();
+        assert!(!meta.is_canonical_main8());
+    }
+
+    #[test]
+    fn test_4k_not_canonical() {
+        let json = make_ffprobe_json(
+            "hevc", "Main", "yuv420p", "mp4", "aac", 3840, 2160, 30000, 1001, 60.0, "",
+        );
+        let meta = parse_ffprobe_json(json.as_bytes()).unwrap();
+        assert!(!meta.is_canonical_main8());
+    }
+
+    #[test]
+    fn test_120fps_not_canonical() {
+        let json = make_ffprobe_json(
+            "hevc", "Main", "yuv420p", "mp4", "aac", 1920, 1080, 120, 1, 60.0, "",
+        );
+        let meta = parse_ffprobe_json(json.as_bytes()).unwrap();
+        assert_eq!(meta.fps, 120.0);
+        assert!(!meta.is_canonical_main8());
+    }
+
+    #[test]
+    fn test_parse_fps_fraction() {
+        let json = make_ffprobe_json(
+            "hevc", "Main", "yuv420p", "mp4", "aac", 1920, 1080, 24000, 1001, 60.0, "",
+        );
+        let meta = parse_ffprobe_json(json.as_bytes()).unwrap();
+        let expected = 24000.0 / 1001.0;
+        assert!((meta.fps - expected).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_main8_args_24fps() {
+        let args = FFmpegMediaAdapter::build_transcode_args(
+            std::path::Path::new("in.mp4"),
+            std::path::Path::new("out.mp4"),
+            false,
+            "libx265",
+            24.0,
+        );
+        let args_str = args.join(" ");
+        assert!(
+            !args_str.contains("fps=60"),
+            "24fps should not get fps filter: {}",
+            args_str
+        );
+        assert!(args_str.contains("hvc1"));
+        assert!(args_str.contains("yuv420p"));
+        assert!(args_str.contains("main"));
+        assert!(args_str.contains("+faststart"));
+    }
+
+    #[test]
+    fn test_main8_args_120fps() {
+        let args = FFmpegMediaAdapter::build_transcode_args(
+            std::path::Path::new("in.mp4"),
+            std::path::Path::new("out.mp4"),
+            false,
+            "libx265",
+            120.0,
+        );
+        let args_str = args.join(" ");
+        assert!(
+            args_str.contains("fps=60"),
+            "120fps should get fps=60 filter: {}",
+            args_str
+        );
+    }
+
+    #[test]
+    fn test_main8_args_60fps() {
+        let args = FFmpegMediaAdapter::build_transcode_args(
+            std::path::Path::new("in.mp4"),
+            std::path::Path::new("out.mp4"),
+            false,
+            "libx265",
+            60.0,
+        );
+        let args_str = args.join(" ");
+        assert!(
+            !args_str.contains("fps=60"),
+            "60fps should not get fps filter: {}",
+            args_str
+        );
+    }
+
+    #[test]
+    fn test_main10_args() {
+        let args = FFmpegMediaAdapter::build_transcode_args(
+            std::path::Path::new("in.mp4"),
+            std::path::Path::new("out.mp4"),
+            true,
+            "libx265",
+            30.0,
+        );
+        let args_str = args.join(" ");
+        assert!(args_str.contains("yuv420p10le"));
+        assert!(args_str.contains("main10"));
+        assert!(args_str.contains("hvc1"));
+    }
+
+    #[test]
+    fn test_videotoolbox_args() {
+        let args = FFmpegMediaAdapter::build_transcode_args(
+            std::path::Path::new("in.mp4"),
+            std::path::Path::new("out.mp4"),
+            false,
+            "hevc_videotoolbox",
+            30.0,
+        );
+        let args_str = args.join(" ");
+        assert!(args_str.contains("hevc_videotoolbox"));
+        assert!(args_str.contains("hvc1"));
+        assert!(
+            !args_str.contains("preset"),
+            "VideoToolbox should not use preset"
+        );
+        assert!(!args_str.contains("crf"), "VideoToolbox should not use crf");
+    }
+
+    #[test]
+    fn test_validate_canonical_main8_pass() {
+        let source = VideoMetadata {
+            duration: 60.0,
+            ..Default::default()
+        };
+        let output = VideoMetadata {
+            container_format_names: "mov,mp4,m4a,3gp,3g2,mj2".into(),
+            video_codec: "hevc".into(),
+            profile: "Main".into(),
+            pixel_format: "yuv420p".into(),
+            audio_codec: "aac".into(),
+            width: 1920,
+            height: 1080,
+            fps: 30.0,
+            duration: 60.0,
+            is_valid: true,
+            ..Default::default()
+        };
+        assert!(validate_canonical_output(&source, &output, CanonicalVideoProfile::Main8).is_ok());
+    }
+
+    #[test]
+    fn test_validate_canonical_main10_pass() {
+        let source = VideoMetadata {
+            duration: 60.0,
+            ..Default::default()
+        };
+        let output = VideoMetadata {
+            container_format_names: "mp4".into(),
+            video_codec: "hevc".into(),
+            profile: "Main10".into(),
+            pixel_format: "yuv420p10le".into(),
+            audio_codec: "aac".into(),
+            width: 1920,
+            height: 1080,
+            fps: 30.0,
+            duration: 60.0,
+            is_valid: true,
+            ..Default::default()
+        };
+        assert!(validate_canonical_output(&source, &output, CanonicalVideoProfile::Main10).is_ok());
+    }
+
+    #[test]
+    fn test_validate_h264_output_fails() {
+        let source = VideoMetadata {
+            duration: 60.0,
+            ..Default::default()
+        };
+        let output = VideoMetadata {
+            container_format_names: "mp4".into(),
+            video_codec: "h264".into(),
+            profile: "High".into(),
+            pixel_format: "yuv420p".into(),
+            width: 1920,
+            height: 1080,
+            fps: 30.0,
+            duration: 60.0,
+            is_valid: true,
+            ..Default::default()
+        };
+        assert!(validate_canonical_output(&source, &output, CanonicalVideoProfile::Main8).is_err());
+    }
+
+    #[test]
+    fn test_validate_opus_audio_fails() {
+        let source = VideoMetadata {
+            duration: 60.0,
+            ..Default::default()
+        };
+        let output = VideoMetadata {
+            container_format_names: "mp4".into(),
+            video_codec: "hevc".into(),
+            profile: "Main".into(),
+            pixel_format: "yuv420p".into(),
+            audio_codec: "opus".into(),
+            width: 1920,
+            height: 1080,
+            fps: 30.0,
+            duration: 60.0,
+            is_valid: true,
+            ..Default::default()
+        };
+        assert!(validate_canonical_output(&source, &output, CanonicalVideoProfile::Main8).is_err());
+    }
+
+    #[test]
+    fn test_validate_4k_output_fails() {
+        let source = VideoMetadata {
+            duration: 60.0,
+            ..Default::default()
+        };
+        let output = VideoMetadata {
+            container_format_names: "mp4".into(),
+            video_codec: "hevc".into(),
+            profile: "Main".into(),
+            pixel_format: "yuv420p".into(),
+            audio_codec: "aac".into(),
+            width: 3840,
+            height: 2160,
+            fps: 30.0,
+            duration: 60.0,
+            is_valid: true,
+            ..Default::default()
+        };
+        assert!(validate_canonical_output(&source, &output, CanonicalVideoProfile::Main8).is_err());
+    }
+
+    #[test]
+    fn test_validate_120fps_output_fails() {
+        let source = VideoMetadata {
+            duration: 60.0,
+            ..Default::default()
+        };
+        let output = VideoMetadata {
+            container_format_names: "mp4".into(),
+            video_codec: "hevc".into(),
+            profile: "Main".into(),
+            pixel_format: "yuv420p".into(),
+            audio_codec: "aac".into(),
+            width: 1920,
+            height: 1080,
+            fps: 120.0,
+            duration: 60.0,
+            is_valid: true,
+            ..Default::default()
+        };
+        assert!(validate_canonical_output(&source, &output, CanonicalVideoProfile::Main8).is_err());
+    }
+
+    #[test]
+    fn test_validate_duration_mismatch_fails() {
+        let source = VideoMetadata {
+            duration: 60.0,
+            ..Default::default()
+        };
+        let output = VideoMetadata {
+            container_format_names: "mp4".into(),
+            video_codec: "hevc".into(),
+            profile: "Main".into(),
+            pixel_format: "yuv420p".into(),
+            audio_codec: "aac".into(),
+            width: 1920,
+            height: 1080,
+            fps: 30.0,
+            duration: 30.0, // Half the source duration
+            is_valid: true,
+            ..Default::default()
+        };
+        assert!(validate_canonical_output(&source, &output, CanonicalVideoProfile::Main8).is_err());
+    }
+
+    #[test]
+    fn test_validate_wrong_profile_fails() {
+        let source = VideoMetadata {
+            duration: 60.0,
+            ..Default::default()
+        };
+        let output = VideoMetadata {
+            container_format_names: "mp4".into(),
+            video_codec: "hevc".into(),
+            profile: "Main10".into(),
+            pixel_format: "yuv420p".into(),
+            audio_codec: "aac".into(),
+            width: 1920,
+            height: 1080,
+            fps: 30.0,
+            duration: 60.0,
+            is_valid: true,
+            ..Default::default()
+        };
+        assert!(validate_canonical_output(&source, &output, CanonicalVideoProfile::Main8).is_err());
+    }
+
+    #[test]
+    fn test_no_audio_is_valid() {
+        let source = VideoMetadata {
+            duration: 60.0,
+            ..Default::default()
+        };
+        let output = VideoMetadata {
+            container_format_names: "mp4".into(),
+            video_codec: "hevc".into(),
+            profile: "Main".into(),
+            pixel_format: "yuv420p".into(),
+            audio_codec: "".into(),
+            width: 1920,
+            height: 1080,
+            fps: 30.0,
+            duration: 60.0,
+            is_valid: true,
+            ..Default::default()
+        };
+        assert!(validate_canonical_output(&source, &output, CanonicalVideoProfile::Main8).is_ok());
+    }
+}

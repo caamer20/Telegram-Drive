@@ -360,9 +360,9 @@ export interface ItemProgressPayload {
     bytes_done: number;
     bytes_total: number;
     speed_bytes_per_sec: number;
-    event_id: string;
-    attempt: number;
-    revision: number;
+    event_id?: string;
+    attempt?: number;
+    revision?: number;
     timestamp: number;
 }
 

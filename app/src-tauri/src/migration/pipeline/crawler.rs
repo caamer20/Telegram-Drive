@@ -2,12 +2,12 @@ use crate::migration::db::MigrationDb;
 use crate::migration::microsoft::MicrosoftSession;
 use crate::migration::microsoft::{parse_graph_item, send_graph_request};
 use crate::migration::models::FolderQueueItem;
-use crate::migration::pipeline::runner::CancellationToken;
 use crate::migration::pipeline::stages::PipelineItem;
 use chrono::Utc;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::sync::Mutex as TokioMutex;
+use tokio_util::sync::CancellationToken;
 
 pub struct StreamingCrawler {
     pub db: MigrationDb,
@@ -19,7 +19,7 @@ pub struct StreamingCrawler {
 impl StreamingCrawler {
     pub async fn run(self: Arc<Self>, tx: mpsc::Sender<PipelineItem>) -> Result<(), String> {
         loop {
-            if self.cancel_token.is_cancelled() || self.cancel_token.is_stopped() {
+            if self.cancel_token.is_cancelled() {
                 break;
             }
 
@@ -123,7 +123,7 @@ impl StreamingCrawler {
 
         let cancel_future = async {
             loop {
-                if self.cancel_token.is_cancelled() || self.cancel_token.is_stopped() {
+                if self.cancel_token.is_cancelled() {
                     break;
                 }
                 tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
@@ -334,7 +334,7 @@ impl StreamingCrawler {
         // 5. Nạp thẳng các file mới quét được vào bounded channel
         // Bounded channel tx sẽ backpressure nếu hệ thống tải quá nhiều tệp chưa xử lý kịp.
         for item in db_pipeline_items {
-            if self.cancel_token.is_cancelled() || self.cancel_token.is_stopped() {
+            if self.cancel_token.is_cancelled() {
                 break;
             }
             // Gửi vào channel, block nếu channel đầy.

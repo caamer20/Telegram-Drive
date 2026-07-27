@@ -17,7 +17,6 @@ use crate::migration::pipeline::runner::PipelineRunner;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 /// Composition root: builds all production adapters and a configured PipelineRunner.
@@ -71,10 +70,6 @@ pub fn build_pipeline_services(
         "ffprobe"
     });
 
-    let max_threads = std::thread::available_parallelism()
-        .map(|n| n.get().min(2))
-        .unwrap_or(1);
-
     // Build adapters
     let http_client = reqwest::Client::new();
 
@@ -88,7 +83,6 @@ pub fn build_pipeline_services(
         ffprobe_path,
         ffmpeg_path,
         cancel_token.clone(),
-        max_threads,
         app_handle,
     ));
 
@@ -111,6 +105,8 @@ pub fn build_pipeline_services(
         workspace_dir,
         backup_dir,
         ms_session.clone(),
+        cancel_token.clone(),
+        destination_folder_id,
     ));
 
     Ok((
@@ -126,4 +122,3 @@ pub fn build_pipeline_services(
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
-
