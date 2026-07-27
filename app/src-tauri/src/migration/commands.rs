@@ -177,6 +177,7 @@ pub async fn cmd_migration_start(
             PathBuf::from(&workspace_dir),
             PathBuf::from(&local_backup_dir),
             telegram_destination_id,
+            Some(app_handle.clone()),
         ) {
             Ok(services) => services,
             Err(e) => {

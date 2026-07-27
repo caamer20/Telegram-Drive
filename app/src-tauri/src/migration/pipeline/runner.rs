@@ -207,16 +207,18 @@ impl PipelineRunner {
 
         // 3. Task Processor (inspect và xử lý video bằng ffmpeg)
         let runner_clone = self.clone();
+        let upload_tx_processor = upload_tx.clone();
         let process_handle = tokio::spawn(async move {
             let _ = runner_clone
-                .run_processor(process_rx, upload_tx, inspector, processor)
+                .run_processor(process_rx, upload_tx_processor, inspector, processor)
                 .await;
         });
 
         // 4. Task Uploader (tải tệp lên Telegram)
         let runner_clone = self.clone();
+        let upload_tx_uploader = upload_tx.clone();
         let upload_handle = tokio::spawn(async move {
-            let _ = runner_clone.run_uploader(upload_rx, uploader).await;
+            let _ = runner_clone.run_uploader(upload_rx, upload_tx_uploader, uploader).await;
         });
 
         // 5. Task Local Finalizer (di chuyển tệp backup local)
@@ -384,6 +386,7 @@ impl PipelineRunner {
                     original_sha256,
                     processed_sha256,
                     local_artifact_path: original_path,
+                    processed_artifact_path: processed_path.clone(),
                     telegram_random_id: None,
                     video_decision,
                 });
@@ -409,8 +412,8 @@ impl PipelineRunner {
                 "downloaded" | "queued_processing" | "processing" | "processed" | "queued_upload" | "uploading" => {
                     // Check if processed artifact exists and is valid
                     let workspace = &self.workspace_dir;
-                    let processed_exists = std::path::Path::new(&workspace.join(format!("{}.processed.mp4", item.id))).exists();
-                    let original_exists = std::path::Path::new(&workspace.join(format!("{}", item.id))).exists();
+                    let processed_exists = std::path::Path::new(item.processed_artifact_path.as_deref().unwrap_or("")).exists();
+                    let original_exists = std::path::Path::new(item.local_artifact_path.as_deref().unwrap_or("")).exists();
                     
                     let category = crate::migration::pipeline::classifier::classify_file(&item.name);
                     
@@ -442,7 +445,7 @@ impl PipelineRunner {
                 }
                 // Items needing local finalization
                 "saving_local" => {
-                    let original_exists = std::path::Path::new(&self.workspace_dir.join(format!("{}", item.id))).exists();
+                    let original_exists = std::path::Path::new(item.local_artifact_path.as_deref().unwrap_or("")).exists();
                     if original_exists {
                         let _ = local_tx.send(item).await;
                     } else {
@@ -712,24 +715,29 @@ impl PipelineRunner {
                 // Inspect video
                 match inspector_clone.inspect_file(&input_path).await {
                     Ok(meta) => {
-                        // Quyết định xử lý: passthrough | remux_copy | transcode
-                        // Telegram supports: h264, h265/hevc in mp4/mov containers
-                        // Transcode if: codec unsupported, bitrate > 30Mbps, or resolution > 4K
-                        let codec = meta.video_codec.to_ascii_lowercase();
-                        let container = meta.container.to_ascii_lowercase();
-                        let is_telegram_codec = matches!(codec.as_str(), "h264" | "h265" | "hevc");
-                        let is_native_container = matches!(container.as_str(), "mp4" | "mov");
-                        let bitrate_mbps = meta.bitrate as f64 / 1_000_000.0;
-                        let too_high_bitrate = bitrate_mbps > 30.0 && meta.bitrate > 0;
-                        let too_high_res = meta.width > 3840 || meta.height > 2160;
+                        let is_hdr = meta.color_transfer == "smpte2084"
+                            || meta.color_transfer == "arib-std-b67"
+                            || meta.pixel_format.contains("10")
+                            || meta.profile.to_ascii_lowercase().contains("10");
 
-                        let decision = if too_high_bitrate || too_high_res || !is_telegram_codec {
-                            "transcode"
-                        } else if is_telegram_codec && is_native_container {
-                            "passthrough"
+                        let is_hevc = meta.video_codec == "hevc" || meta.video_codec == "h265";
+                        let is_mp4 = meta.container == "mp4" || meta.container.contains("mp4");
+                        let valid_audio = meta.audio_codec.is_empty() || meta.audio_codec == "aac";
+                        let valid_res = meta.width <= 1920 && meta.height <= 1080;
+                        let valid_fps = meta.fps <= 60.0;
+
+                        let decision = if is_hdr {
+                            if is_hevc && is_mp4 && valid_audio && valid_res && valid_fps && meta.is_valid {
+                                "canonical_passthrough_main10"
+                            } else {
+                                "canonical_transcode_main10"
+                            }
                         } else {
-                            // Telegram-compatible codec in non-native container (e.g. h264 in mkv)
-                            "remux_copy"
+                            if is_hevc && is_mp4 && valid_audio && valid_res && valid_fps && meta.is_valid && meta.pixel_format == "yuv420p" {
+                                "canonical_passthrough_main8"
+                            } else {
+                                "canonical_transcode_main8"
+                            }
                         };
 
                         item.video_decision = Some(decision.to_string());
@@ -747,7 +755,7 @@ impl PipelineRunner {
                             upd.next().unwrap();
                         }
 
-                        if decision == "passthrough" {
+                        if decision.starts_with("canonical_passthrough") {
                             let _ = update_item_pipeline_stage(
                                 &db_clone,
                                 item.id,
@@ -757,7 +765,7 @@ impl PipelineRunner {
                         } else {
                             // Gọi FFmpeg processor
                             match processor_clone
-                                .process_video(&input_path, &output_path, decision)
+                                .process_video(&input_path, &output_path, decision, item.id, item.job_id, meta.duration, &item.name)
                                 .await
                             {
                                 Ok(proc_hash) => {
@@ -787,7 +795,7 @@ impl PipelineRunner {
                                     let _ = upload_tx_clone.send(item).await;
 
                                     // Dọn dẹp tệp tin gốc sau remux/transcode thành công
-                                    let _ = std::fs::remove_file(&input_path);
+                                    // Yêu cầu: Không xóa file gốc ở đây, giữ lại cho đến khi Telegram Confirmed
                                 }
                                 Err(_) => {
                                     let _ = update_item_pipeline_stage(
@@ -827,6 +835,7 @@ impl PipelineRunner {
     async fn run_uploader(
         &self,
         rx: mpsc::Receiver<PipelineItem>,
+        upload_tx: mpsc::Sender<PipelineItem>,
         uploader: Arc<dyn TelegramUploader>,
     ) -> Result<(), String> {
         let rx = Arc::new(tokio::sync::Mutex::new(rx));
@@ -835,6 +844,7 @@ impl PipelineRunner {
         for _ in 0..self.config.upload_concurrency {
             let rx_clone = rx.clone();
             let db_clone = self.db.clone();
+            let upload_tx_clone = upload_tx.clone();
             let uploader_clone = uploader.clone();
             let workspace = self.workspace_dir.clone();
             let cancel = self.cancel_token.clone();
@@ -856,47 +866,40 @@ impl PipelineRunner {
 
                     println!("Uploader loop received item {}", item.id);
             // Enforce flood wait check before uploading
-            loop {
-                let wait_until = {
-                    let conn = db_clone.lock().unwrap();
-                    let mut stmt = conn.prepare("SELECT flood_wait_until FROM migration_jobs WHERE id = ? LIMIT 1").unwrap();
-                    stmt.bind((1, item.job_id)).unwrap();
-                    if let Ok(sqlite::State::Row) = stmt.next() {
-                        stmt.read::<i64, _>(0).unwrap_or(0)
-                    } else {
-                        0
-                    }
-                };
-
-                let now = Utc::now().timestamp();
-                if wait_until > now {
-                    let sleep_secs = (wait_until - now) as u64;
-                    log::info!("Upload: Job {} is under FloodWait, sleeping for {} seconds", item.job_id, sleep_secs);
-                    
-                    // Sleep in small increments to remain responsive to cancellation
-                    let mut slept = 0;
-                    while slept < sleep_secs {
-                        if cancel.is_cancelled() {
-                            return;
-                        }
-                        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-                        slept += 1;
-                    }
+            let wait_until = {
+                let conn = db_clone.lock().unwrap();
+                let mut stmt = conn.prepare("SELECT flood_wait_until FROM migration_jobs WHERE id = ? LIMIT 1").unwrap();
+                stmt.bind((1, item.job_id)).unwrap();
+                if let Ok(sqlite::State::Row) = stmt.next() {
+                    stmt.read::<i64, _>(0).unwrap_or(0)
                 } else {
-                    break;
+                    0
                 }
+            };
+
+            let now = Utc::now().timestamp();
+            if wait_until > now {
+                let sleep_secs = (wait_until - now) as u64;
+                log::info!("Upload: Job {} is under FloodWait, sleeping for {} seconds (non-blocking)", item.job_id, sleep_secs);
+                let _ = update_item_pipeline_stage(&db_clone, item.id, PipelineStage::WaitingForQuota);
+                let upload_tx_requeue = upload_tx_clone.clone();
+                let item_requeue = item.clone();
+                tokio::spawn(async move {
+                    tokio::time::sleep(tokio::time::Duration::from_secs(sleep_secs)).await;
+                    let _ = upload_tx_requeue.send(item_requeue).await;
+                });
+                continue;
             }
 
             println!("Uploader spawned task active for item {}", item.id);
 
                 // Chọn đúng tệp processed hoặc original để upload
-                // A2 fix: remux_copy ALSO uses .processed.mp4, not just transcode
+                
                 let (file_path, artifact_size) = {
-                    let path = if matches!(
-                        item.video_decision.as_deref(),
-                        Some("remux_copy" | "transcode")
-                    ) {
-                        workspace.join(format!("{}.processed.mp4", item.id))
+                    let path = if let Some(p) = &item.processed_artifact_path {
+                        std::path::PathBuf::from(p)
+                    } else if let Some(p) = &item.local_artifact_path {
+                        std::path::PathBuf::from(p)
                     } else {
                         workspace.join(format!("{}", item.id))
                     };
@@ -907,40 +910,31 @@ impl PipelineRunner {
                 };
 
                 // Quota check — atomic reserve before upload
-                loop {
-                    if cancel.is_cancelled() || cancel.is_stopped() {
-                        break;
-                    }
-                    let date_string = Utc::now().format("%Y-%m-%d").to_string();
-                    let reserved = {
-                        let conn = db_clone.lock().unwrap();
-                        reserve_quota(
-                            &conn,
-                            item.id,
-                            item.job_id,
-                            &date_string,
-                            artifact_size,
-                            7200, // 2 hour expiry
-                        )
-                    };
-                    
-                    match reserved {
-                        Ok(_) => break,
-                        Err(e) => {
-                            log::warn!("Upload: quota reserve failed for item {}: {} — sleeping 5 mins before retry", item.id, e);
-                            let _ = update_item_pipeline_stage(&db_clone, item.id, PipelineStage::WaitingForQuota);
-                            
-                            // Sleep 5 minutes in small increments
-                            let sleep_secs = 300;
-                            let mut slept = 0;
-                            while slept < sleep_secs {
-                                if cancel.is_cancelled() || cancel.is_stopped() {
-                                    break;
-                                }
-                                tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-                                slept += 1;
-                            }
-                        }
+                let date_string = Utc::now().format("%Y-%m-%d").to_string();
+                let reserved = {
+                    let conn = db_clone.lock().unwrap();
+                    reserve_quota(
+                        &conn,
+                        item.id,
+                        item.job_id,
+                        &date_string,
+                        artifact_size,
+                        7200, // 2 hour expiry
+                    )
+                };
+                
+                match reserved {
+                    Ok(_) => {},
+                    Err(e) => {
+                        log::warn!("Upload: quota reserve failed for item {}: {} — requeuing in 5 mins", item.id, e);
+                        let _ = update_item_pipeline_stage(&db_clone, item.id, PipelineStage::WaitingForQuota);
+                        let upload_tx_requeue = upload_tx_clone.clone();
+                        let item_requeue = item.clone();
+                        tokio::spawn(async move {
+                            tokio::time::sleep(tokio::time::Duration::from_secs(300)).await;
+                            let _ = upload_tx_requeue.send(item_requeue).await;
+                        });
+                        continue;
                     }
                 }
                 
@@ -948,7 +942,6 @@ impl PipelineRunner {
                     return; // Exit worker
                 }
 
-                let date_string = Utc::now().format("%Y-%m-%d").to_string();
                 let _ = update_item_pipeline_stage(&db_clone, item.id, PipelineStage::Uploading);
 
                 // Sinh deterministic random_id
@@ -967,7 +960,15 @@ impl PipelineRunner {
                     job_id: item.job_id,
                     item_id: item.id,
                     path: file_path.clone(),
-                    filename: item.name.clone(),
+                    filename: if media_kind == TelegramMediaKind::Video {
+                        let mut name = item.name.clone();
+                        if let Some(idx) = name.rfind('.') {
+                            name.truncate(idx);
+                        }
+                        format!("{}.mp4", name)
+                    } else {
+                        item.name.clone()
+                    },
                     random_id,
                     destination_id: None,
                     media_kind,
@@ -1019,7 +1020,10 @@ impl PipelineRunner {
                             );
 
                             // Dọn dẹp tệp tin trong workspace
-                            let _ = std::fs::remove_file(&file_path);
+                            let original_path = workspace.join(format!("{}", item.id));
+                            let processed_path = workspace.join(format!("{}.processed.mp4", item.id));
+                            let _ = std::fs::remove_file(&original_path);
+                            let _ = std::fs::remove_file(&processed_path);
                         }
                         TelegramUploadResult::ReconciliationRequired {
                             random_id: rec_random_id,
@@ -1204,7 +1208,7 @@ impl PipelineRunner {
                             );
 
                             // Dọn dẹp tệp tin workspace
-                            let _ = std::fs::remove_file(&input_path);
+                            // No automatic removal of input_path here; cleanup happens centrally
                         }
                         Err(_) => {
                             let _ =

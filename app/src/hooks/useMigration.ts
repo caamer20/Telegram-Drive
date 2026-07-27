@@ -19,7 +19,7 @@ import {
     MigrationActivity,
     ProcessingLogEntry,
 } from '../types';
-import { acceptProgressEvent, mergeActivity } from '../components/migration/transferState';
+import { mergeActivity } from '../components/migration/transferState';
 
 // Legacy local types (removed from main types.ts but still used in this hook)
 interface ScanProgressPayload {
@@ -91,7 +91,7 @@ export function useMigration() {
     const [msAccount, setMsAccount] = useState<MsAccountInfo | null>(null);
     const [jobs, setJobs] = useState<MigrationJobSummary[]>([]);
     const [currentJobDetail, setCurrentJobDetail] = useState<MigrationJobDetail | null>(null);
-    const [itemProgress, setItemProgress] = useState<ItemProgressPayload | null>(null);
+    const [activeProgresses, setActiveProgresses] = useState<Record<number, ItemProgressPayload>>({});
     const [cooldown, setCooldown] = useState<CooldownPayload | null>(null);
     const [loading, setLoading] = useState<boolean>(false);
     const [snapshotLoading, setSnapshotLoading] = useState<boolean>(false);
@@ -186,7 +186,7 @@ export function useMigration() {
             await invoke('cmd_migration_ms_disconnect');
             setMsAccount(null);
             setCurrentJobDetail(null);
-            setItemProgress(null);
+            setActiveProgresses({});
             setMigrationActivity([]);
             setProcessingLogs([]);
             setAutoProfile(null);
@@ -420,11 +420,8 @@ export function useMigration() {
             const now = Date.now();
             if (now - lastProgressTime > 200 || e.payload.percent === 100) {
                 lastProgressTime = now;
-                setItemProgress(previous => {
-                    return acceptProgressEvent(previous, {
-                        ...e.payload,
-                        timestamp: e.payload.timestamp ?? now,
-                    });
+                setActiveProgresses(prev => {
+                    return { ...prev, [e.payload.item_id]: { ...e.payload, timestamp: e.payload.timestamp ?? now } };
                 });
             }
 
@@ -462,11 +459,11 @@ export function useMigration() {
             if (e.payload.status === 'completed_telegram' || e.payload.status === 'completed_local') {
                 void queryClient.invalidateQueries({ queryKey: ['files'] });
             }
-            setItemProgress(previous =>
-                previous?.job_id === e.payload.job_id && previous.item_id === e.payload.item_id
-                    ? null
-                    : previous
-            );
+            setActiveProgresses(prev => {
+                const next = { ...prev };
+                delete next[e.payload.item_id];
+                return next;
+            });
             if (e.payload.status === 'failed') {
                 toast.error(`${e.payload.item_name}: ${e.payload.error_message || 'Failed'}`);
             }
@@ -986,7 +983,7 @@ export function useMigration() {
         msAccount,
         jobs,
         currentJobDetail,
-        itemProgress,
+        activeProgresses,
         cooldown,
         loading,
         snapshotLoading,

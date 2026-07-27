@@ -257,6 +257,7 @@ impl StreamingCrawler {
                             original_sha256: None,
                             processed_sha256: None,
                             local_artifact_path: None,
+                            processed_artifact_path: None,
                             telegram_random_id: None,
                             video_decision: None,
 

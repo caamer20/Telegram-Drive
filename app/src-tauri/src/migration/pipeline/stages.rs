@@ -92,6 +92,7 @@ pub struct PipelineItem {
     pub original_sha256: Option<String>,
     pub processed_sha256: Option<String>,
     pub local_artifact_path: Option<String>,
+    pub processed_artifact_path: Option<String>,
     pub telegram_random_id: Option<i64>,
     pub video_decision: Option<String>,
 }
@@ -109,6 +110,11 @@ pub struct VideoMetadata {
     pub is_valid: bool,
     pub rotation: i32,
     pub file_size: u64,
+    pub color_transfer: String,
+    pub color_primaries: String,
+    pub profile: String,
+    pub pixel_format: String,
+    pub fps: f64,
 }
 
 // Decoupling dependency traits
@@ -162,6 +168,10 @@ pub trait VideoProcessor: Send + Sync {
         input_path: &Path,
         output_path: &Path,
         decision: &str,
+        item_id: i64,
+        job_id: i64,
+        duration: f64,
+        item_name: &str,
     ) -> Pin<Box<dyn Future<Output = Result<String, String>> + Send>>;
 }
 

@@ -45,6 +45,7 @@ pub fn build_pipeline_services(
     workspace_dir: PathBuf,
     backup_dir: PathBuf,
     destination_folder_id: Option<i64>,
+    app_handle: Option<tauri::AppHandle>,
 ) -> Result<
     (
         Arc<PipelineRunner>,
@@ -70,7 +71,7 @@ pub fn build_pipeline_services(
         "ffprobe"
     });
 
-    // CPU threads: min(2, available_parallelism)
+    
     let max_threads = std::thread::available_parallelism()
         .map(|n| n.get().min(2))
         .unwrap_or(1);
@@ -85,6 +86,7 @@ pub fn build_pipeline_services(
         ffmpeg_path,
         cancel_token.clone(),
         max_threads,
+        app_handle,
     ));
 
     let telegram_adapter = Arc::new(TelegramProductionAdapter::new(

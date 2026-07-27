@@ -15,7 +15,7 @@ export const OneDriveMigrationPage: React.FC = () => {
     // States
     const [msAccount, setMsAccount] = useState<MsAccountInfo | null>(null);
     const [currentDetail, setCurrentDetail] = useState<MigrationJobDetail | null>(null);
-    const [progress, setProgress] = useState<ItemProgressPayload | null>(null);
+    const [activeProgresses, setActiveProgresses] = useState<Record<number, ItemProgressPayload>>({});
     const [activities] = useState<MigrationActivity[]>([]);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -67,7 +67,10 @@ export const OneDriveMigrationPage: React.FC = () => {
         
         const setupListeners = async () => {
             unlistenProgress = await listen<ItemProgressPayload>('migration-item-progress', (event) => {
-                setProgress(event.payload);
+                setActiveProgresses(prev => ({
+                    ...prev,
+                    [event.payload.item_id]: { ...event.payload, timestamp: Date.now() }
+                }));
             });
         };
         
@@ -227,7 +230,7 @@ export const OneDriveMigrationPage: React.FC = () => {
                             {currentDetail && (
                                 <ProgressPanel
                                     detail={currentDetail}
-                                    progress={progress}
+                                    activeProgresses={activeProgresses}
                                     cooldown={null}
                                     onStart={handleStart}
                                     onStop={handleStop}
