@@ -188,6 +188,11 @@ export const OneDriveMigrationPage: React.FC = () => {
     const handleStop = async () => {
         try {
             await invoke('cmd_migration_stop');
+            setActiveProgresses({});
+            if (currentDetail?.job?.id) {
+                const detail = await invoke<MigrationJobDetail>('cmd_migration_get_status', { jobId: currentDetail.job.id });
+                setCurrentDetail(detail);
+            }
         } catch (e: any) {
             setError(e.toString());
         }
