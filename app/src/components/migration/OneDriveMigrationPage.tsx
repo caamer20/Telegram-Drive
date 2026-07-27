@@ -34,19 +34,18 @@ export const OneDriveMigrationPage: React.FC = () => {
         const fetchStatus = async () => {
             try {
                 // MS Account status
-                const msStatus = await invoke<MsAccountInfo>('cmd_migration_ms_status');
+                const msStatus = await invoke<MsAccountInfo | null>('cmd_migration_ms_status');
                 if (isMounted) setMsAccount(msStatus);
                 
-                // Job status (assuming we fetch the active one if we don't know the ID yet)
-                // For now, if currentDetail exists, we poll it.
-                if (currentDetail?.job?.id) {
-                    const detail = await invoke<MigrationJobDetail>('cmd_migration_get_status', { jobId: currentDetail.job.id });
+                let jobId = currentDetail?.job?.id;
+                if (!jobId) {
+                    jobId = await invoke<number | null>('cmd_migration_get_resumable_job') ?? undefined;
+                }
+                if (jobId) {
+                    const detail = await invoke<MigrationJobDetail>('cmd_migration_get_status', { jobId });
                     if (isMounted) {
                         setCurrentDetail(detail);
-                        // Also fetch items to update the file table? Wait, cmd_migration_get_status returns full MigrationJobDetail!
                     }
-                } else {
-                    // Try to fetch active job ID if available? No, wait for user to start or resume.
                 }
             } catch (err: any) {
                 console.error("Status fetch error", err);
@@ -147,6 +146,22 @@ export const OneDriveMigrationPage: React.FC = () => {
     };
 
     const handleStart = async () => {
+        const resumableJob = currentDetail?.job;
+        if (resumableJob && ['stopped', 'waiting_for_quota'].includes(resumableJob.state)) {
+            setLoading(true);
+            setError(null);
+            try {
+                await invoke('cmd_migration_resume', { jobId: resumableJob.id });
+                const detail = await invoke<MigrationJobDetail>('cmd_migration_get_status', { jobId: resumableJob.id });
+                setCurrentDetail(detail);
+            } catch (e: any) {
+                setError(e.toString());
+            } finally {
+                setLoading(false);
+            }
+            return;
+        }
+
         if (!sourceId || !destName || !localDir) {
             setError("Please fill all required settings before starting.");
             return;
@@ -188,7 +203,10 @@ export const OneDriveMigrationPage: React.FC = () => {
     };
     
     // We determine if we are in Setup phase or Execution phase
-    const showSetup = !currentDetail || currentDetail.job.state === 'failed' || currentDetail.job.state === 'completed';
+    const showSetup = !currentDetail
+        || !msAccount
+        || currentDetail.job.state === 'failed'
+        || currentDetail.job.state === 'completed';
 
     return (
         <div className="h-full flex flex-col bg-slate-950 text-slate-200 overflow-hidden">

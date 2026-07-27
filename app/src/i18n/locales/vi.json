@@ -359,6 +359,7 @@
     "job_started": "Đã bắt đầu chuyển dữ liệu",
     "pausing": "Đang tạm dừng...",
     "resuming": "Đang tiếp tục...",
+    "btn_resume": "Tiếp tục chuyển dữ liệu",
     "cancelling": "Đang hủy...",
     "item_retried": "Đã đặt lại tệp để thử lại",
     "retried_all": "Đã đặt lại {{count}} tệp thất bại",

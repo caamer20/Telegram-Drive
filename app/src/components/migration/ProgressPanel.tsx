@@ -37,6 +37,7 @@ export const ProgressPanel: React.FC<ProgressPanelProps> = ({
         : 0;
 
     const isActive = job.state === 'running';
+    const isResumable = job.state === 'stopped' || job.state === 'waiting_for_quota';
 
     return (
         <div className="bg-slate-900/60 rounded-xl border border-slate-800 p-5 space-y-5">
@@ -64,13 +65,13 @@ export const ProgressPanel: React.FC<ProgressPanelProps> = ({
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2">
-                    {!isActive && job.state !== 'completed' && (
+                    {isResumable && (
                         <button
                             onClick={onStart}
                             className="inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white rounded-lg text-xs font-semibold shadow-lg transition-all"
                         >
                             <Play className="w-4 h-4 fill-current" />
-                            {t('migration.btn_start', 'Start Migration')}
+                            {t('migration.btn_resume', 'Resume Migration')}
                         </button>
                     )}
 

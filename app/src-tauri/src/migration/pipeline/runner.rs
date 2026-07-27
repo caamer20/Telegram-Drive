@@ -505,9 +505,11 @@ impl PipelineRunner {
                         let _ = download_tx.send(item).await;
                     }
                 }
-                // Items waiting for quota — keep them, don't re-queue
+                // Re-check quota/flood-wait when a stopped pipeline is resumed.
                 "waiting_for_quota" => {
-                    log::info!("Recovery: item {} still waiting for quota", item.id);
+                    let _ =
+                        update_item_pipeline_stage(&self.db, item.id, PipelineStage::QueuedUpload);
+                    let _ = upload_tx.send(item).await;
                 }
                 // Reconciliation items — terminal, do not re-queue to upload
                 "reconciliation_required" => {

@@ -359,6 +359,7 @@
     "job_started": "Migration started",
     "pausing": "Pausing...",
     "resuming": "Resuming...",
+    "btn_resume": "Resume Migration",
     "cancelling": "Cancelling...",
     "item_retried": "Item reset for retry",
     "retried_all": "Reset {{count}} failed files",

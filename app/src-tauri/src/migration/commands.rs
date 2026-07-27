@@ -4,6 +4,45 @@ use crate::migration::microsoft;
 use crate::migration::models::*;
 use crate::migration::MigrationState;
 
+fn latest_resumable_job(conn: &sqlite::Connection) -> Result<Option<(i64, String)>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, state FROM migration_jobs \
+             WHERE id = (SELECT id FROM migration_jobs ORDER BY updated_at DESC, id DESC LIMIT 1) \
+               AND state IN ('running', 'stopped', 'waiting_for_quota')",
+        )
+        .map_err(|e| e.to_string())?;
+
+    if let Ok(sqlite::State::Row) = stmt.next() {
+        Ok(Some((
+            stmt.read(0).unwrap_or(0),
+            stmt.read(1).unwrap_or_default(),
+        )))
+    } else {
+        Ok(None)
+    }
+}
+
+fn mark_interrupted_job_stopped(conn: &sqlite::Connection, job_id: i64) -> Result<(), String> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as i64;
+    let mut stmt = conn
+        .prepare(
+            "UPDATE migration_jobs \
+             SET state = 'stopped', completed_at = NULL, \
+                 last_error = COALESCE(last_error, 'Migration interrupted by app shutdown'), \
+                 updated_at = ? \
+             WHERE id = ? AND state = 'running'",
+        )
+        .map_err(|e| e.to_string())?;
+    stmt.bind((1, now)).map_err(|e| e.to_string())?;
+    stmt.bind((2, job_id)).map_err(|e| e.to_string())?;
+    stmt.next().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn cmd_migration_ms_connect(
     state: State<'_, MigrationState>,
@@ -399,6 +438,151 @@ pub async fn cmd_migration_get_status(
 }
 
 #[tauri::command]
+pub async fn cmd_migration_get_resumable_job(
+    state: State<'_, MigrationState>,
+) -> Result<Option<i64>, String> {
+    {
+        let active_guard = state.active_pipeline.lock().await;
+        if let Some(active) = active_guard.as_ref() {
+            return Ok(Some(active.job_id));
+        }
+    }
+
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    let resumable = latest_resumable_job(&conn)?;
+    if let Some((job_id, job_state)) = resumable {
+        if job_state == "running" {
+            mark_interrupted_job_stopped(&conn, job_id)?;
+        }
+        Ok(Some(job_id))
+    } else {
+        Ok(None)
+    }
+}
+
+#[tauri::command]
+pub async fn cmd_migration_resume(
+    state: State<'_, MigrationState>,
+    tg_state: State<'_, crate::commands::TelegramState>,
+    app_handle: tauri::AppHandle,
+    job_id: i64,
+) -> Result<(), String> {
+    {
+        let mut session_guard = state.ms_session.lock().await;
+        let session = session_guard
+            .as_mut()
+            .ok_or_else(|| "Microsoft account not connected".to_string())?;
+        if session.is_expired() {
+            microsoft::refresh_access_token(session).await?;
+            crate::migration::session_store::save(&app_handle, session)?;
+        }
+    }
+
+    let mut active_guard = state.active_pipeline.lock().await;
+    if let Some(active) = active_guard.as_ref() {
+        if active.job_id == job_id {
+            return Err("This migration is already running".into());
+        }
+        return Err("Another migration pipeline is active".into());
+    }
+
+    let (workspace_dir, backup_dir, telegram_destination_id, job_state) = {
+        let conn = state.db.lock().map_err(|e| e.to_string())?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT workspace_dir, local_backup_dir, telegram_destination_id, state \
+                 FROM migration_jobs WHERE id = ?",
+            )
+            .map_err(|e| e.to_string())?;
+        stmt.bind((1, job_id)).map_err(|e| e.to_string())?;
+        if let Ok(sqlite::State::Row) = stmt.next() {
+            (
+                stmt.read::<String, _>(0).unwrap_or_default(),
+                stmt.read::<String, _>(1).unwrap_or_default(),
+                stmt.read::<Option<i64>, _>(2).ok().flatten(),
+                stmt.read::<String, _>(3).unwrap_or_default(),
+            )
+        } else {
+            return Err("Job not found".into());
+        }
+    };
+
+    if !matches!(
+        job_state.as_str(),
+        "running" | "stopped" | "waiting_for_quota"
+    ) {
+        return Err(format!("Job cannot be resumed from state '{}'", job_state));
+    }
+    if !std::path::Path::new(&backup_dir).is_dir() {
+        return Err(format!(
+            "Local backup directory is unavailable: {}",
+            backup_dir
+        ));
+    }
+    std::fs::create_dir_all(&workspace_dir)
+        .map_err(|e| format!("Cannot restore migration workspace: {}", e))?;
+
+    let mig_state = state.inner().clone_state();
+    let (runner, downloader, media_adapter, uploader, finalizer, cancel_token) =
+        crate::migration::adapters::factory::build_pipeline_services(
+            mig_state.db.clone(),
+            mig_state.ms_session.clone(),
+            tg_state.client.clone(),
+            tg_state.peer_cache.clone(),
+            job_id,
+            std::path::PathBuf::from(&workspace_dir),
+            std::path::PathBuf::from(&backup_dir),
+            telegram_destination_id,
+            Some(app_handle),
+        )?;
+
+    {
+        let conn = state.db.lock().map_err(|e| e.to_string())?;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as i64;
+        let mut stmt = conn
+            .prepare(
+                "UPDATE migration_jobs \
+                 SET state = 'running', completed_at = NULL, last_error = NULL, updated_at = ? \
+                 WHERE id = ?",
+            )
+            .map_err(|e| e.to_string())?;
+        stmt.bind((1, now)).map_err(|e| e.to_string())?;
+        stmt.bind((2, job_id)).map_err(|e| e.to_string())?;
+        stmt.next().map_err(|e| e.to_string())?;
+    }
+
+    runner.clone().start(
+        downloader,
+        media_adapter.clone(),
+        media_adapter,
+        uploader,
+        finalizer,
+    );
+    *active_guard = Some(crate::migration::ActivePipeline {
+        job_id,
+        runner: runner.clone(),
+        cancel_token,
+    });
+    drop(active_guard);
+
+    tauri::async_runtime::spawn(async move {
+        if let Err(error) = runner.run_to_completion().await {
+            log::error!("Resumed pipeline failed for job {}: {}", job_id, error);
+        }
+
+        let mut active_guard = mig_state.active_pipeline.lock().await;
+        if active_guard.as_ref().map(|active| active.job_id) == Some(job_id) {
+            *active_guard = None;
+        }
+    });
+
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn cmd_migration_retry_failed(
     state: State<'_, MigrationState>,
     tg_state: State<'_, crate::commands::TelegramState>,
@@ -587,4 +771,48 @@ pub async fn cmd_migration_reset_database(state: State<'_, MigrationState>) -> R
     let conn = state.db.lock().map_err(|e| e.to_string())?;
     crate::migration::db::reset_database(&conn)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod resume_tests {
+    use super::{latest_resumable_job, mark_interrupted_job_stopped};
+    use crate::migration::db::open_migration_db_at_path;
+
+    #[test]
+    fn finds_and_marks_latest_interrupted_job() {
+        let db_path = std::env::temp_dir().join(format!(
+            "telegram-drive-resume-{}-{}.db",
+            std::process::id(),
+            rand::random::<u64>()
+        ));
+        let db = open_migration_db_at_path(db_path.clone()).unwrap();
+        let conn = db.lock().unwrap();
+        conn.execute("INSERT INTO migration_jobs (id, source_folder_id, source_folder_path, telegram_destination_name, local_backup_dir, workspace_dir, state, started_at, created_at, updated_at) VALUES (1, 'done', '/', 'Saved Messages', '/tmp', '/tmp/ws', 'completed', 1, 1, 10)").unwrap();
+        conn.execute("INSERT INTO migration_jobs (id, source_folder_id, source_folder_path, telegram_destination_name, local_backup_dir, workspace_dir, state, started_at, created_at, updated_at) VALUES (2, 'active', '/', 'Saved Messages', '/tmp', '/tmp/ws', 'running', 2, 2, 20)").unwrap();
+
+        let resumable = latest_resumable_job(&conn).unwrap();
+        assert_eq!(resumable, Some((2, "running".to_string())));
+        mark_interrupted_job_stopped(&conn, 2).unwrap();
+
+        let mut stmt = conn
+            .prepare(
+                "SELECT state, completed_at IS NULL, last_error FROM migration_jobs WHERE id = 2",
+            )
+            .unwrap();
+        assert_eq!(stmt.next().unwrap(), sqlite::State::Row);
+        assert_eq!(stmt.read::<String, _>(0).unwrap(), "stopped");
+        assert_eq!(stmt.read::<i64, _>(1).unwrap(), 1);
+        assert_eq!(
+            stmt.read::<String, _>(2).unwrap(),
+            "Migration interrupted by app shutdown"
+        );
+
+        drop(stmt);
+        conn.execute("INSERT INTO migration_jobs (id, source_folder_id, source_folder_path, telegram_destination_name, local_backup_dir, workspace_dir, state, started_at, created_at, updated_at) VALUES (3, 'newer', '/', 'Saved Messages', '/tmp', '/tmp/ws', 'completed', 3, 3, 9000000000000)").unwrap();
+        assert_eq!(latest_resumable_job(&conn).unwrap(), None);
+
+        drop(conn);
+        drop(db);
+        let _ = std::fs::remove_file(db_path);
+    }
 }
