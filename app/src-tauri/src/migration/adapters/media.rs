@@ -15,6 +15,7 @@ use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::Arc;
+use tauri::Manager;
 
 // ---------------------------------------------------------------------------
 // Process runner seam — allows injection of fake runner in tests
@@ -146,6 +147,39 @@ pub struct MediaCapabilities {
     pub selected_encoder: String,
 }
 
+pub fn resolve_media_binary(app_handle: Option<&tauri::AppHandle>, binary_name: &str) -> PathBuf {
+    #[cfg(target_os = "windows")]
+    let executable_name = format!("{}.exe", binary_name);
+    #[cfg(not(target_os = "windows"))]
+    let executable_name = binary_name.to_string();
+
+    if let Some(resource_dir) = app_handle.and_then(|handle| handle.path().resource_dir().ok()) {
+        let bundled = resource_dir.join(&executable_name);
+        if bundled.is_file() {
+            return bundled;
+        }
+    }
+
+    if let Some(path) = std::env::var_os("PATH") {
+        for directory in std::env::split_paths(&path) {
+            let candidate = directory.join(&executable_name);
+            if candidate.is_file() {
+                return candidate;
+            }
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    for directory in ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"] {
+        let candidate = Path::new(directory).join(&executable_name);
+        if candidate.is_file() {
+            return candidate;
+        }
+    }
+
+    PathBuf::from(executable_name)
+}
+
 fn select_hevc_encoder(
     is_macos: bool,
     videotoolbox: bool,
@@ -218,17 +252,11 @@ pub async fn preflight_media_with_runner(
     })
 }
 
-pub async fn preflight_media() -> Result<MediaCapabilities, String> {
-    let ffmpeg_path = PathBuf::from(if cfg!(windows) {
-        "ffmpeg.exe"
-    } else {
-        "ffmpeg"
-    });
-    let ffprobe_path = PathBuf::from(if cfg!(windows) {
-        "ffprobe.exe"
-    } else {
-        "ffprobe"
-    });
+pub async fn preflight_media_for_app(
+    app_handle: Option<&tauri::AppHandle>,
+) -> Result<MediaCapabilities, String> {
+    let ffmpeg_path = resolve_media_binary(app_handle, "ffmpeg");
+    let ffprobe_path = resolve_media_binary(app_handle, "ffprobe");
     preflight_media_with_runner(
         &ffmpeg_path,
         &ffprobe_path,
@@ -236,6 +264,11 @@ pub async fn preflight_media() -> Result<MediaCapabilities, String> {
         cfg!(target_os = "macos"),
     )
     .await
+}
+
+#[cfg(test)]
+pub async fn preflight_media() -> Result<MediaCapabilities, String> {
+    preflight_media_for_app(None).await
 }
 
 // ---------------------------------------------------------------------------

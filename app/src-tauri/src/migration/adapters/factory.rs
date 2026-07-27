@@ -8,7 +8,7 @@
 //   - PipelineRunner (orchestrator)
 
 use crate::migration::adapters::local::LocalProductionAdapter;
-use crate::migration::adapters::media::FFmpegMediaAdapter;
+use crate::migration::adapters::media::{resolve_media_binary, FFmpegMediaAdapter};
 use crate::migration::adapters::onedrive::OneDriveDownloader;
 use crate::migration::adapters::telegram::TelegramProductionAdapter;
 use crate::migration::db::MigrationDb;
@@ -60,16 +60,8 @@ pub fn build_pipeline_services(
     let cancel_token = tokio_util::sync::CancellationToken::new();
 
     // Determine ffmpeg/ffprobe paths
-    let ffmpeg_path = PathBuf::from(if cfg!(windows) {
-        "ffmpeg.exe"
-    } else {
-        "ffmpeg"
-    });
-    let ffprobe_path = PathBuf::from(if cfg!(windows) {
-        "ffprobe.exe"
-    } else {
-        "ffprobe"
-    });
+    let ffmpeg_path = resolve_media_binary(app_handle.as_ref(), "ffmpeg");
+    let ffprobe_path = resolve_media_binary(app_handle.as_ref(), "ffprobe");
 
     // Build adapters
     let http_client = reqwest::Client::new();

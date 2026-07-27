@@ -35,8 +35,8 @@ fn latest_resumable_job(conn: &sqlite::Connection) -> Result<Option<(i64, String
     let mut stmt = conn
         .prepare(
             "SELECT id, state FROM migration_jobs \
-             WHERE id = (SELECT id FROM migration_jobs ORDER BY updated_at DESC, id DESC LIMIT 1) \
-               AND state IN ('running', 'stopped', 'waiting_for_quota')",
+             WHERE state IN ('running', 'stopped', 'waiting_for_quota') \
+             ORDER BY updated_at DESC, id DESC LIMIT 1",
         )
         .map_err(|e| e.to_string())?;
 
@@ -364,7 +364,8 @@ pub async fn cmd_migration_start(
         return Err("Local backup directory and workspace directory must be different".into());
     }
 
-    let capabilities = crate::migration::adapters::media::preflight_media().await?;
+    let capabilities =
+        crate::migration::adapters::media::preflight_media_for_app(Some(&app_handle)).await?;
 
     // 3. Create job in DB
     let job_id = {
@@ -681,7 +682,8 @@ pub async fn cmd_migration_resume(
     std::fs::create_dir_all(&workspace_dir)
         .map_err(|e| format!("Cannot restore migration workspace: {}", e))?;
 
-    let capabilities = crate::migration::adapters::media::preflight_media().await?;
+    let capabilities =
+        crate::migration::adapters::media::preflight_media_for_app(Some(&app_handle)).await?;
 
     let mig_state = state.inner().clone_state();
     let services = crate::migration::adapters::factory::build_pipeline_services(
@@ -825,7 +827,8 @@ pub async fn cmd_migration_retry_failed(
     std::fs::create_dir_all(&workspace_dir)
         .map_err(|error| format!("Cannot restore migration workspace: {}", error))?;
 
-    let capabilities = crate::migration::adapters::media::preflight_media().await?;
+    let capabilities =
+        crate::migration::adapters::media::preflight_media_for_app(Some(&app_handle)).await?;
     let validator = crate::migration::adapters::media::FFmpegMediaAdapter::new(
         std::path::PathBuf::from(if cfg!(windows) {
             "ffprobe.exe"
@@ -1065,7 +1068,10 @@ mod resume_tests {
 
         drop(stmt);
         conn.execute("INSERT INTO migration_jobs (id, source_folder_id, source_folder_path, telegram_destination_name, local_backup_dir, workspace_dir, state, started_at, created_at, updated_at) VALUES (3, 'newer', '/', 'Saved Messages', '/tmp', '/tmp/ws', 'completed', 3, 3, 9000000000000)").unwrap();
-        assert_eq!(latest_resumable_job(&conn).unwrap(), None);
+        assert_eq!(
+            latest_resumable_job(&conn).unwrap(),
+            Some((2, "stopped".to_string()))
+        );
 
         drop(conn);
         drop(db);
