@@ -370,9 +370,11 @@ export interface ItemCompletePayload {
     job_id: number;
     item_id: number;
     item_name: string;
+    phase: 'uploading' | 'saving_local' | 'processing' | 'downloading';
     status: ItemState;
-    error_type?: string;
-    error_message?: string;
+    error_type?: string | null;
+    error_message?: string | null;
+    timestamp: number;
 }
 
 export interface StatsPayload {

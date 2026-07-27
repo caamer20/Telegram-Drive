@@ -5,7 +5,7 @@ import { SetupSection } from './SetupSection';
 import { ProgressPanel } from './ProgressPanel';
 import { ActivityStream } from './ActivityStream';
 import { FileTable } from './FileTable';
-import { MigrationJobDetail, ItemProgressPayload, MigrationActivity, MsAccountInfo, OneDriveItem } from '../../types';
+import { MigrationJobDetail, ItemProgressPayload, ItemCompletePayload, MigrationActivity, MsAccountInfo, OneDriveItem } from '../../types';
 import { useTranslation } from 'react-i18next';
 import { Play, RefreshCw, AlertTriangle } from 'lucide-react';
 
@@ -73,24 +73,24 @@ export const OneDriveMigrationPage: React.FC = () => {
                 }));
             });
 
-            unlistenComplete = await listen<{ item_id: number; item_name: string; phase: string; status: string }>('migration:item-complete', (event) => {
-                const { item_id, item_name, phase, status } = event.payload;
+            unlistenComplete = await listen<ItemCompletePayload>('migration:item-complete', (event) => {
+                const { job_id, item_id, item_name, phase, status, error_message, timestamp } = event.payload;
                 setActiveProgresses(prev => {
                     const next = { ...prev };
                     delete next[item_id];
                     return next;
                 });
                 setActivities(prev => [{
-                    id: Date.now(),
-                    job_id: 0,
+                    id: timestamp,
+                    job_id,
                     item_id,
                     item_name,
                     phase: phase as MigrationActivity['phase'],
                     status,
                     attempt: 0,
                     revision: 0,
-                    message: '',
-                    created_at: Math.floor(Date.now() / 1000),
+                    message: error_message || '',
+                    created_at: Math.floor(timestamp / 1000),
                 }, ...prev].slice(0, 300));
             });
         };
@@ -105,7 +105,7 @@ export const OneDriveMigrationPage: React.FC = () => {
     const handleConnectMs = async (clientId?: string, tenant?: string) => {
         setLoading(true);
         try {
-            await invoke('cmd_migration_ms_connect', { clientId, tenantId: tenant });
+            await invoke('cmd_migration_ms_connect', { clientId, tenant });
             const msStatus = await invoke<MsAccountInfo>('cmd_migration_ms_status');
             setMsAccount(msStatus);
         } catch (e: any) {

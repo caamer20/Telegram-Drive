@@ -37,7 +37,6 @@ import { useFileDownload } from '../../hooks/useFileDownload';
 import { useKeyboardShortcuts } from '../../hooks/useKeyboardShortcuts';
 import { useSettings } from '../../context/SettingsContext';
 import { useConfirm } from '../../context/ConfirmContext';
-import { MigrationProvider } from '../../context/MigrationContext';
 
 function DashboardContent({ onLogout }: { onLogout: () => void }) {
     const queryClient = useQueryClient();
@@ -879,9 +878,5 @@ function DashboardContent({ onLogout }: { onLogout: () => void }) {
 }
 
 export function Dashboard({ onLogout }: { onLogout: () => void }) {
-    return (
-        <MigrationProvider>
-            <DashboardContent onLogout={onLogout} />
-        </MigrationProvider>
-    );
+    return <DashboardContent onLogout={onLogout} />;
 }
