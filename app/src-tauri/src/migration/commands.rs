@@ -70,6 +70,169 @@ fn mark_interrupted_job_stopped(conn: &sqlite::Connection, job_id: i64) -> Resul
     Ok(())
 }
 
+async fn ensure_no_active_pipeline(state: &MigrationState) -> Result<(), String> {
+    if let Some(active) = state.active_pipeline.lock().await.as_ref() {
+        return Err(format!(
+            "Migration pipeline {} is already active",
+            active.job_id
+        ));
+    }
+    Ok(())
+}
+
+async fn clear_active_pipeline_if_matches(state: &MigrationState, completed_job_id: i64) {
+    let mut active = state.active_pipeline.lock().await;
+    if active.as_ref().map(|pipeline| pipeline.job_id) == Some(completed_job_id) {
+        *active = None;
+    }
+}
+
+async fn get_resumable_job_locked(state: &MigrationState) -> Result<Option<i64>, String> {
+    if let Some(active) = state.active_pipeline.lock().await.as_ref() {
+        return Ok(Some(active.job_id));
+    }
+    let conn = state.db.lock().map_err(|error| error.to_string())?;
+    let resumable = latest_resumable_job(&conn)?;
+    if let Some((job_id, job_state)) = resumable {
+        if job_state == "running" {
+            mark_interrupted_job_stopped(&conn, job_id)?;
+        }
+        Ok(Some(job_id))
+    } else {
+        Ok(None)
+    }
+}
+
+fn persist_job_setup_failure(
+    db: &crate::migration::db::MigrationDb,
+    job_id: i64,
+    error: &str,
+) -> Result<(), String> {
+    let conn = db.lock().map_err(|value| value.to_string())?;
+    persist_job_setup_failure_on_conn(&conn, job_id, error)
+}
+
+fn persist_job_setup_failure_on_conn(
+    conn: &sqlite::Connection,
+    job_id: i64,
+    error: &str,
+) -> Result<(), String> {
+    let now = crate::migration::events::now_millis();
+    let mut stmt = conn
+        .prepare(
+            "UPDATE migration_jobs SET state = 'failed', last_error = ?, completed_at = ?, updated_at = ? WHERE id = ?",
+        )
+        .map_err(|value| value.to_string())?;
+    stmt.bind((1, error)).map_err(|value| value.to_string())?;
+    stmt.bind((2, now)).map_err(|value| value.to_string())?;
+    stmt.bind((3, now)).map_err(|value| value.to_string())?;
+    stmt.bind((4, job_id)).map_err(|value| value.to_string())?;
+    stmt.next().map_err(|value| value.to_string())?;
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn register_and_spawn_pipeline(
+    state: std::sync::Arc<MigrationState>,
+    job_id: i64,
+    runner: std::sync::Arc<crate::migration::pipeline::runner::PipelineRunner>,
+    downloader: std::sync::Arc<crate::migration::adapters::onedrive::OneDriveDownloader>,
+    media_adapter: std::sync::Arc<crate::migration::adapters::media::FFmpegMediaAdapter>,
+    uploader: std::sync::Arc<crate::migration::adapters::telegram::TelegramProductionAdapter>,
+    finalizer: std::sync::Arc<crate::migration::adapters::local::LocalProductionAdapter>,
+    cancel_token: tokio_util::sync::CancellationToken,
+) -> Result<(), String> {
+    ensure_no_active_pipeline(&state).await?;
+    runner.clone().start(
+        downloader,
+        media_adapter.clone(),
+        media_adapter,
+        uploader,
+        finalizer,
+    );
+    let (completion_tx, completion_rx) = tokio::sync::watch::channel(None);
+    {
+        let mut active = state.active_pipeline.lock().await;
+        *active = Some(crate::migration::ActivePipeline {
+            job_id,
+            runner: runner.clone(),
+            cancel_token,
+            completion: completion_rx,
+        });
+    }
+    tauri::async_runtime::spawn(async move {
+        let result = runner.run_to_completion().await;
+        if let Err(error) = &result {
+            log::error!("Pipeline failed for job {}: {}", job_id, error);
+        }
+        clear_active_pipeline_if_matches(&state, job_id).await;
+        let _ = completion_tx.send(Some(result));
+    });
+    Ok(())
+}
+
+async fn wait_for_pipeline_completion(
+    completion: &mut tokio::sync::watch::Receiver<Option<Result<(), String>>>,
+) -> Result<Result<(), String>, String> {
+    let wait = async {
+        loop {
+            if let Some(result) = completion.borrow().clone() {
+                return Ok(result);
+            }
+            completion
+                .changed()
+                .await
+                .map_err(|_| "Migration completion signal closed unexpectedly".to_string())?;
+        }
+    };
+    tokio::time::timeout(std::time::Duration::from_secs(30), wait)
+        .await
+        .map_err(|_| "Migration stop timed out".to_string())?
+}
+
+async fn stop_active_pipeline(state: &MigrationState) -> Result<(), String> {
+    let (job_id, runner, cancel_token, mut completion) = {
+        let active = state.active_pipeline.lock().await;
+        let active = active
+            .as_ref()
+            .ok_or_else(|| "No active migration".to_string())?;
+        (
+            active.job_id,
+            active.runner.clone(),
+            active.cancel_token.clone(),
+            active.completion.clone(),
+        )
+    };
+    runner
+        .stopped_by_user
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    cancel_token.cancel();
+    let result = wait_for_pipeline_completion(&mut completion).await?;
+    if let Err(error) = result {
+        return Err(format!(
+            "Migration stop completed with pipeline error: {}",
+            error
+        ));
+    }
+    let conn = state.db.lock().map_err(|value| value.to_string())?;
+    let mut stmt = conn
+        .prepare("SELECT state FROM migration_jobs WHERE id = ?")
+        .map_err(|value| value.to_string())?;
+    stmt.bind((1, job_id)).map_err(|value| value.to_string())?;
+    let job_state = if let Ok(sqlite::State::Row) = stmt.next() {
+        stmt.read::<String, _>(0).unwrap_or_default()
+    } else {
+        return Err("Stopped migration job no longer exists".to_string());
+    };
+    if job_state != "stopped" {
+        return Err(format!(
+            "Migration stop completed but job {} is '{}'",
+            job_id, job_state
+        ));
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn cmd_migration_ms_connect(
     state: State<'_, MigrationState>,
@@ -153,6 +316,9 @@ pub async fn cmd_migration_start(
     telegram_destination_name: String,
     local_backup_dir: String,
 ) -> Result<i64, String> {
+    let _lifecycle = state.lifecycle_lock.lock().await;
+    ensure_no_active_pipeline(&state).await?;
+
     // 1. Validate OneDrive session
     let _access_token = {
         let mut guard = state.ms_session.lock().await;
@@ -198,6 +364,8 @@ pub async fn cmd_migration_start(
         return Err("Local backup directory and workspace directory must be different".into());
     }
 
+    let capabilities = crate::migration::adapters::media::preflight_media().await?;
+
     // 3. Create job in DB
     let job_id = {
         let conn = state.db.lock().map_err(|e| e.to_string())?;
@@ -215,86 +383,70 @@ pub async fn cmd_migration_start(
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_millis() as i64;
-        let mut stmt = conn.prepare(
-            "INSERT INTO folder_queue (job_id, folder_id, folder_path, state, created_at, updated_at) VALUES (?, ?, ?, 'pending', ?, ?)"
-        ).map_err(|e| e.to_string())?;
-        stmt.bind((1, jid)).unwrap();
-        stmt.bind((2, source_folder_id.as_str())).unwrap();
-        stmt.bind((3, source_folder_path.as_str())).unwrap();
-        stmt.bind((4, now)).unwrap();
-        stmt.bind((5, now)).unwrap();
-        stmt.next().unwrap();
+        let insert_result = (|| -> Result<(), String> {
+            let mut stmt = conn.prepare(
+                "INSERT INTO folder_queue (job_id, folder_id, folder_path, state, created_at, updated_at) VALUES (?, ?, ?, 'pending', ?, ?)"
+            ).map_err(|e| e.to_string())?;
+            stmt.bind((1, jid)).map_err(|error| error.to_string())?;
+            stmt.bind((2, source_folder_id.as_str()))
+                .map_err(|error| error.to_string())?;
+            stmt.bind((3, source_folder_path.as_str()))
+                .map_err(|error| error.to_string())?;
+            stmt.bind((4, now)).map_err(|error| error.to_string())?;
+            stmt.bind((5, now)).map_err(|error| error.to_string())?;
+            stmt.next().map_err(|error| error.to_string())?;
+            Ok(())
+        })();
+        if let Err(error) = insert_result {
+            persist_job_setup_failure_on_conn(&conn, jid, &error)?;
+            return Err(error);
+        }
         jid
     };
 
     // 4. Start pipeline
     let mig_state = state.inner().clone_state();
-    let tg_client_arc = tg_state.client.clone();
-    let tg_peer_cache_arc = tg_state.peer_cache.clone();
-
-    tauri::async_runtime::spawn(async move {
-        use std::path::PathBuf;
-
-        let (runner, downloader, media_adapter, uploader, finalizer, cancel_token) =
-            match crate::migration::adapters::factory::build_pipeline_services(
-                mig_state.db.clone(),
-                mig_state.ms_session.clone(),
-                tg_client_arc,
-                tg_peer_cache_arc,
-                job_id,
-                PathBuf::from(&workspace_dir),
-                PathBuf::from(&local_backup_dir),
-                telegram_destination_id,
-                Some(app_handle.clone()),
-            ) {
-                Ok(services) => services,
-                Err(e) => {
-                    log::error!("Failed to build pipeline services: {}", e);
-                    return;
-                }
-            };
-
-        runner.clone().start(
-            downloader,
-            media_adapter.clone(),
-            media_adapter,
-            uploader,
-            finalizer,
-        );
-
-        let mut active_guard = mig_state.active_pipeline.lock().await;
-        *active_guard = Some(crate::migration::ActivePipeline {
-            job_id,
-            runner: runner.clone(),
-            cancel_token,
-        });
-        drop(active_guard);
-
-        if let Err(e) = runner.run_to_completion().await {
-            log::error!("Pipeline failed for job {}: {}", job_id, e);
+    let services = crate::migration::adapters::factory::build_pipeline_services(
+        mig_state.db.clone(),
+        mig_state.ms_session.clone(),
+        tg_state.client.clone(),
+        tg_state.peer_cache.clone(),
+        job_id,
+        std::path::PathBuf::from(&workspace_dir),
+        std::path::PathBuf::from(&local_backup_dir),
+        telegram_destination_id,
+        Some(app_handle),
+        capabilities.selected_encoder,
+    );
+    let (runner, downloader, media_adapter, uploader, finalizer, cancel_token) = match services {
+        Ok(services) => services,
+        Err(error) => {
+            persist_job_setup_failure(&state.db, job_id, &error)?;
+            return Err(error);
         }
-
-        let mut active_guard = mig_state.active_pipeline.lock().await;
-        *active_guard = None;
-    });
+    };
+    register_and_spawn_pipeline(
+        mig_state,
+        job_id,
+        runner,
+        downloader,
+        media_adapter,
+        uploader,
+        finalizer,
+        cancel_token,
+    )
+    .await
+    .inspect_err(|error| {
+        let _ = persist_job_setup_failure(&state.db, job_id, error);
+    })?;
 
     Ok(job_id)
 }
 
 #[tauri::command]
 pub async fn cmd_migration_stop(state: State<'_, MigrationState>) -> Result<(), String> {
-    let guard = state.active_pipeline.lock().await;
-    if let Some(active) = guard.as_ref() {
-        // Set stopped_by_user flag before cancelling
-        active
-            .runner
-            .stopped_by_user
-            .store(true, std::sync::atomic::Ordering::Relaxed);
-        active.cancel_token.cancel();
-        Ok(())
-    } else {
-        Err("No active migration".into())
-    }
+    let _lifecycle = state.lifecycle_lock.lock().await;
+    stop_active_pipeline(&state).await
 }
 
 #[tauri::command]
@@ -468,23 +620,8 @@ pub async fn cmd_migration_get_status(
 pub async fn cmd_migration_get_resumable_job(
     state: State<'_, MigrationState>,
 ) -> Result<Option<i64>, String> {
-    {
-        let active_guard = state.active_pipeline.lock().await;
-        if let Some(active) = active_guard.as_ref() {
-            return Ok(Some(active.job_id));
-        }
-    }
-
-    let conn = state.db.lock().map_err(|e| e.to_string())?;
-    let resumable = latest_resumable_job(&conn)?;
-    if let Some((job_id, job_state)) = resumable {
-        if job_state == "running" {
-            mark_interrupted_job_stopped(&conn, job_id)?;
-        }
-        Ok(Some(job_id))
-    } else {
-        Ok(None)
-    }
+    let _lifecycle = state.lifecycle_lock.lock().await;
+    get_resumable_job_locked(&state).await
 }
 
 #[tauri::command]
@@ -494,6 +631,9 @@ pub async fn cmd_migration_resume(
     app_handle: tauri::AppHandle,
     job_id: i64,
 ) -> Result<(), String> {
+    let _lifecycle = state.lifecycle_lock.lock().await;
+    ensure_no_active_pipeline(&state).await?;
+
     {
         let mut session_guard = state.ms_session.lock().await;
         let session = session_guard
@@ -503,14 +643,6 @@ pub async fn cmd_migration_resume(
             microsoft::refresh_access_token(session).await?;
             crate::migration::session_store::save(&app_handle, session)?;
         }
-    }
-
-    let mut active_guard = state.active_pipeline.lock().await;
-    if let Some(active) = active_guard.as_ref() {
-        if active.job_id == job_id {
-            return Err("This migration is already running".into());
-        }
-        return Err("Another migration pipeline is active".into());
     }
 
     let (workspace_dir, backup_dir, telegram_destination_id, job_state) = {
@@ -549,19 +681,28 @@ pub async fn cmd_migration_resume(
     std::fs::create_dir_all(&workspace_dir)
         .map_err(|e| format!("Cannot restore migration workspace: {}", e))?;
 
+    let capabilities = crate::migration::adapters::media::preflight_media().await?;
+
     let mig_state = state.inner().clone_state();
-    let (runner, downloader, media_adapter, uploader, finalizer, cancel_token) =
-        crate::migration::adapters::factory::build_pipeline_services(
-            mig_state.db.clone(),
-            mig_state.ms_session.clone(),
-            tg_state.client.clone(),
-            tg_state.peer_cache.clone(),
-            job_id,
-            std::path::PathBuf::from(&workspace_dir),
-            std::path::PathBuf::from(&backup_dir),
-            telegram_destination_id,
-            Some(app_handle),
-        )?;
+    let services = crate::migration::adapters::factory::build_pipeline_services(
+        mig_state.db.clone(),
+        mig_state.ms_session.clone(),
+        tg_state.client.clone(),
+        tg_state.peer_cache.clone(),
+        job_id,
+        std::path::PathBuf::from(&workspace_dir),
+        std::path::PathBuf::from(&backup_dir),
+        telegram_destination_id,
+        Some(app_handle),
+        capabilities.selected_encoder,
+    );
+    let (runner, downloader, media_adapter, uploader, finalizer, cancel_token) = match services {
+        Ok(services) => services,
+        Err(error) => {
+            persist_job_setup_failure(&state.db, job_id, &error)?;
+            return Err(error);
+        }
+    };
 
     {
         let conn = state.db.lock().map_err(|e| e.to_string())?;
@@ -581,30 +722,17 @@ pub async fn cmd_migration_resume(
         stmt.next().map_err(|e| e.to_string())?;
     }
 
-    runner.clone().start(
+    register_and_spawn_pipeline(
+        mig_state,
+        job_id,
+        runner,
         downloader,
-        media_adapter.clone(),
         media_adapter,
         uploader,
         finalizer,
-    );
-    *active_guard = Some(crate::migration::ActivePipeline {
-        job_id,
-        runner: runner.clone(),
         cancel_token,
-    });
-    drop(active_guard);
-
-    tauri::async_runtime::spawn(async move {
-        if let Err(error) = runner.run_to_completion().await {
-            log::error!("Resumed pipeline failed for job {}: {}", job_id, error);
-        }
-
-        let mut active_guard = mig_state.active_pipeline.lock().await;
-        if active_guard.as_ref().map(|active| active.job_id) == Some(job_id) {
-            *active_guard = None;
-        }
-    });
+    )
+    .await?;
 
     Ok(())
 }
@@ -616,19 +744,8 @@ pub async fn cmd_migration_retry_failed(
     app_handle: tauri::AppHandle,
     job_id: i64,
 ) -> Result<(), String> {
-    // Check if a pipeline is already active
-    {
-        let guard = state.active_pipeline.lock().await;
-        if let Some(active) = guard.as_ref() {
-            if active.job_id == job_id {
-                return Err(
-                    "A pipeline is already active for this job. Stop it first before retrying."
-                        .into(),
-                );
-            }
-            return Err("Another migration pipeline is active. Stop it first.".into());
-        }
-    }
+    let _lifecycle = state.lifecycle_lock.lock().await;
+    ensure_no_active_pipeline(&state).await?;
 
     let (workspace_dir, backup_dir, telegram_destination_id, flood_wait_until, retry_items) = {
         let conn = state.db.lock().map_err(|e| e.to_string())?;
@@ -684,6 +801,31 @@ pub async fn cmd_migration_retry_failed(
         (job.0, job.1, job.2, job.3, items)
     };
 
+    let failed_folder_count = {
+        let conn = state.db.lock().map_err(|error| error.to_string())?;
+        let mut stmt = conn
+            .prepare("SELECT COUNT(*) FROM folder_queue WHERE job_id = ? AND state = 'failed'")
+            .map_err(|error| error.to_string())?;
+        stmt.bind((1, job_id)).map_err(|error| error.to_string())?;
+        if let Ok(sqlite::State::Row) = stmt.next() {
+            stmt.read::<i64, _>(0).unwrap_or(0)
+        } else {
+            0
+        }
+    };
+    if retry_items.is_empty() && failed_folder_count == 0 {
+        return Err("No retryable migration items".to_string());
+    }
+    if !std::path::Path::new(&backup_dir).is_dir() {
+        return Err(format!(
+            "Local backup directory is unavailable: {}",
+            backup_dir
+        ));
+    }
+    std::fs::create_dir_all(&workspace_dir)
+        .map_err(|error| format!("Cannot restore migration workspace: {}", error))?;
+
+    let capabilities = crate::migration::adapters::media::preflight_media().await?;
     let validator = crate::migration::adapters::media::FFmpegMediaAdapter::new(
         std::path::PathBuf::from(if cfg!(windows) {
             "ffprobe.exe"
@@ -697,6 +839,7 @@ pub async fn cmd_migration_retry_failed(
         }),
         tokio_util::sync::CancellationToken::new(),
         None,
+        capabilities.selected_encoder.clone(),
     );
     let quota_ready = flood_wait_until <= chrono::Utc::now().timestamp();
     let mut updates = Vec::new();
@@ -717,6 +860,10 @@ pub async fn cmd_migration_retry_failed(
             crate::migration::pipeline::runner::clear_processed_checkpoint(&state.db, &item)?;
         }
         updates.push((item, new_stage, retry_count + 1));
+    }
+
+    if updates.is_empty() && failed_folder_count == 0 {
+        return Err("No retryable migration items".to_string());
     }
 
     for (item, stage, new_retry) in updates {
@@ -763,58 +910,43 @@ pub async fn cmd_migration_retry_failed(
 
     // Start a new pipeline for this job
     let mig_state = state.inner().clone_state();
-    let tg_client_arc = tg_state.client.clone();
-    let tg_peer_cache_arc = tg_state.peer_cache.clone();
-
-    tauri::async_runtime::spawn(async move {
-        let (runner, downloader, media_adapter, uploader, finalizer, cancel_token) =
-            match crate::migration::adapters::factory::build_pipeline_services(
-                mig_state.db.clone(),
-                mig_state.ms_session.clone(),
-                tg_client_arc,
-                tg_peer_cache_arc,
-                job_id,
-                std::path::PathBuf::from(&workspace_dir),
-                std::path::PathBuf::from(&backup_dir),
-                telegram_destination_id,
-                Some(app_handle.clone()),
-            ) {
-                Ok(services) => services,
-                Err(e) => {
-                    log::error!("Retry: Failed to build pipeline services: {}", e);
-                    return;
-                }
-            };
-
-        runner.clone().start(
-            downloader,
-            media_adapter.clone(),
-            media_adapter,
-            uploader,
-            finalizer,
-        );
-
-        let mut active_guard = mig_state.active_pipeline.lock().await;
-        *active_guard = Some(crate::migration::ActivePipeline {
-            job_id,
-            runner: runner.clone(),
-            cancel_token,
-        });
-        drop(active_guard);
-
-        if let Err(e) = runner.run_to_completion().await {
-            log::error!("Retry: Pipeline failed for job {}: {}", job_id, e);
+    let services = crate::migration::adapters::factory::build_pipeline_services(
+        mig_state.db.clone(),
+        mig_state.ms_session.clone(),
+        tg_state.client.clone(),
+        tg_state.peer_cache.clone(),
+        job_id,
+        std::path::PathBuf::from(&workspace_dir),
+        std::path::PathBuf::from(&backup_dir),
+        telegram_destination_id,
+        Some(app_handle),
+        capabilities.selected_encoder,
+    );
+    let (runner, downloader, media_adapter, uploader, finalizer, cancel_token) = match services {
+        Ok(services) => services,
+        Err(error) => {
+            persist_job_setup_failure(&state.db, job_id, &error)?;
+            return Err(error);
         }
-
-        let mut active_guard = mig_state.active_pipeline.lock().await;
-        *active_guard = None;
-    });
+    };
+    register_and_spawn_pipeline(
+        mig_state,
+        job_id,
+        runner,
+        downloader,
+        media_adapter,
+        uploader,
+        finalizer,
+        cancel_token,
+    )
+    .await?;
 
     Ok(())
 }
 
 #[tauri::command]
 pub async fn cmd_migration_reset_database(state: State<'_, MigrationState>) -> Result<(), String> {
+    let _lifecycle = state.lifecycle_lock.lock().await;
     // Check if pipeline is running
     {
         let guard = state.active_pipeline.lock().await;
@@ -992,5 +1124,247 @@ mod resume_tests {
             PipelineStage::QueuedDownload
         );
         let _ = std::fs::remove_dir_all(root);
+    }
+}
+
+#[cfg(test)]
+mod lifecycle_tests {
+    use super::{
+        clear_active_pipeline_if_matches, ensure_no_active_pipeline, get_resumable_job_locked,
+        stop_active_pipeline,
+    };
+    use crate::migration::db::open_migration_db_at_path;
+    use crate::migration::pipeline::config::PipelineConfig;
+    use crate::migration::pipeline::runner::PipelineRunner;
+    use crate::migration::{ActivePipeline, MigrationState};
+    use std::path::PathBuf;
+    use std::sync::Arc;
+    use tokio::sync::watch;
+    use tokio_util::sync::CancellationToken;
+
+    fn test_state(name: &str) -> (Arc<MigrationState>, PathBuf) {
+        let path = std::env::temp_dir().join(format!(
+            "migration-lifecycle-{}-{}-{}.db",
+            name,
+            std::process::id(),
+            rand::random::<u64>()
+        ));
+        let db = open_migration_db_at_path(path.clone()).unwrap();
+        {
+            let conn = db.lock().unwrap();
+            conn.execute("INSERT INTO migration_jobs (id, source_folder_id, source_folder_path, telegram_destination_name, local_backup_dir, workspace_dir, state, started_at, created_at, updated_at) VALUES (1, 'root', '/', 'Saved Messages', '/tmp', '/tmp', 'running', 0, 0, 0)").unwrap();
+            conn.execute("INSERT INTO migration_jobs (id, source_folder_id, source_folder_path, telegram_destination_name, local_backup_dir, workspace_dir, state, started_at, created_at, updated_at) VALUES (2, 'root-2', '/', 'Saved Messages', '/tmp', '/tmp', 'running', 0, 0, 0)").unwrap();
+        }
+        (Arc::new(MigrationState::new(db)), path)
+    }
+
+    fn active_pipeline(
+        state: &MigrationState,
+        job_id: i64,
+    ) -> (ActivePipeline, watch::Sender<Option<Result<(), String>>>) {
+        let cancel = CancellationToken::new();
+        let runner = Arc::new(PipelineRunner::new(
+            PipelineConfig::default(),
+            state.db.clone(),
+            job_id,
+            std::env::temp_dir(),
+            std::env::temp_dir(),
+            state.ms_session.clone(),
+            cancel.clone(),
+            None,
+            None,
+        ));
+        let (completion_tx, completion) = watch::channel(None);
+        (
+            ActivePipeline {
+                job_id,
+                runner,
+                cancel_token: cancel,
+                completion,
+            },
+            completion_tx,
+        )
+    }
+
+    async fn concurrent_claims_only_one_succeeds(start_name: &str) {
+        let (state, db_path) = test_state(start_name);
+        let acquired = Arc::new(tokio::sync::Notify::new());
+        let first_state = state.clone();
+        let first_acquired = acquired.clone();
+        let first = tokio::spawn(async move {
+            let _lifecycle = first_state.lifecycle_lock.lock().await;
+            ensure_no_active_pipeline(&first_state).await.unwrap();
+            first_acquired.notify_one();
+            tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+            let (active, sender) = active_pipeline(&first_state, 1);
+            *first_state.active_pipeline.lock().await = Some(active);
+            sender
+        });
+        acquired.notified().await;
+        let second_state = state.clone();
+        let second = tokio::spawn(async move {
+            let _lifecycle = second_state.lifecycle_lock.lock().await;
+            ensure_no_active_pipeline(&second_state).await
+        });
+        let sender = first.await.unwrap();
+        assert!(second.await.unwrap().is_err());
+        drop(sender);
+        drop(state);
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[tokio::test]
+    async fn two_concurrent_starts_create_only_one_active_pipeline() {
+        let path = std::env::temp_dir().join(format!(
+            "migration-two-starts-{}-{}.db",
+            std::process::id(),
+            rand::random::<u64>()
+        ));
+        let state = Arc::new(MigrationState::new(
+            open_migration_db_at_path(path.clone()).unwrap(),
+        ));
+        let acquired = Arc::new(tokio::sync::Notify::new());
+        let first_state = state.clone();
+        let first_acquired = acquired.clone();
+        let first = tokio::spawn(async move {
+            let _lifecycle = first_state.lifecycle_lock.lock().await;
+            ensure_no_active_pipeline(&first_state).await?;
+            first_acquired.notify_one();
+            tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+            let job_id = {
+                let conn = first_state.db.lock().map_err(|error| error.to_string())?;
+                crate::migration::db::create_job(
+                    &conn,
+                    "root",
+                    "/",
+                    None,
+                    "Saved Messages",
+                    "/tmp",
+                    "/tmp",
+                )?
+            };
+            let (active, sender) = active_pipeline(&first_state, job_id);
+            *first_state.active_pipeline.lock().await = Some(active);
+            Ok::<_, String>(sender)
+        });
+        acquired.notified().await;
+        let second_state = state.clone();
+        let second = tokio::spawn(async move {
+            let _lifecycle = second_state.lifecycle_lock.lock().await;
+            ensure_no_active_pipeline(&second_state).await?;
+            let conn = second_state.db.lock().map_err(|error| error.to_string())?;
+            crate::migration::db::create_job(
+                &conn,
+                "root-2",
+                "/",
+                None,
+                "Saved Messages",
+                "/tmp",
+                "/tmp",
+            )
+        });
+        let sender = first.await.unwrap().unwrap();
+        assert!(second.await.unwrap().is_err());
+        let conn = state.db.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT COUNT(*) FROM migration_jobs").unwrap();
+        stmt.next().unwrap();
+        assert_eq!(stmt.read::<i64, _>(0).unwrap(), 1);
+        drop(stmt);
+        drop(conn);
+        drop(sender);
+        drop(state);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn concurrent_start_and_retry_create_only_one_active_pipeline() {
+        concurrent_claims_only_one_succeeds("start-retry").await;
+    }
+
+    #[tokio::test]
+    async fn old_pipeline_completion_does_not_clear_new_active_pipeline() {
+        let (state, db_path) = test_state("old-completion");
+        let (active, sender) = active_pipeline(&state, 2);
+        *state.active_pipeline.lock().await = Some(active);
+        clear_active_pipeline_if_matches(&state, 1).await;
+        assert_eq!(
+            state
+                .active_pipeline
+                .lock()
+                .await
+                .as_ref()
+                .map(|pipeline| pipeline.job_id),
+            Some(2)
+        );
+        drop(sender);
+        drop(state);
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[tokio::test]
+    async fn stop_waits_for_completion_and_stopped_job_state() {
+        let (state, db_path) = test_state("stop-completion");
+        let (active, completion_tx) = active_pipeline(&state, 1);
+        let cancel = active.cancel_token.clone();
+        *state.active_pipeline.lock().await = Some(active);
+        let completion_state = state.clone();
+        tokio::spawn(async move {
+            cancel.cancelled().await;
+            {
+                let conn = completion_state.db.lock().unwrap();
+                conn.execute("UPDATE migration_jobs SET state = 'stopped' WHERE id = 1")
+                    .unwrap();
+            }
+            clear_active_pipeline_if_matches(&completion_state, 1).await;
+            completion_tx.send(Some(Ok(()))).unwrap();
+        });
+
+        let _lifecycle = state.lifecycle_lock.lock().await;
+        tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            stop_active_pipeline(&state),
+        )
+        .await
+        .expect("stop command semantics timed out")
+        .unwrap();
+        assert!(state.active_pipeline.lock().await.is_none());
+        drop(_lifecycle);
+        drop(state);
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[tokio::test]
+    async fn get_resumable_waits_for_start_setup_and_keeps_running_job() {
+        let (state, db_path) = test_state("resumable-race");
+        let acquired = Arc::new(tokio::sync::Notify::new());
+        let setup_state = state.clone();
+        let setup_acquired = acquired.clone();
+        let setup = tokio::spawn(async move {
+            let _lifecycle = setup_state.lifecycle_lock.lock().await;
+            setup_acquired.notify_one();
+            tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+            let (active, sender) = active_pipeline(&setup_state, 1);
+            *setup_state.active_pipeline.lock().await = Some(active);
+            sender
+        });
+        acquired.notified().await;
+        let resumable_state = state.clone();
+        let resumable = tokio::spawn(async move {
+            let _lifecycle = resumable_state.lifecycle_lock.lock().await;
+            get_resumable_job_locked(&resumable_state).await
+        });
+        let sender = setup.await.unwrap();
+        assert_eq!(resumable.await.unwrap().unwrap(), Some(1));
+        let conn = state.db.lock().unwrap();
+        let mut stmt = conn
+            .prepare("SELECT state FROM migration_jobs WHERE id = 1")
+            .unwrap();
+        stmt.next().unwrap();
+        assert_eq!(stmt.read::<String, _>(0).unwrap(), "running");
+        drop(stmt);
+        drop(conn);
+        drop(sender);
+        drop(state);
+        let _ = std::fs::remove_file(db_path);
     }
 }

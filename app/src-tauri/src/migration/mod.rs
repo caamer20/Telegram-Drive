@@ -12,7 +12,7 @@ pub mod telegram_idempotency;
 
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
-use tokio::sync::Mutex as TokioMutex;
+use tokio::sync::{watch, Mutex as TokioMutex};
 
 use crate::migration::pipeline::runner::PipelineRunner;
 
@@ -21,6 +21,7 @@ pub struct ActivePipeline {
     pub job_id: i64,
     pub runner: Arc<PipelineRunner>,
     pub cancel_token: tokio_util::sync::CancellationToken,
+    pub completion: watch::Receiver<Option<Result<(), String>>>,
 }
 
 pub struct MigrationState {
@@ -34,6 +35,8 @@ pub struct MigrationState {
     pub pause_token: Arc<AtomicBool>,
     /// Active pipeline run (only one at a time)
     pub active_pipeline: Arc<TokioMutex<Option<ActivePipeline>>>,
+    /// Serializes setup, teardown, resume, retry, and database reset operations.
+    pub lifecycle_lock: Arc<TokioMutex<()>>,
 }
 
 impl MigrationState {
@@ -54,6 +57,7 @@ impl MigrationState {
             cancel_token: tokio_util::sync::CancellationToken::new(),
             pause_token: Arc::new(AtomicBool::new(false)),
             active_pipeline: Arc::new(TokioMutex::new(None)),
+            lifecycle_lock: Arc::new(TokioMutex::new(())),
         }
     }
 
@@ -67,6 +71,7 @@ impl MigrationState {
             cancel_token: self.cancel_token.clone(),
             pause_token: self.pause_token.clone(),
             active_pipeline: self.active_pipeline.clone(),
+            lifecycle_lock: self.lifecycle_lock.clone(),
         })
     }
 }

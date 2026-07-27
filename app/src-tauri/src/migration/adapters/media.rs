@@ -7,7 +7,8 @@
 
 use crate::migration::events::{emit_item_progress, now_millis, ItemProgressPayload};
 use crate::migration::pipeline::stages::{
-    validate_canonical_output, CanonicalVideoProfile, MediaInspector, VideoMetadata, VideoProcessor,
+    validate_canonical_output, CanonicalVideoProfile, MediaInspector, VideoMetadata,
+    VideoProcessRequest, VideoProcessor,
 };
 use serde::Deserialize;
 use std::future::Future;
@@ -136,6 +137,107 @@ impl ProcessRunner for RealProcessRunner {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MediaCapabilities {
+    pub ffmpeg_available: bool,
+    pub ffprobe_available: bool,
+    pub hevc_videotoolbox: bool,
+    pub libx265: bool,
+    pub selected_encoder: String,
+}
+
+fn select_hevc_encoder(
+    is_macos: bool,
+    videotoolbox: bool,
+    libx265: bool,
+) -> Result<String, String> {
+    if is_macos && videotoolbox {
+        Ok("hevc_videotoolbox".to_string())
+    } else if libx265 {
+        Ok("libx265".to_string())
+    } else {
+        Err(
+            "FFmpeg preflight failed: no HEVC encoder available (hevc_videotoolbox or libx265)"
+                .to_string(),
+        )
+    }
+}
+
+pub async fn preflight_media_with_runner(
+    ffmpeg_path: &Path,
+    ffprobe_path: &Path,
+    runner: Arc<dyn ProcessRunner>,
+    is_macos: bool,
+) -> Result<MediaCapabilities, String> {
+    let cancel = tokio_util::sync::CancellationToken::new();
+    let version_args = vec!["-version".to_string()];
+    let ffmpeg = ffmpeg_path.to_string_lossy().to_string();
+    let ffprobe = ffprobe_path.to_string_lossy().to_string();
+    let ffmpeg_version = runner
+        .run_command(&ffmpeg, &version_args, None, cancel.clone())
+        .await
+        .map_err(|error| format!("FFmpeg preflight failed: {}", error))?;
+    if ffmpeg_version.exit_code != 0 {
+        return Err(format!(
+            "FFmpeg preflight failed: ffmpeg -version exited {}",
+            ffmpeg_version.exit_code
+        ));
+    }
+    let ffprobe_version = runner
+        .run_command(&ffprobe, &version_args, None, cancel.clone())
+        .await
+        .map_err(|error| format!("FFprobe preflight failed: {}", error))?;
+    if ffprobe_version.exit_code != 0 {
+        return Err(format!(
+            "FFprobe preflight failed: ffprobe -version exited {}",
+            ffprobe_version.exit_code
+        ));
+    }
+    let encoder_args = vec!["-hide_banner".to_string(), "-encoders".to_string()];
+    let encoders = runner
+        .run_command(&ffmpeg, &encoder_args, None, cancel)
+        .await
+        .map_err(|error| format!("FFmpeg encoder preflight failed: {}", error))?;
+    if encoders.exit_code != 0 {
+        return Err(format!(
+            "FFmpeg encoder preflight failed: ffmpeg -encoders exited {}",
+            encoders.exit_code
+        ));
+    }
+    let mut encoder_text = String::from_utf8_lossy(&encoders.stdout).to_string();
+    encoder_text.push_str(&String::from_utf8_lossy(&encoders.stderr));
+    let hevc_videotoolbox = encoder_text.contains("hevc_videotoolbox");
+    let libx265 = encoder_text.contains("libx265");
+    let selected_encoder = select_hevc_encoder(is_macos, hevc_videotoolbox, libx265)?;
+    Ok(MediaCapabilities {
+        ffmpeg_available: true,
+        ffprobe_available: true,
+        hevc_videotoolbox,
+        libx265,
+        selected_encoder,
+    })
+}
+
+pub async fn preflight_media() -> Result<MediaCapabilities, String> {
+    let ffmpeg_path = PathBuf::from(if cfg!(windows) {
+        "ffmpeg.exe"
+    } else {
+        "ffmpeg"
+    });
+    let ffprobe_path = PathBuf::from(if cfg!(windows) {
+        "ffprobe.exe"
+    } else {
+        "ffprobe"
+    });
+    preflight_media_with_runner(
+        &ffmpeg_path,
+        &ffprobe_path,
+        Arc::new(RealProcessRunner),
+        cfg!(target_os = "macos"),
+    )
+    .await
+}
+
 // ---------------------------------------------------------------------------
 // Production FFmpeg adapter
 // ---------------------------------------------------------------------------
@@ -155,20 +257,8 @@ impl FFmpegMediaAdapter {
         ffmpeg_path: PathBuf,
         cancel_token: tokio_util::sync::CancellationToken,
         app_handle: Option<tauri::AppHandle>,
+        hevc_encoder: String,
     ) -> Self {
-        let mut hevc_encoder = "libx265".to_string();
-        if cfg!(target_os = "macos") {
-            if let Ok(output) = std::process::Command::new(&ffmpeg_path)
-                .args(["-encoders"])
-                .output()
-            {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                if stdout.contains("hevc_videotoolbox") {
-                    hevc_encoder = "hevc_videotoolbox".to_string();
-                }
-            }
-        }
-
         Self {
             ffprobe_path,
             ffmpeg_path,
@@ -214,10 +304,10 @@ impl FFmpegMediaAdapter {
         output_path: &Path,
         is_10bit: bool,
         encoder: &str,
-        source_fps: f64,
+        metadata: &VideoMetadata,
     ) -> Vec<String> {
         let mut filter_chain = "scale=w='min(1920,iw)':h='min(1080,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2".to_string();
-        if source_fps > 60.0 {
+        if metadata.fps > 60.0 {
             filter_chain = format!("{},fps=60", filter_chain);
         }
 
@@ -227,8 +317,6 @@ impl FFmpegMediaAdapter {
             input_path.to_string_lossy().to_string(),
             "-map".to_string(),
             "0:v:0".to_string(),
-            "-map".to_string(),
-            "0:a:0?".to_string(),
             "-sn".to_string(),
             "-dn".to_string(),
             "-vf".to_string(),
@@ -244,8 +332,25 @@ impl FFmpegMediaAdapter {
         if encoder == "hevc_videotoolbox" {
             args.push("-profile:v".to_string());
             args.push(profile.to_string());
-            args.push("-q:v".to_string());
-            args.push("60".to_string());
+            let short_edge = metadata.width.min(metadata.height);
+            let mut bitrate = if short_edge <= 480 {
+                1_200_000u64
+            } else if short_edge <= 720 {
+                2_500_000u64
+            } else {
+                4_500_000u64
+            };
+            if metadata.fps > 30.0 {
+                bitrate = bitrate.saturating_mul(5) / 4;
+            }
+            args.extend([
+                "-b:v".to_string(),
+                bitrate.to_string(),
+                "-maxrate".to_string(),
+                (bitrate.saturating_mul(3) / 2).to_string(),
+                "-bufsize".to_string(),
+                bitrate.saturating_mul(2).to_string(),
+            ]);
         } else {
             args.push("-preset".to_string());
             args.push("faster".to_string());
@@ -259,10 +364,25 @@ impl FFmpegMediaAdapter {
 
         args.push("-pix_fmt".to_string());
         args.push(pix_fmt.to_string());
-        args.push("-c:a".to_string());
-        args.push("aac".to_string());
-        args.push("-b:a".to_string());
-        args.push("128k".to_string());
+        if metadata.audio_codec.is_empty() || metadata.audio_channels == 0 {
+            args.push("-an".to_string());
+        } else {
+            let audio_bitrate = match metadata.audio_channels {
+                0 | 1 => "64k",
+                2 => "128k",
+                _ => "256k",
+            };
+            args.extend([
+                "-map".to_string(),
+                "0:a:0?".to_string(),
+                "-c:a".to_string(),
+                "aac".to_string(),
+                "-b:a".to_string(),
+                audio_bitrate.to_string(),
+                "-ar".to_string(),
+                "48000".to_string(),
+            ]);
+        }
         args.push("-max_muxing_queue_size".to_string());
         args.push("1024".to_string());
         args.push("-movflags".to_string());
@@ -312,34 +432,27 @@ impl MediaInspector for FFmpegMediaAdapter {
 impl VideoProcessor for FFmpegMediaAdapter {
     fn process_video(
         &self,
-        input_path: &std::path::Path,
-        output_path: &std::path::Path,
-        decision: &str,
-        item_id: i64,
-        job_id: i64,
-        duration: f64,
-        source_fps: f64,
-        item_name: &str,
+        request: VideoProcessRequest,
     ) -> Pin<Box<dyn Future<Output = Result<String, String>> + Send>> {
         let ffmpeg = self.ffmpeg_path.to_string_lossy().to_string();
-        let is_10bit = match decision {
+        let is_10bit = match request.decision.as_str() {
             "canonical_transcode_main10" => true,
             _ => false,
         };
-        let args = match decision {
+        let args = match request.decision.as_str() {
             "canonical_transcode_main8" => Self::build_transcode_args(
-                input_path,
-                output_path,
+                &request.input_path,
+                &request.output_path,
                 false,
                 &self.hevc_encoder,
-                source_fps,
+                &request.metadata,
             ),
             "canonical_transcode_main10" => Self::build_transcode_args(
-                input_path,
-                output_path,
+                &request.input_path,
+                &request.output_path,
                 true,
                 &self.hevc_encoder,
-                source_fps,
+                &request.metadata,
             ),
             other => {
                 let msg = format!("Processor: unsupported decision: {}", other);
@@ -348,20 +461,26 @@ impl VideoProcessor for FFmpegMediaAdapter {
         };
         let runner = self.process_runner.clone();
         let cancel = self.cancel_token.clone();
-        let output_path_owned = output_path.to_path_buf();
+        let output_path_owned = request.output_path.clone();
         let app_handle = self.app_handle.clone();
-        let duration_us = duration * 1_000_000.0;
-        let item_name = item_name.to_string();
+        let duration_us = request.metadata.duration * 1_000_000.0;
+        let item_name = request.item_name.clone();
+        let item_id = request.item_id;
+        let job_id = request.job_id;
         let ffprobe_path = self.ffprobe_path.to_string_lossy().to_string();
         let process_runner = self.process_runner.clone();
-        let source_fps_val = source_fps;
+        let source_fps_val = request.metadata.fps;
+        let source_duration = request.metadata.duration;
 
         Box::pin(async move {
             if cancel.is_cancelled() {
                 return Err("Processor: cancelled".to_string());
             }
 
-            let on_progress: Option<Arc<dyn Fn(&str) + Send + Sync>> = if let Some(app) = app_handle
+            let progress_app = app_handle.clone();
+            let progress_item_name = item_name.clone();
+            let on_progress: Option<Arc<dyn Fn(&str) + Send + Sync>> = if let Some(app) =
+                progress_app
             {
                 let last_emit_ms = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
                 Some(Arc::new(move |line: &str| {
@@ -381,7 +500,7 @@ impl VideoProcessor for FFmpegMediaAdapter {
                                     ItemProgressPayload {
                                         item_id,
                                         job_id,
-                                        item_name: item_name.clone(),
+                                        item_name: progress_item_name.clone(),
                                         phase: "processing".to_string(),
                                         percent,
                                         bytes_done: (time_us / 1_000_000.0 * source_fps_val) as u64,
@@ -469,7 +588,7 @@ impl VideoProcessor for FFmpegMediaAdapter {
                             };
                             // Create source metadata with just duration for tolerance check
                             let source_meta = VideoMetadata {
-                                duration,
+                                duration: source_duration,
                                 fps: source_fps_val,
                                 ..Default::default()
                             };
@@ -505,6 +624,23 @@ impl VideoProcessor for FFmpegMediaAdapter {
                 }
             }
 
+            if let Some(app) = app_handle.as_ref() {
+                emit_item_progress(
+                    app,
+                    ItemProgressPayload {
+                        item_id,
+                        job_id,
+                        item_name,
+                        phase: "processing".to_string(),
+                        percent: 100.0,
+                        bytes_done: (source_duration * source_fps_val) as u64,
+                        bytes_total: (source_duration * source_fps_val) as u64,
+                        speed_bytes_per_sec: 0.0,
+                        timestamp: now_millis(),
+                    },
+                );
+            }
+
             Ok(hash_hex)
         })
     }
@@ -534,6 +670,8 @@ struct ProbeStream {
     color_transfer: Option<String>,
     color_primaries: Option<String>,
     r_frame_rate: Option<String>,
+    channels: Option<u32>,
+    sample_rate: Option<String>,
     #[serde(default)]
     side_data_list: Vec<ProbeSideData>,
 }
@@ -667,6 +805,11 @@ pub fn parse_ffprobe_json(bytes: &[u8]) -> Result<VideoMetadata, String> {
                 .and_then(|a| a.codec_name.as_deref())
                 .map(|n| n.to_ascii_lowercase())
                 .unwrap_or_default(),
+            audio_channels: audio.and_then(|stream| stream.channels).unwrap_or(0),
+            audio_sample_rate: audio
+                .and_then(|stream| stream.sample_rate.as_deref())
+                .and_then(|value| value.parse::<u32>().ok())
+                .unwrap_or(0),
             duration,
             width,
             height,
@@ -712,6 +855,11 @@ pub fn parse_ffprobe_json(bytes: &[u8]) -> Result<VideoMetadata, String> {
                 .and_then(|a| a.codec_name.as_deref())
                 .map(|n| n.to_ascii_lowercase())
                 .unwrap_or_default(),
+            audio_channels: audio.and_then(|stream| stream.channels).unwrap_or(0),
+            audio_sample_rate: audio
+                .and_then(|stream| stream.sample_rate.as_deref())
+                .and_then(|value| value.parse::<u32>().ok())
+                .unwrap_or(0),
             duration: 0.0,
             width: 0,
             height: 0,
@@ -743,6 +891,59 @@ mod tests {
     use super::*;
     use crate::migration::pipeline::stages::{validate_canonical_output, CanonicalVideoProfile};
 
+    fn transcode_metadata(width: u32, height: u32, fps: f64, channels: u32) -> VideoMetadata {
+        VideoMetadata {
+            duration: 60.0,
+            fps,
+            width,
+            height,
+            audio_codec: if channels == 0 { "" } else { "aac" }.to_string(),
+            audio_channels: channels,
+            audio_sample_rate: if channels == 0 { 0 } else { 44_100 },
+            ..Default::default()
+        }
+    }
+
+    fn arg_value<'a>(args: &'a [String], key: &str) -> Option<&'a str> {
+        args.iter()
+            .position(|arg| arg == key)
+            .and_then(|index| args.get(index + 1))
+            .map(String::as_str)
+    }
+
+    struct CapabilityRunner {
+        encoders: String,
+        fail_program: Option<String>,
+    }
+
+    impl ProcessRunner for CapabilityRunner {
+        fn run_command(
+            &self,
+            program: &str,
+            args: &[String],
+            _on_progress: Option<Arc<dyn Fn(&str) + Send + Sync>>,
+            _cancel_token: tokio_util::sync::CancellationToken,
+        ) -> Pin<Box<dyn Future<Output = Result<ProcessOutput, String>> + Send + '_>> {
+            let program = program.to_string();
+            let args = args.to_vec();
+            Box::pin(async move {
+                if self.fail_program.as_deref() == Some(program.as_str()) {
+                    return Err(format!("{} missing", program));
+                }
+                let stdout = if args.iter().any(|arg| arg == "-encoders") {
+                    self.encoders.as_bytes().to_vec()
+                } else {
+                    b"version".to_vec()
+                };
+                Ok(ProcessOutput {
+                    exit_code: 0,
+                    stdout,
+                    stderr: Vec::new(),
+                })
+            })
+        }
+    }
+
     fn make_ffprobe_json(
         video_codec: &str,
         profile: &str,
@@ -770,6 +971,8 @@ mod tests {
             }, {
                 "codec_type": "audio",
                 "codec_name": audio_codec,
+                "channels": 2,
+                "sample_rate": "44100",
             }],
             "format": {
                 "format_name": format_name,
@@ -801,6 +1004,8 @@ mod tests {
         assert!(meta.is_canonical_main8());
         assert_eq!(meta.fps, 30000.0 / 1001.0);
         assert_eq!(meta.container_format_names, "mov,mp4,m4a,3gp,3g2,mj2");
+        assert_eq!(meta.audio_channels, 2);
+        assert_eq!(meta.audio_sample_rate, 44_100);
     }
 
     #[test]
@@ -892,6 +1097,133 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_real_ffmpeg_cancellation_removes_partial_and_keeps_original() {
+        if std::process::Command::new("ffmpeg")
+            .arg("-version")
+            .output()
+            .is_err()
+        {
+            return;
+        }
+        let capabilities = match preflight_media().await {
+            Ok(capabilities) => capabilities,
+            Err(_) => return,
+        };
+        let root = std::env::temp_dir().join(format!(
+            "real-ffmpeg-cancel-{}-{}",
+            std::process::id(),
+            rand::random::<u64>()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let input = root.join("original.mp4");
+        let output = root.join("partial.processed.mp4");
+        let generated = std::process::Command::new("ffmpeg")
+            .args([
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc2=size=1920x1080:rate=60",
+                "-t",
+                "8",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "ultrafast",
+                "-pix_fmt",
+                "yuv420p",
+                input.to_str().unwrap(),
+            ])
+            .status()
+            .unwrap();
+        if !generated.success() {
+            let _ = std::fs::remove_dir_all(root);
+            return;
+        }
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let adapter = FFmpegMediaAdapter::new(
+            PathBuf::from("ffprobe"),
+            PathBuf::from("ffmpeg"),
+            cancel.clone(),
+            None,
+            capabilities.selected_encoder,
+        );
+        let cancel_task = tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            cancel.cancel();
+        });
+        let result = adapter
+            .process_video(VideoProcessRequest {
+                input_path: input.clone(),
+                output_path: output.clone(),
+                decision: "canonical_transcode_main8".to_string(),
+                item_id: 1,
+                job_id: 1,
+                item_name: "original.mp4".to_string(),
+                metadata: transcode_metadata(1920, 1080, 60.0, 0),
+            })
+            .await;
+        cancel_task.await.unwrap();
+        assert!(result.unwrap_err().contains("cancelled"));
+        assert!(input.is_file());
+        assert!(!output.exists());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn test_media_preflight_selects_available_encoder() {
+        let runner = Arc::new(CapabilityRunner {
+            encoders: "V....D hevc_videotoolbox\nV....D libx265".to_string(),
+            fail_program: None,
+        });
+        let mac = preflight_media_with_runner(
+            Path::new("ffmpeg"),
+            Path::new("ffprobe"),
+            runner.clone(),
+            true,
+        )
+        .await
+        .unwrap();
+        assert_eq!(mac.selected_encoder, "hevc_videotoolbox");
+        let non_mac =
+            preflight_media_with_runner(Path::new("ffmpeg"), Path::new("ffprobe"), runner, false)
+                .await
+                .unwrap();
+        assert_eq!(non_mac.selected_encoder, "libx265");
+
+        let no_encoder = Arc::new(CapabilityRunner {
+            encoders: "V....D h264".to_string(),
+            fail_program: None,
+        });
+        assert!(preflight_media_with_runner(
+            Path::new("ffmpeg"),
+            Path::new("ffprobe"),
+            no_encoder,
+            true,
+        )
+        .await
+        .unwrap_err()
+        .contains("no HEVC encoder"));
+
+        let missing_probe = Arc::new(CapabilityRunner {
+            encoders: "V....D libx265".to_string(),
+            fail_program: Some("ffprobe".to_string()),
+        });
+        assert!(preflight_media_with_runner(
+            Path::new("ffmpeg"),
+            Path::new("ffprobe"),
+            missing_probe,
+            false,
+        )
+        .await
+        .unwrap_err()
+        .contains("FFprobe preflight failed"));
+    }
+
+    #[tokio::test]
     async fn test_unknown_legacy_decision_fails_clearly() {
         let adapter = FFmpegMediaAdapter::new_with_runner(
             PathBuf::from("ffprobe"),
@@ -901,16 +1233,15 @@ mod tests {
             None,
         );
         let error = adapter
-            .process_video(
-                std::path::Path::new("input.mp4"),
-                std::path::Path::new("output.mp4"),
-                "transcode",
-                1,
-                1,
-                1.0,
-                30.0,
-                "input.mp4",
-            )
+            .process_video(VideoProcessRequest {
+                input_path: PathBuf::from("input.mp4"),
+                output_path: PathBuf::from("output.mp4"),
+                decision: "transcode".to_string(),
+                item_id: 1,
+                job_id: 1,
+                item_name: "input.mp4".to_string(),
+                metadata: transcode_metadata(1920, 1080, 30.0, 2),
+            })
             .await
             .unwrap_err();
         assert!(error.contains("unsupported decision: transcode"));
@@ -990,7 +1321,7 @@ mod tests {
             std::path::Path::new("out.mp4"),
             false,
             "libx265",
-            24.0,
+            &transcode_metadata(1920, 1080, 24.0, 2),
         );
         let args_str = args.join(" ");
         assert!(
@@ -1011,7 +1342,7 @@ mod tests {
             std::path::Path::new("out.mp4"),
             false,
             "libx265",
-            120.0,
+            &transcode_metadata(1920, 1080, 120.0, 2),
         );
         let args_str = args.join(" ");
         assert!(
@@ -1028,7 +1359,7 @@ mod tests {
             std::path::Path::new("out.mp4"),
             false,
             "libx265",
-            60.0,
+            &transcode_metadata(1920, 1080, 60.0, 2),
         );
         let args_str = args.join(" ");
         assert!(
@@ -1045,7 +1376,7 @@ mod tests {
             std::path::Path::new("out.mp4"),
             true,
             "libx265",
-            30.0,
+            &transcode_metadata(1920, 1080, 30.0, 2),
         );
         let args_str = args.join(" ");
         assert!(args_str.contains("yuv420p10le"));
@@ -1060,7 +1391,7 @@ mod tests {
             std::path::Path::new("out.mp4"),
             false,
             "hevc_videotoolbox",
-            30.0,
+            &transcode_metadata(1920, 1080, 30.0, 2),
         );
         let args_str = args.join(" ");
         assert!(args_str.contains("hevc_videotoolbox"));
@@ -1070,6 +1401,55 @@ mod tests {
             "VideoToolbox should not use preset"
         );
         assert!(!args_str.contains("crf"), "VideoToolbox should not use crf");
+    }
+
+    #[test]
+    fn test_videotoolbox_bitrate_policy_by_resolution_and_fps() {
+        for (width, height, fps, expected) in [
+            (854, 480, 30.0, 1_200_000u64),
+            (1280, 720, 30.0, 2_500_000u64),
+            (1920, 1080, 30.0, 4_500_000u64),
+            (1920, 1080, 60.0, 5_625_000u64),
+        ] {
+            let args = FFmpegMediaAdapter::build_transcode_args(
+                Path::new("in.mp4"),
+                Path::new("out.mp4"),
+                false,
+                "hevc_videotoolbox",
+                &transcode_metadata(width, height, fps, 2),
+            );
+            let bitrate = expected.to_string();
+            let maxrate = (expected * 3 / 2).to_string();
+            let bufsize = (expected * 2).to_string();
+            assert_eq!(arg_value(&args, "-b:v"), Some(bitrate.as_str()));
+            assert_eq!(arg_value(&args, "-maxrate"), Some(maxrate.as_str()));
+            assert_eq!(arg_value(&args, "-bufsize"), Some(bufsize.as_str()));
+            assert!(!args.iter().any(|arg| arg == "-q:v"));
+        }
+    }
+
+    #[test]
+    fn test_audio_policy_for_none_mono_stereo_and_multichannel() {
+        for (channels, expected_bitrate) in [(1, "64k"), (2, "128k"), (6, "256k")] {
+            let args = FFmpegMediaAdapter::build_transcode_args(
+                Path::new("in.mp4"),
+                Path::new("out.mp4"),
+                false,
+                "libx265",
+                &transcode_metadata(1280, 720, 30.0, channels),
+            );
+            assert_eq!(arg_value(&args, "-b:a"), Some(expected_bitrate));
+            assert_eq!(arg_value(&args, "-ar"), Some("48000"));
+        }
+        let no_audio = FFmpegMediaAdapter::build_transcode_args(
+            Path::new("in.mp4"),
+            Path::new("out.mp4"),
+            false,
+            "libx265",
+            &transcode_metadata(1280, 720, 30.0, 0),
+        );
+        assert!(no_audio.iter().any(|arg| arg == "-an"));
+        assert!(!no_audio.iter().any(|arg| arg == "-c:a"));
     }
 
     #[test]

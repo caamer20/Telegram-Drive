@@ -45,6 +45,7 @@ pub fn build_pipeline_services(
     backup_dir: PathBuf,
     destination_folder_id: Option<i64>,
     app_handle: Option<tauri::AppHandle>,
+    hevc_encoder: String,
 ) -> Result<
     (
         Arc<PipelineRunner>,
@@ -86,6 +87,7 @@ pub fn build_pipeline_services(
         ffmpeg_path,
         cancel_token.clone(),
         app_handle.clone(),
+        hevc_encoder,
     ));
 
     let telegram_adapter = Arc::new(TelegramProductionAdapter::new(

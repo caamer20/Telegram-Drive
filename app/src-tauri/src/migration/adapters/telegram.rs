@@ -323,7 +323,7 @@ impl TelegramUploader for TelegramProductionAdapter {
             let client_for_upload = tg_client.clone();
             let fname_for_upload = filename.clone();
             let progress_cancel = tokio_util::sync::CancellationToken::new();
-            let progress_handle = app_handle.map(|app| {
+            let progress_handle = app_handle.clone().map(|app| {
                 let progress_cancel = progress_cancel.clone();
                 let counter = bytes_counter.clone();
                 let progress_name = filename.clone();
@@ -389,7 +389,25 @@ impl TelegramUploader for TelegramProductionAdapter {
             let upload_result = upload_result?;
 
             let uploaded_file = match upload_result {
-                Ok(f) => f,
+                Ok(f) => {
+                    if let Some(app) = app_handle.as_ref() {
+                        emit_item_progress(
+                            app,
+                            ItemProgressPayload {
+                                job_id,
+                                item_id,
+                                item_name: filename.clone(),
+                                phase: "uploading".to_string(),
+                                percent: 100.0,
+                                bytes_done: total_size,
+                                bytes_total: total_size,
+                                speed_bytes_per_sec: 0.0,
+                                timestamp: now_millis(),
+                            },
+                        );
+                    }
+                    f
+                }
                 Err(e) => {
                     let err_msg = crate::commands::utils::map_error(e);
                     let upload_err = TelegramProductionAdapter::map_grammers_error(&err_msg);

@@ -104,6 +104,8 @@ pub struct VideoMetadata {
     pub container_format_names: String,
     pub video_codec: String,
     pub audio_codec: String,
+    pub audio_channels: u32,
+    pub audio_sample_rate: u32,
     pub duration: f64,
     pub width: u32,
     pub height: u32,
@@ -349,17 +351,21 @@ pub trait MediaInspector: Send + Sync {
     ) -> Pin<Box<dyn Future<Output = Result<VideoMetadata, String>> + Send>>;
 }
 
+#[derive(Debug, Clone)]
+pub struct VideoProcessRequest {
+    pub input_path: PathBuf,
+    pub output_path: PathBuf,
+    pub decision: String,
+    pub item_id: i64,
+    pub job_id: i64,
+    pub item_name: String,
+    pub metadata: VideoMetadata,
+}
+
 pub trait VideoProcessor: Send + Sync {
     fn process_video(
         &self,
-        input_path: &Path,
-        output_path: &Path,
-        decision: &str,
-        item_id: i64,
-        job_id: i64,
-        duration: f64,
-        source_fps: f64,
-        item_name: &str,
+        request: VideoProcessRequest,
     ) -> Pin<Box<dyn Future<Output = Result<String, String>> + Send>>;
 }
 

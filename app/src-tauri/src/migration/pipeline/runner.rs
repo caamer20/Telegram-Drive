@@ -6,7 +6,7 @@ use crate::migration::pipeline::config::PipelineConfig;
 use crate::migration::pipeline::stages::{
     validate_canonical_output, CanonicalVideoProfile, LocalFinalizer, MediaInspector, PipelineItem,
     PipelineStage, SourceDownloader, TelegramMediaKind, TelegramUploadRequest,
-    TelegramUploadResult, TelegramUploader, VideoProcessor,
+    TelegramUploadResult, TelegramUploader, VideoProcessRequest, VideoProcessor,
 };
 use crate::migration::pipeline::transitions::update_item_pipeline_stage;
 use crate::migration::quota_reserve::{commit_quota, release_quota, reserve_quota};
@@ -181,6 +181,29 @@ pub(crate) async fn validate_processed_artifact(
         output.clone()
     };
     validate_canonical_output(&source, &output, profile).is_ok()
+}
+
+pub(crate) async fn validate_passthrough_artifact(
+    inspector: &dyn MediaInspector,
+    item: &PipelineItem,
+) -> Result<bool, String> {
+    let original_path = item
+        .local_artifact_path
+        .as_deref()
+        .ok_or_else(|| "Passthrough original artifact is missing".to_string())?;
+    if !artifact_is_valid_file(Some(original_path)) {
+        return Err("Passthrough original artifact is missing or empty".to_string());
+    }
+    let metadata = inspector
+        .inspect_file(std::path::Path::new(original_path))
+        .await
+        .map_err(|error| format!("Passthrough FFprobe validation failed: {}", error))?;
+    let canonical = match item.video_decision.as_deref() {
+        Some("canonical_passthrough_main8") => metadata.is_canonical_main8(),
+        Some("canonical_passthrough_main10") => metadata.is_canonical_main10(),
+        _ => return Ok(false),
+    };
+    Ok(canonical && metadata.is_mp4_source(std::path::Path::new(original_path)))
 }
 
 pub(crate) fn clear_processed_checkpoint(
@@ -397,6 +420,7 @@ impl PipelineRunner {
             job_id: self.job_id,
             ms_session: self.ms_session.clone(),
             cancel_token: self.cancel_token.clone(),
+            config: self.config.clone(),
         };
         let crawler_arc = Arc::new(crawler);
 
@@ -562,6 +586,30 @@ impl PipelineRunner {
             }
         }
 
+        drop(stmt);
+        let (failed_folders, failed_root_folders, folder_error) = {
+            let mut folder_stmt = conn
+                .prepare(
+                    "SELECT COUNT(*), \
+                            COALESCE(SUM(CASE WHEN parent_id IS NULL THEN 1 ELSE 0 END), 0), \
+                            GROUP_CONCAT(COALESCE(last_error, folder_path), '; ') \
+                     FROM folder_queue WHERE job_id = ? AND state = 'failed'",
+                )
+                .map_err(|error| error.to_string())?;
+            folder_stmt
+                .bind((1, self.job_id))
+                .map_err(|error| error.to_string())?;
+            if let Ok(sqlite::State::Row) = folder_stmt.next() {
+                (
+                    folder_stmt.read::<i64, _>(0).unwrap_or(0),
+                    folder_stmt.read::<i64, _>(1).unwrap_or(0),
+                    folder_stmt.read::<Option<String>, _>(2).ok().flatten(),
+                )
+            } else {
+                (0, 0, None)
+            }
+        };
+
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -581,11 +629,13 @@ impl PipelineRunner {
 
         let job_state = if stopped_by_user {
             "stopped"
+        } else if failed_root_folders > 0 {
+            "failed"
         } else if waiting_quota > 0 && pending_count == 0 {
             "waiting_for_quota"
         } else if invariant_error.is_some() {
             "failed"
-        } else if failed_count > 0 || reconciliation > 0 {
+        } else if failed_count > 0 || reconciliation > 0 || failed_folders > 0 {
             "completed_with_errors"
         } else if pending_count == 0 {
             "completed"
@@ -610,7 +660,11 @@ impl PipelineRunner {
         };
         upd.bind((5, completed_at)).map_err(|e| e.to_string())?;
         upd.bind((6, now)).map_err(|e| e.to_string())?;
-        upd.bind((7, invariant_error)).map_err(|e| e.to_string())?;
+        let final_error = invariant_error
+            .map(ToString::to_string)
+            .or_else(|| folder_error.map(|error| format!("Folder crawl failure: {}", error)));
+        upd.bind((7, final_error.as_deref()))
+            .map_err(|e| e.to_string())?;
         upd.bind((8, self.job_id)).map_err(|e| e.to_string())?;
         upd.next().map_err(|e| e.to_string())?;
 
@@ -710,14 +764,22 @@ impl PipelineRunner {
                         && validate_processed_artifact(inspector.as_ref(), &item).await;
                     let original_valid =
                         artifact_is_valid_file(item.local_artifact_path.as_deref());
-                    let passthrough_checkpoint = item
+                    let is_passthrough_checkpoint = item
                         .video_decision
                         .as_deref()
                         .map(|decision| decision.starts_with("canonical_passthrough"))
-                        .unwrap_or(false)
-                        && original_valid;
+                        .unwrap_or(false);
+                    let passthrough_validation = if is_passthrough_checkpoint {
+                        Some(validate_passthrough_artifact(inspector.as_ref(), &item).await)
+                    } else {
+                        None
+                    };
+                    let passthrough_valid =
+                        matches!(passthrough_validation.as_ref(), Some(Ok(true)));
+                    let passthrough_unreadable =
+                        matches!(passthrough_validation.as_ref(), Some(Err(_)));
 
-                    if processed_valid || passthrough_checkpoint {
+                    if processed_valid || passthrough_valid {
                         match stage {
                             "downloaded" => {
                                 transition_item(
@@ -751,6 +813,13 @@ impl PipelineRunner {
                             .send(item)
                             .await
                             .map_err(|_| "Recovery upload queue closed".to_string())?;
+                    } else if passthrough_unreadable {
+                        clear_processed_checkpoint(&self.db, &item)?;
+                        reset_item_stage(&self.db, item.id, PipelineStage::QueuedDownload)?;
+                        download_tx
+                            .send(item)
+                            .await
+                            .map_err(|_| "Recovery download queue closed".to_string())?;
                     } else if original_valid {
                         // Has original file — route based on category
                         match category {
@@ -898,7 +967,7 @@ impl PipelineRunner {
     ) -> Result<(), String> {
         let rx = Arc::new(tokio::sync::Mutex::new(rx));
         let mut workers = Vec::new();
-        println!(
+        log::debug!(
             "Downloader loop started with {} workers",
             self.config.download_concurrency
         );
@@ -928,7 +997,7 @@ impl PipelineRunner {
                         None => break, // Channel closed
                     };
 
-                    println!("Downloader task active for item {}", item.id);
+                    log::debug!("Downloader task active for item {}", item.id);
 
                     transition_item(&db_clone, item.id, PipelineStage::Downloading)?;
 
@@ -939,15 +1008,16 @@ impl PipelineRunner {
                     let final_path = workspace.join(format!("{}", item.id));
 
                     if let Some(source_id) = &item.source_item_id {
-                        println!("Downloader starting download_file for item {}", item.id);
+                        log::debug!("Downloader starting download_file for item {}", item.id);
                         match downloader_clone
                             .download_file(item.id, source_id, &part_path)
                             .await
                         {
                             Ok(sha256) => {
-                                println!(
+                                log::debug!(
                                     "Downloader download_file OK for item {}, sha256={}",
-                                    item.id, sha256
+                                    item.id,
+                                    sha256
                                 );
                                 // Đảm bảo tạo directory đích
                                 if let Some(parent) = final_path.parent() {
@@ -957,9 +1027,10 @@ impl PipelineRunner {
                                 }
                                 // Atomic Rename
                                 if let Err(e) = std::fs::rename(&part_path, &final_path) {
-                                    println!(
+                                    log::error!(
                                         "Downloader rename failed for item {}: {}",
-                                        item.id, e
+                                        item.id,
+                                        e
                                     );
                                     fail_item(
                                         &db_clone,
@@ -970,7 +1041,7 @@ impl PipelineRunner {
                                         &format!("Atomic rename failed: {}", e),
                                     )?;
                                 } else {
-                                    println!("Downloader rename OK for item {}", item.id);
+                                    log::debug!("Downloader rename OK for item {}", item.id);
                                     item.original_sha256 = Some(sha256.clone());
                                     item.local_artifact_path =
                                         Some(final_path.to_string_lossy().into_owned());
@@ -1007,9 +1078,10 @@ impl PipelineRunner {
                                         let _conn = db_clone.lock().unwrap();
                                     }
 
-                                    println!(
+                                    log::debug!(
                                         "Downloader routing item {} as {:?}",
-                                        item.id, category
+                                        item.id,
+                                        category
                                     );
 
                                     // 5. Định tuyến (routing)
@@ -1048,9 +1120,10 @@ impl PipelineRunner {
                                 }
                             }
                             Err(e) => {
-                                println!(
+                                log::debug!(
                                     "Downloader download_file Err for item {}: {}",
-                                    item.id, e
+                                    item.id,
+                                    e
                                 );
                                 if let Err(remove_error) = std::fs::remove_file(&part_path) {
                                     if remove_error.kind() != std::io::ErrorKind::NotFound {
@@ -1079,7 +1152,7 @@ impl PipelineRunner {
                             }
                         }
                     } else {
-                        println!("Downloader source_item_id is None for item {}", item.id);
+                        log::error!("Downloader source_item_id is None for item {}", item.id);
                         fail_item(
                             &db_clone,
                             app_handle.as_ref(),
@@ -1211,16 +1284,15 @@ impl PipelineRunner {
                                 }
                                 // Gọi FFmpeg processor
                                 match processor_clone
-                                    .process_video(
-                                        &input_path,
-                                        &output_path,
-                                        decision,
-                                        item.id,
-                                        item.job_id,
-                                        meta.duration,
-                                        meta.fps,
-                                        &item.name,
-                                    )
+                                    .process_video(VideoProcessRequest {
+                                        input_path: input_path.clone(),
+                                        output_path: output_path.clone(),
+                                        decision: decision.to_string(),
+                                        item_id: item.id,
+                                        job_id: item.job_id,
+                                        item_name: item.name.clone(),
+                                        metadata: meta.clone(),
+                                    })
                                     .await
                                 {
                                     Ok(proc_hash) => {
@@ -1244,7 +1316,6 @@ impl PipelineRunner {
                                             item.id,
                                             PipelineStage::QueuedUpload,
                                         )?;
-                                        println!("Processor sending item {} to upload_tx", item.id);
                                         upload_tx_clone.send(item).await.map_err(|_| {
                                             "Processor upload queue closed".to_string()
                                         })?;
@@ -1354,7 +1425,7 @@ impl PipelineRunner {
                         None => break,
                     };
 
-                    println!("Uploader loop received item {}", item.id);
+                    log::debug!("Uploader loop received item {}", item.id);
 
                     // Enforce flood wait check before uploading
                     let wait_until = {
@@ -1387,7 +1458,7 @@ impl PipelineRunner {
                         continue;
                     }
 
-                    println!("Uploader spawned task active for item {}", item.id);
+                    log::debug!("Uploader spawned task active for item {}", item.id);
 
                     // Artifact selection based on video_decision
                     let file_path = Self::select_artifact_path(&item);
@@ -1989,16 +2060,9 @@ mod tests {
     impl VideoProcessor for CountingProcessor {
         fn process_video(
             &self,
-            _input_path: &Path,
-            output_path: &Path,
-            _decision: &str,
-            _item_id: i64,
-            _job_id: i64,
-            _duration: f64,
-            _source_fps: f64,
-            _item_name: &str,
+            request: VideoProcessRequest,
         ) -> Pin<Box<dyn Future<Output = Result<String, String>> + Send>> {
-            let output = output_path.to_path_buf();
+            let output = request.output_path;
             let calls = self.0.clone();
             Box::pin(async move {
                 calls.fetch_add(1, Ordering::SeqCst);
@@ -2200,6 +2264,40 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn folder_failures_drive_failed_or_completed_with_errors() {
+        for (label, parent_id, expected_state) in [
+            ("root-folder-failure", None, "failed"),
+            (
+                "child-folder-failure",
+                Some("root"),
+                "completed_with_errors",
+            ),
+        ] {
+            let tmp = TempDir::new(label);
+            let db = open_migration_db_at_path(tmp.0.join("migration.db")).unwrap();
+            seed_job(&db, &tmp.0);
+            {
+                let conn = db.lock().unwrap();
+                let mut stmt = conn.prepare("INSERT INTO folder_queue (job_id, folder_id, parent_id, folder_path, state, has_more, last_error, created_at, updated_at) VALUES (1, 'folder', ?, '/folder', 'failed', 0, 'permission denied', 0, 0)").unwrap();
+                stmt.bind((1, parent_id)).unwrap();
+                stmt.next().unwrap();
+            }
+            let runner = make_runner(db.clone(), &tmp.0, CancellationToken::new());
+            runner.finalize_job().await.unwrap();
+            let conn = db.lock().unwrap();
+            let mut stmt = conn
+                .prepare("SELECT state, last_error FROM migration_jobs WHERE id = 1")
+                .unwrap();
+            stmt.next().unwrap();
+            assert_eq!(stmt.read::<String, _>(0).unwrap(), expected_state);
+            assert!(stmt
+                .read::<String, _>(1)
+                .unwrap()
+                .contains("permission denied"));
+        }
+    }
+
+    #[tokio::test]
     async fn empty_pipeline_lifecycle_drains_within_timeout() {
         let tmp = TempDir::new("lifecycle");
         let db = open_migration_db_at_path(tmp.0.join("migration.db")).unwrap();
@@ -2268,6 +2366,46 @@ mod tests {
             .contains("fatal transition"));
     }
 
+    #[tokio::test]
+    async fn crawler_permanent_auth_error_fails_job_without_retry_loop() {
+        let tmp = TempDir::new("crawler-auth-fatal");
+        let db = open_migration_db_at_path(tmp.0.join("migration.db")).unwrap();
+        seed_job(&db, &tmp.0);
+        {
+            let conn = db.lock().unwrap();
+            conn.execute("INSERT INTO folder_queue (job_id, folder_id, folder_path, state, has_more, created_at, updated_at) VALUES (1, 'root', '/', 'pending', 1, 0, 0)").unwrap();
+        }
+        let runner = make_runner(db.clone(), &tmp.0, CancellationToken::new());
+        runner.clone().start(
+            Arc::new(NeverDownloader),
+            Arc::new(ContentInspector),
+            Arc::new(CountingProcessor(Arc::new(AtomicUsize::new(0)))),
+            Arc::new(ConfirmingUploader {
+                db: db.clone(),
+                observed: Arc::new(std::sync::Mutex::new(Vec::new())),
+            }),
+            Arc::new(NoopFinalizer),
+        );
+        let error = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            runner.run_to_completion(),
+        )
+        .await
+        .expect("crawler auth failure entered a retry loop")
+        .unwrap_err();
+        assert!(error.contains("Microsoft account not connected"));
+        let conn = db.lock().unwrap();
+        let mut stmt = conn
+            .prepare("SELECT state, last_error FROM migration_jobs WHERE id = 1")
+            .unwrap();
+        stmt.next().unwrap();
+        assert_eq!(stmt.read::<String, _>(0).unwrap(), "failed");
+        assert!(stmt
+            .read::<String, _>(1)
+            .unwrap()
+            .contains("Microsoft account not connected"));
+    }
+
     struct BlockingProcessor {
         cancel: CancellationToken,
         started: Arc<tokio::sync::Notify>,
@@ -2275,16 +2413,9 @@ mod tests {
     impl VideoProcessor for BlockingProcessor {
         fn process_video(
             &self,
-            _input_path: &Path,
-            output_path: &Path,
-            _decision: &str,
-            _item_id: i64,
-            _job_id: i64,
-            _duration: f64,
-            _source_fps: f64,
-            _item_name: &str,
+            request: VideoProcessRequest,
         ) -> Pin<Box<dyn Future<Output = Result<String, String>> + Send>> {
-            let output = output_path.to_path_buf();
+            let output = request.output_path;
             let cancel = self.cancel.clone();
             let started = self.started.clone();
             Box::pin(async move {
@@ -2691,6 +2822,65 @@ mod tests {
                 with_original.then_some(original.as_path()),
                 Some(&processed),
                 Some("canonical_transcode_main8"),
+            );
+            let calls = Arc::new(AtomicUsize::new(0));
+            let runner = make_runner(db.clone(), &tmp.0, CancellationToken::new());
+            runner.clone().start(
+                Arc::new(NeverDownloader),
+                Arc::new(ContentInspector),
+                Arc::new(CountingProcessor(calls.clone())),
+                Arc::new(ConfirmingUploader {
+                    db: db.clone(),
+                    observed: Arc::new(std::sync::Mutex::new(Vec::new())),
+                }),
+                Arc::new(NoopFinalizer),
+            );
+            runner.run_to_completion().await.unwrap();
+            assert_eq!(calls.load(Ordering::SeqCst), processor_calls, "{}", label);
+            let history = stage_history(&db);
+            assert_eq!(
+                &history[..expected_prefix.len()],
+                expected_prefix.as_slice(),
+                "{}",
+                label
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn recovery_reprobes_passthrough_original_before_upload() {
+        for (label, original_marker, expected_prefix, processor_calls) in [
+            (
+                "passthrough-valid",
+                "processed-main8",
+                vec!["queued_upload", "uploading", "completed_telegram"],
+                0,
+            ),
+            (
+                "passthrough-h264",
+                "h264-source",
+                vec!["queued_processing", "processing", "processed"],
+                1,
+            ),
+            (
+                "passthrough-corrupt",
+                "corrupt",
+                vec!["queued_download", "downloading", "failed"],
+                0,
+            ),
+        ] {
+            let tmp = TempDir::new(label);
+            let db = open_migration_db_at_path(tmp.0.join("migration.db")).unwrap();
+            seed_job(&db, &tmp.0);
+            let original = tmp.0.join("original.mp4");
+            std::fs::write(&original, original_marker).unwrap();
+            seed_item(
+                &db,
+                "processed",
+                "video.mp4",
+                Some(&original),
+                None,
+                Some("canonical_passthrough_main8"),
             );
             let calls = Arc::new(AtomicUsize::new(0));
             let runner = make_runner(db.clone(), &tmp.0, CancellationToken::new());
