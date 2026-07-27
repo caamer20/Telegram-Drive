@@ -206,14 +206,6 @@ export interface MsAccountInfo {
     account_email: string;
 }
 
-export interface ScanProgressPayload {
-    phase: 'starting' | 'enumerating' | 'building_snapshot' | 'stopping' | 'stopped' | 'completed' | 'failed';
-    pages_scanned: number;
-    discovered_files: number;
-    discovered_folders: number;
-    elapsed_ms: number;
-}
-
 export interface ProcessingLogEntry {
     id: string;
     timestamp: number;
@@ -221,27 +213,6 @@ export interface ProcessingLogEntry {
     level: 'info' | 'success' | 'warning' | 'error';
     message_key: string;
     params?: Record<string, string | number>;
-}
-
-export interface AutoMigrationProfile {
-    id: number;
-    account_id: string;
-    enabled: boolean;
-    default_telegram_dest_id?: number | null;
-    default_telegram_dest_name?: string | null;
-    local_temp_dir?: string | null;
-    last_auto_scan_at?: number | null;
-    created_at: number;
-    updated_at: number;
-    active_job_id?: number | null;
-    pause_reason?: string | null;
-}
-
-export interface AutoMigrationStatus {
-    profile: AutoMigrationProfile | null;
-    account: MsAccountInfo | null;
-    active_job: MigrationJobDetail | null;
-    scan_progress: ScanProgressPayload | null;
 }
 
 export interface DailyMigrationQuota {
@@ -287,30 +258,36 @@ export interface OneDriveFolder {
     total_size: number;
 }
 
-export type JobState = 'draft' | 'ready' | 'running' | 'paused' | 'completed' | 'cancelled' | 'failed';
-export type ItemState = 'pending' | 'downloading' | 'uploading' | 'completed' | 'skipped_duplicate' | 'failed';
+export type JobState = 'running' | 'completed' | 'completed_with_errors' | 'stopped' | 'waiting_for_quota' | 'failed';
+export type ItemState = 'discovered' | 'queued_download' | 'downloading' | 'downloaded' | 'queued_processing' | 'processing' | 'processed' | 'queued_upload' | 'uploading' | 'waiting_for_quota' | 'saving_local' | 'completed_telegram' | 'completed_local' | 'reconciliation_required' | 'failed';
 
 export interface MigrationJob {
     id: number;
-    state: JobState;
-    onedrive_folder_id?: string | null;
-    onedrive_folder_path?: string | null;
-    telegram_destination_id?: number | null;
-    telegram_destination_name?: string | null;
-    local_dir?: string | null;
-    cooldown_until?: number | null;
-    created_at: number;
-    started_at?: number | null;
+    source_folder_id: string;
+    source_folder_path: string;
+    telegram_destination_id: number | null;
+    telegram_destination_name: string;
+    local_backup_dir: string;
+    workspace_dir: string;
+    state: string;
+    started_at: number;
     completed_at?: number | null;
+    last_error?: string | null;
+    flood_wait_until?: number | null;
+    discovered_folders: number;
+    completed_folders: number;
+    discovered_items: number;
+    completed_items: number;
+    failed_items: number;
+    waiting_items: number;
+    created_at: number;
     updated_at: number;
-    job_origin: 'manual' | 'auto';
-    pause_reason?: string | null;
 }
 
 export interface MigrationJobSummary {
     id: number;
-    state: JobState;
-    onedrive_folder_path?: string | null;
+    state: string;
+    source_folder_path: string;
     total_files: number;
     completed_files: number;
     created_at: number;
@@ -320,10 +297,11 @@ export interface MigrationStats {
     total_folders: number;
     total_files: number;
     total_bytes: number;
-    completed_files: number;
+    completed_telegram: number;
+    completed_local: number;
     completed_bytes: number;
     failed_files: number;
-    skipped_duplicates: number;
+    waiting_files: number;
     pending_files: number;
 }
 
@@ -337,24 +315,27 @@ export interface FolderSummary {
 export interface MigrationItem {
     id: number;
     job_id: number;
-    item_type: 'file' | 'folder';
+    folder_id: string;
+    source_item_id: string;
     name: string;
-    source_path: string;
-    source_item_id?: string | null;
-    size_bytes: number;
-    source_etag?: string | null;
-    source_last_modified?: string | null;
-    source_fingerprint_type?: string | null;
-    source_fingerprint_value?: string | null;
-    state: ItemState;
-    last_error_code?: string | null;
-    last_error_message?: string | null;
-    attempt_count: number;
-    computed_sha256?: string | null;
+    path: string;
+    size: number;
+    item_category: string;
+    pipeline_stage: string;
+    original_artifact_path?: string | null;
+    processed_artifact_path?: string | null;
+    original_sha256?: string | null;
+    processed_sha256?: string | null;
+    video_decision?: string | null;
+    artifact_size?: number | null;
+    telegram_attempt_id?: string | null;
+    telegram_random_id?: number | null;
     telegram_message_id?: number | null;
+    retry_count: number;
+    last_error?: string | null;
     created_at: number;
+    updated_at: number;
     completed_at?: number | null;
-    queue_position: number;
 }
 
 export interface MigrationJobDetail {

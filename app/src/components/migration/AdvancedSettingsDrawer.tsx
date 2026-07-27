@@ -2,11 +2,16 @@ import React, { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { X, Folder, Send, Save, HardDrive } from 'lucide-react';
 import { open } from '@tauri-apps/plugin-dialog';
-import { AutoMigrationProfile } from '../../types';
+
+interface MigrationSettings {
+    default_telegram_dest_id?: number | null;
+    default_telegram_dest_name?: string | null;
+    local_temp_dir?: string | null;
+}
 
 interface AdvancedSettingsDrawerProps {
     isOpen: boolean;
-    autoProfile: AutoMigrationProfile | null;
+    autoProfile: MigrationSettings | null;
     loading: boolean;
     onClose: () => void;
     onSaveSettings: (destId?: number, destName?: string, tempDir?: string) => void;

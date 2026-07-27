@@ -1,13 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
-import { MsAccountInfo, OneDriveItem, MigrationJobDetail } from '../../types';
+import { MsAccountInfo, OneDriveItem } from '../../types';
 import {
     Cloud,
     Folder,
     HardDrive,
     Send,
-    Scan,
     LogOut,
     LogIn,
     ChevronRight,
@@ -18,29 +17,30 @@ import {
 
 interface SetupSectionProps {
     msAccount: MsAccountInfo | null;
-    currentDetail: MigrationJobDetail | null;
     loading: boolean;
+    sourceFolderPath: string;
+    telegramDestName: string;
+    localDir: string;
     onConnectMs: (clientId?: string, tenant?: string) => void;
     onDisconnectMs: () => void;
     onListOneDriveFolders: (parentId?: string) => Promise<OneDriveItem[]>;
-    onCreateJob?: () => Promise<MigrationJobDetail | null>;
-    onSetOneDriveFolder: (jobId: number, folderId: string, folderPath: string) => void;
-    onSetTelegramDest: (jobId: number, destId: number | null, destName: string) => void;
-    onSetLocalDir: (jobId: number, localDir: string) => void;
-    onScan: (jobId: number) => void;
+    onSetSourceFolder: (folderId: string, folderPath: string) => void;
+    onSetTelegramDest: (destId: number | null, destName: string) => void;
+    onSetLocalDir: (localDir: string) => void;
 }
 
 export const SetupSection: React.FC<SetupSectionProps> = ({
     msAccount,
-    currentDetail,
     loading,
+    sourceFolderPath,
+    telegramDestName,
+    localDir,
     onConnectMs,
     onDisconnectMs,
     onListOneDriveFolders,
-    onSetOneDriveFolder,
+    onSetSourceFolder,
     onSetTelegramDest,
     onSetLocalDir,
-    onScan,
 }) => {
     const { t } = useTranslation();
     const [tenant, setTenant] = useState<string>('common');
@@ -62,22 +62,29 @@ export const SetupSection: React.FC<SetupSectionProps> = ({
         }
     }, [msAccount, currentParentId, onListOneDriveFolders]);
 
-    const formatBytes = (bytes: number) => {
-        if (bytes === 0) return '0 B';
-        const k = 1024;
-        const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-        const i = Math.floor(Math.log(bytes) / Math.log(k));
-        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-    };
-
     const handleSelectFolder = (item: OneDriveItem) => {
-        if (!currentDetail) return;
         const fullPath = pathHistory
             .map((p) => p.name)
             .concat(item.name)
             .join('/')
             .replace('OneDrive Root/', '/');
-        onSetOneDriveFolder(currentDetail.job.id, item.id, fullPath);
+        onSetSourceFolder(item.id, fullPath);
+    };
+
+    const handleSelectRoot = () => {
+        // Select the current directory itself (root or subfolder)
+        const isRoot = pathHistory.length === 1;
+        if (isRoot) {
+            onSetSourceFolder('root', '/');
+        } else {
+            // Select current subfolder
+            const currentFolder = pathHistory[pathHistory.length - 1];
+            const fullPath = pathHistory
+                .map((p) => p.name)
+                .join('/')
+                .replace('OneDrive Root/', '/');
+            onSetSourceFolder(currentFolder.id || 'root', fullPath || '/');
+        }
     };
 
     const handleNavigateInto = (item: OneDriveItem) => {
@@ -92,7 +99,6 @@ export const SetupSection: React.FC<SetupSectionProps> = ({
     };
 
     const handleSelectLocalDir = async () => {
-        if (!currentDetail) return;
         try {
             const selected = await openDialog({
                 directory: true,
@@ -100,14 +106,12 @@ export const SetupSection: React.FC<SetupSectionProps> = ({
                 title: t('migration.select_local_dir', 'Select Local Working Directory'),
             });
             if (selected && typeof selected === 'string') {
-                onSetLocalDir(currentDetail.job.id, selected);
+                onSetLocalDir(selected);
             }
         } catch (e) {
             console.error('Failed to open folder picker:', e);
         }
     };
-
-    const job = currentDetail?.job;
 
     return (
         <div className="space-y-6">
@@ -171,7 +175,7 @@ export const SetupSection: React.FC<SetupSectionProps> = ({
             </div>
 
             {/* Step 2: OneDrive Source Folder Picker (Tree View) */}
-            {msAccount && currentDetail && (
+            {msAccount && (
                 <div className="bg-slate-900/60 rounded-xl border border-slate-800 p-5 space-y-4">
                     <div className="flex items-center justify-between">
                         <div className="flex items-center gap-3">
@@ -183,14 +187,14 @@ export const SetupSection: React.FC<SetupSectionProps> = ({
                                     {t('migration.step2_source_folder', '2. OneDrive Source Folder')}
                                 </h3>
                                 <p className="text-xs text-slate-400">
-                                    {job?.onedrive_folder_path
-                                        ? t('migration.selected_source', 'Selected: {{path}}', { path: job.onedrive_folder_path })
+                                    {sourceFolderPath
+                                        ? t('migration.selected_source', 'Selected: {{path}}', { path: sourceFolderPath })
                                         : t('migration.select_source_prompt', 'Browse and select a folder to migrate')}
                                 </p>
                             </div>
                         </div>
 
-                        {job?.onedrive_folder_path && (
+                        {sourceFolderPath && (
                             <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-full text-xs font-medium">
                                 <FolderCheck className="w-3.5 h-3.5" />
                                 {t('migration.selected', 'Selected')}
@@ -217,6 +221,24 @@ export const SetupSection: React.FC<SetupSectionProps> = ({
 
                     {/* Folder List Tree */}
                     <div className="bg-slate-950/80 rounded-lg border border-slate-800/80 divide-y divide-slate-800/50 max-h-56 overflow-y-auto custom-scrollbar">
+                        {/* Select current folder button */}
+                        <div className="flex items-center justify-between px-4 py-2.5 hover:bg-indigo-900/20 transition-colors bg-slate-900/50">
+                            <div className="flex items-center gap-2.5 flex-1 min-w-0">
+                                <FolderCheck className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+                                <span className="text-xs font-medium text-emerald-300 truncate">
+                                    {pathHistory.length === 1
+                                        ? t('migration.select_root', 'Select Root (Entire OneDrive)')
+                                        : t('migration.select_current', 'Select: {{name}}', { name: pathHistory[pathHistory.length - 1].name })}
+                                </span>
+                            </div>
+                            <button
+                                onClick={handleSelectRoot}
+                                className="inline-flex items-center gap-1 px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-xs font-medium transition-colors ml-2"
+                            >
+                                <Check className="w-3 h-3" />
+                                {t('migration.btn_select_this', 'Select This')}
+                            </button>
+                        </div>
                         {treeItems.length === 0 ? (
                             <div className="p-4 text-center text-xs text-slate-500">
                                 {t('migration.empty_folder', 'No subfolders found in this directory')}
@@ -256,8 +278,8 @@ export const SetupSection: React.FC<SetupSectionProps> = ({
                 </div>
             )}
 
-            {/* Step 3: Telegram Destination & Local Directory & Scan Trigger */}
-            {msAccount && currentDetail && (
+            {/* Step 3: Telegram Destination & Local Directory */}
+            {msAccount && (
                 <div className="bg-slate-900/60 rounded-xl border border-slate-800 p-5 space-y-5">
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         {/* Telegram Destination */}
@@ -267,10 +289,10 @@ export const SetupSection: React.FC<SetupSectionProps> = ({
                                 {t('migration.step3_telegram_dest', 'Telegram Destination')}
                             </div>
                             <p className="text-xs text-slate-400">
-                                {job?.telegram_destination_name || t('migration.saved_messages', 'Saved Messages (Default)')}
+                                {telegramDestName || t('migration.saved_messages', 'Saved Messages (Default)')}
                             </p>
                             <button
-                                onClick={() => onSetTelegramDest(currentDetail.job.id, null, 'Saved Messages')}
+                                onClick={() => onSetTelegramDest(null, 'Saved Messages')}
                                 className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded text-xs font-medium transition-colors"
                             >
                                 {t('migration.use_saved_messages', 'Use Saved Messages')}
@@ -283,8 +305,8 @@ export const SetupSection: React.FC<SetupSectionProps> = ({
                                 <HardDrive className="w-4 h-4 text-emerald-400" />
                                 {t('migration.step4_local_dir', 'Local Working Directory')}
                             </div>
-                            <p className="text-xs text-slate-400 truncate" title={job?.local_dir || ''}>
-                                {job?.local_dir || t('migration.no_local_dir', 'No local directory selected')}
+                            <p className="text-xs text-slate-400 truncate" title={localDir || ''}>
+                                {localDir || t('migration.no_local_dir', 'No local directory selected')}
                             </p>
                             <button
                                 onClick={handleSelectLocalDir}
@@ -293,47 +315,6 @@ export const SetupSection: React.FC<SetupSectionProps> = ({
                                 {t('migration.btn_browse_local', 'Browse Directory...')}
                             </button>
                         </div>
-                    </div>
-
-                    {/* Scan Button */}
-                    <div className="flex items-center justify-between pt-2 border-t border-slate-800">
-                        <div className="text-xs text-slate-400">
-                            {job?.state === 'ready'
-                                ? t('migration.ready_to_start', 'Snapshot ready. Click Start in progress panel below.')
-                                : t('migration.scan_instruction', 'Click Scan to generate snapshot before starting.')}
-                        </div>
-                        <button
-                            onClick={() => onScan(currentDetail.job.id)}
-                            disabled={loading || !job?.onedrive_folder_path || !job?.local_dir}
-                            className="inline-flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 disabled:opacity-50 text-white rounded-lg text-xs font-semibold shadow-lg transition-all"
-                        >
-                            <Scan className="w-4 h-4" />
-                            {t('migration.btn_scan', 'Scan Folder Snapshot')}
-                        </button>
-                    </div>
-                </div>
-            )}
-
-            {/* Folder Summary List (FR-008) after scan */}
-            {currentDetail && currentDetail.folders.length > 0 && (
-                <div className="bg-slate-900/60 rounded-xl border border-slate-800 p-5 space-y-3">
-                    <h4 className="text-xs font-semibold text-slate-200 uppercase tracking-wider flex items-center gap-2">
-                        <Folder className="w-4 h-4 text-indigo-400" />
-                        {t('migration.folder_summary_title', 'Scanned Folder Summary (FR-008)')}
-                    </h4>
-                    <div className="max-h-48 overflow-y-auto custom-scrollbar divide-y divide-slate-800/50 bg-slate-950/60 rounded-lg border border-slate-800/80">
-                        {currentDetail.folders.map((f, idx) => (
-                            <div key={idx} className="flex items-center justify-between px-4 py-2 text-xs">
-                                <div className="truncate max-w-[60%]">
-                                    <span className="font-medium text-slate-200">{f.name}</span>
-                                    <span className="text-[11px] text-slate-500 ml-2 font-mono">({f.source_path || '/'})</span>
-                                </div>
-                                <div className="text-slate-400 font-mono flex items-center gap-3">
-                                    <span>{f.file_count} files</span>
-                                    <span>{formatBytes(f.total_size)}</span>
-                                </div>
-                            </div>
-                        ))}
                     </div>
                 </div>
             )}

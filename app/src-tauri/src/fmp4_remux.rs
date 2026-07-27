@@ -49,6 +49,12 @@ pub struct Fmp4RemuxState {
     jobs: Arc<Mutex<HashMap<String, Option<String>>>>,
 }
 
+impl Default for Fmp4RemuxState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Fmp4RemuxState {
     pub fn new() -> Self {
         Self {
@@ -279,13 +285,12 @@ pub async fn cmd_prepare_fmp4_stream(
         &state.peer_cache,
     )
     .await
-    .map_err(|e| {
+    .inspect_err(|_e| {
         let rs = remux_state.inner().clone();
         let fk = file_key.clone();
         tokio::spawn(async move {
             rs.jobs.lock().await.remove(&fk);
         });
-        e
     })?;
 
     let messages = client

@@ -1,16 +1,14 @@
 import React from 'react';
 import { useTranslation } from 'react-i18next';
 import { MigrationJobDetail, ItemProgressPayload, CooldownPayload } from '../../types';
-import { Play, Pause, XCircle, RotateCcw, AlertTriangle, CheckCircle2, Clock, SkipForward } from 'lucide-react';
+import { Play, XCircle, RotateCcw, AlertTriangle, CheckCircle2, Clock } from 'lucide-react';
 
 interface ProgressPanelProps {
     detail: MigrationJobDetail;
     progress: ItemProgressPayload | null;
     cooldown: CooldownPayload | null;
     onStart: () => void;
-    onPause: () => void;
-    onResume: () => void;
-    onCancel: () => void;
+    onStop: () => void;
     onRetryAllFailed: () => void;
 }
 
@@ -19,9 +17,7 @@ export const ProgressPanel: React.FC<ProgressPanelProps> = ({
     progress,
     cooldown,
     onStart,
-    onPause,
-    onResume,
-    onCancel,
+    onStop,
     onRetryAllFailed,
 }) => {
     const { t } = useTranslation();
@@ -35,9 +31,12 @@ export const ProgressPanel: React.FC<ProgressPanelProps> = ({
         return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
     };
 
+    const totalCompleted = stats.completed_telegram + stats.completed_local;
     const overallPercent = stats.total_files > 0
-        ? Math.min(100, Math.round(((stats.completed_files + stats.skipped_duplicates) / stats.total_files) * 100))
+        ? Math.min(100, Math.round((totalCompleted / stats.total_files) * 100))
         : 0;
+
+    const isActive = job.state === 'running';
 
     return (
         <div className="bg-slate-900/60 rounded-xl border border-slate-800 p-5 space-y-5">
@@ -46,8 +45,10 @@ export const ProgressPanel: React.FC<ProgressPanelProps> = ({
                 <div className="flex items-center gap-3">
                     <span className={`px-3 py-1 rounded-full text-xs font-semibold uppercase tracking-wider ${
                         job.state === 'running' ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30 animate-pulse' :
-                        job.state === 'paused' ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' :
                         job.state === 'completed' ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' :
+                        job.state === 'completed_with_errors' ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' :
+                        job.state === 'waiting_for_quota' ? 'bg-purple-500/20 text-purple-400 border border-purple-500/30' :
+                        job.state === 'stopped' ? 'bg-slate-500/20 text-slate-400 border border-slate-500/30' :
                         job.state === 'failed' ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30' :
                         'bg-slate-800 text-slate-300 border border-slate-700'
                     }`}>
@@ -63,7 +64,7 @@ export const ProgressPanel: React.FC<ProgressPanelProps> = ({
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2">
-                    {job.state === 'ready' && (
+                    {!isActive && job.state !== 'completed' && (
                         <button
                             onClick={onStart}
                             className="inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white rounded-lg text-xs font-semibold shadow-lg transition-all"
@@ -73,43 +74,23 @@ export const ProgressPanel: React.FC<ProgressPanelProps> = ({
                         </button>
                     )}
 
-                    {job.state === 'running' && (
+                    {isActive && (
                         <button
-                            onClick={onPause}
-                            className="inline-flex items-center gap-2 px-4 py-2 bg-amber-600 hover:bg-amber-500 text-white rounded-lg text-xs font-semibold shadow-lg transition-all"
-                        >
-                            <Pause className="w-4 h-4 fill-current" />
-                            {t('migration.btn_pause', 'Pause')}
-                        </button>
-                    )}
-
-                    {job.state === 'paused' && (
-                        <button
-                            onClick={onResume}
-                            className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold shadow-lg transition-all"
-                        >
-                            <Play className="w-4 h-4 fill-current" />
-                            {t('migration.btn_resume', 'Resume')}
-                        </button>
-                    )}
-
-                    {(job.state === 'running' || job.state === 'paused') && (
-                        <button
-                            onClick={onCancel}
+                            onClick={onStop}
                             className="inline-flex items-center gap-2 px-3.5 py-2 bg-slate-800 hover:bg-rose-900/50 text-slate-300 hover:text-rose-300 border border-slate-700 rounded-lg text-xs font-medium transition-colors"
                         >
                             <XCircle className="w-4 h-4" />
-                            {t('migration.btn_cancel', 'Cancel')}
+                            {t('migration.btn_stop', 'Stop')}
                         </button>
                     )}
 
-                    {stats.failed_files > 0 && job.state !== 'running' && (
+                    {stats.failed_files > 0 && !isActive && (
                         <button
                             onClick={onRetryAllFailed}
                             className="inline-flex items-center gap-2 px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-lg text-xs font-medium transition-colors"
                         >
                             <RotateCcw className="w-4 h-4" />
-                            {t('migration.btn_retry_all', 'Retry All Failed')}
+                            {t('migration.btn_retry_all', 'Retry Failed')}
                         </button>
                     )}
                 </div>
@@ -131,17 +112,17 @@ export const ProgressPanel: React.FC<ProgressPanelProps> = ({
                         <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
                         {t('migration.stats_completed', 'Completed')}
                     </div>
-                    <p className="text-lg font-bold text-emerald-400">{stats.completed_files}</p>
+                    <p className="text-lg font-bold text-emerald-400">{totalCompleted}</p>
                     <p className="text-xs text-slate-500">{formatBytes(stats.completed_bytes)}</p>
                 </div>
 
                 <div className="p-3 bg-slate-950/60 rounded-lg border border-slate-800/80">
                     <div className="flex items-center gap-2 text-slate-400 text-xs font-medium mb-1">
-                        <SkipForward className="w-3.5 h-3.5 text-amber-400" />
-                        {t('migration.stats_skipped', 'Skipped')}
+                        <Clock className="w-3.5 h-3.5 text-purple-400" />
+                        {t('migration.stats_waiting', 'Waiting Quota')}
                     </div>
-                    <p className="text-lg font-bold text-amber-400">{stats.skipped_duplicates}</p>
-                    <p className="text-xs text-slate-500">{t('migration.duplicates', 'Duplicates')}</p>
+                    <p className="text-lg font-bold text-purple-400">{stats.waiting_files}</p>
+                    <p className="text-xs text-slate-500">{t('migration.pending', 'Pending: {{count}}', { count: stats.pending_files })}</p>
                 </div>
 
                 <div className="p-3 bg-slate-950/60 rounded-lg border border-slate-800/80">
@@ -150,7 +131,7 @@ export const ProgressPanel: React.FC<ProgressPanelProps> = ({
                         {t('migration.stats_failed', 'Failed')}
                     </div>
                     <p className="text-lg font-bold text-rose-400">{stats.failed_files}</p>
-                    <p className="text-xs text-slate-500">{t('migration.pending', 'Pending: {{count}}', { count: stats.pending_files })}</p>
+                    <p className="text-xs text-slate-500">{t('migration.folders', 'Folders: {{count}}', { count: stats.total_folders })}</p>
                 </div>
             </div>
 

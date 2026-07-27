@@ -272,12 +272,10 @@ impl TranscodeManager {
     pub fn total_cache_size(&self) -> u64 {
         let mut total: u64 = 0;
         let walker = walkdir::WalkDir::new(&self.cache_root).min_depth(1);
-        for entry_result in walker {
-            if let Ok(entry) = entry_result {
-                if entry.file_type().is_file() {
-                    if let Ok(meta) = entry.metadata() {
-                        total += meta.len();
-                    }
+        for entry in walker.into_iter().flatten() {
+            if entry.file_type().is_file() {
+                if let Ok(meta) = entry.metadata() {
+                    total += meta.len();
                 }
             }
         }
@@ -296,16 +294,14 @@ impl TranscodeManager {
         // Collect all files with their modification times
         let mut files: Vec<(PathBuf, u64, SystemTime)> = Vec::new();
         let walker = walkdir::WalkDir::new(&self.cache_root).min_depth(1);
-        for entry_result in walker {
-            if let Ok(entry) = entry_result {
-                if entry.file_type().is_file() {
-                    if let Ok(meta) = entry.metadata() {
-                        files.push((
-                            entry.path().to_path_buf(),
-                            meta.len(),
-                            meta.modified().unwrap_or(UNIX_EPOCH),
-                        ));
-                    }
+        for entry in walker.into_iter().flatten() {
+            if entry.file_type().is_file() {
+                if let Ok(meta) = entry.metadata() {
+                    files.push((
+                        entry.path().to_path_buf(),
+                        meta.len(),
+                        meta.modified().unwrap_or(UNIX_EPOCH),
+                    ));
                 }
             }
         }
@@ -674,7 +670,7 @@ pub async fn run_transcode(
                             let secs = parse_time_to_secs(time_str);
                             if let Some(dur) = duration_secs {
                                 if dur > 0.0 {
-                                    let pct = (secs / dur as f64) as f32;
+                                    let pct = (secs / dur) as f32;
                                     if (pct - last_progress).abs() > 0.01 {
                                         last_progress = pct.clamp(0.0, 0.99);
                                         progress_callback(last_progress);

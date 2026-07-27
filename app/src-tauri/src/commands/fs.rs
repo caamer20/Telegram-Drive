@@ -931,9 +931,8 @@ async fn cmd_upload_file_inner(
     }
 
     // Create progress-tracking reader
-    let (mut reader, file_size, bytes_counter) = ProgressReader::new(&path).await.map_err(|e| {
+    let (mut reader, file_size, bytes_counter) = ProgressReader::new(&path).await.inspect_err(|_e| {
         bw_state.release_up(size);
-        e
     })?;
     let file_name = std::path::Path::new(&path)
         .file_name()
@@ -2463,7 +2462,7 @@ pub async fn cmd_upload_from_url(
             {
                 // filename*=UTF-8''percent%20encoded
                 if let Some((_charset, value)) = encoded.split_once('\'') {
-                    let value = value.split('\'').last().unwrap_or(value);
+                    let value = value.split('\'').next_back().unwrap_or(value);
                     urlencoding::decode(value)
                         .ok()
                         .filter(|s| !s.is_empty())
@@ -2557,7 +2556,7 @@ pub async fn cmd_upload_from_url(
         }
     }
 
-    let need_download = known_size.map_or(true, |sz| downloaded < sz);
+    let need_download = known_size.is_none_or(|sz| downloaded < sz);
 
     let stream_res = if downloaded > 0 && need_download {
         let req = client
@@ -2688,7 +2687,7 @@ pub async fn cmd_upload_from_url(
             let now = std::time::Instant::now();
             let dt = now.duration_since(last_emit_time).as_secs_f64();
             let emit_total = known_size.unwrap_or(downloaded);
-            let emit_done = known_size.map_or(false, |sz| downloaded >= sz);
+            let emit_done = known_size.is_some_and(|sz| downloaded >= sz);
             if dt >= 0.25 || emit_done {
                 let speed = if dt > 0.0 {
                     ((downloaded - last_emit_bytes) as f64 / dt) as u64
@@ -2882,7 +2881,7 @@ pub async fn cmd_upload_from_url(
             .ok()
             .and_then(|u| {
                 u.path_segments()
-                    .and_then(|segs| segs.last())
+                    .and_then(|mut segs| segs.next_back())
                     .filter(|s| !s.is_empty())
                     .map(|s| s.to_string())
             })

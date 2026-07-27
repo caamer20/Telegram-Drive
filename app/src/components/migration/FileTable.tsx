@@ -1,7 +1,7 @@
 import React from 'react';
 import { useTranslation } from 'react-i18next';
 import { MigrationItem } from '../../types';
-import { RotateCw, CheckCircle2, AlertCircle, SkipForward, Clock, Download, Upload } from 'lucide-react';
+import { RotateCw, CheckCircle2, AlertCircle, Clock, Download, Upload } from 'lucide-react';
 
 interface FileTableProps {
     files: MigrationItem[];
@@ -20,19 +20,12 @@ export const FileTable: React.FC<FileTableProps> = ({ files, onRetryItem }) => {
     };
 
     const renderStatusBadge = (item: MigrationItem) => {
-        switch (item.state) {
+        switch (item.pipeline_stage) {
             case 'completed':
                 return (
                     <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
                         <CheckCircle2 className="w-3.5 h-3.5" />
                         {t('migration.status_completed', 'Completed')}
-                    </span>
-                );
-            case 'skipped_duplicate':
-                return (
-                    <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-500/10 text-amber-400 border border-amber-500/20">
-                        <SkipForward className="w-3.5 h-3.5" />
-                        {t('migration.status_skipped', 'Skipped (Duplicate)')}
                     </span>
                 );
             case 'downloading':
@@ -93,22 +86,22 @@ export const FileTable: React.FC<FileTableProps> = ({ files, onRetryItem }) => {
                                 <td className="px-4 py-3 font-medium text-slate-100 truncate max-w-[200px]" title={item.name}>
                                     {item.name}
                                 </td>
-                                <td className="px-4 py-3 text-slate-400 font-mono text-xs truncate max-w-[250px]" title={item.source_path}>
-                                    {item.source_path}
+                                <td className="px-4 py-3 text-slate-400 font-mono text-xs truncate max-w-[250px]" title={item.path}>
+                                    {item.path}
                                 </td>
                                 <td className="px-4 py-3 whitespace-nowrap text-slate-400">
-                                    {formatBytes(item.size_bytes)}
+                                    {formatBytes(item.size)}
                                 </td>
                                 <td className="px-4 py-3 whitespace-nowrap">
                                     {renderStatusBadge(item)}
-                                    {item.last_error_message && (
-                                        <p className="text-xs text-rose-400 mt-1 max-w-[250px] truncate" title={item.last_error_message}>
-                                            {item.last_error_message}
+                                    {item.last_error && (
+                                        <p className="text-xs text-rose-400 mt-1 max-w-[250px] truncate" title={item.last_error}>
+                                            {item.last_error}
                                         </p>
                                     )}
                                 </td>
                                 <td className="px-4 py-3 whitespace-nowrap text-right">
-                                    {item.state === 'failed' && (
+                                    {item.pipeline_stage === 'failed' && (
                                         <button
                                             onClick={() => onRetryItem(item.id)}
                                             className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-colors"

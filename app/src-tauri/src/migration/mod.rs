@@ -1,7 +1,7 @@
 pub mod adapters;
 pub mod commands;
 pub mod db;
-pub mod disk_reserve;
+
 pub mod microsoft;
 pub mod models;
 pub mod pipeline;
@@ -10,7 +10,7 @@ pub mod session_store;
 pub mod telegram_idempotency;
 
 use std::sync::atomic::AtomicBool;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use tokio::sync::Mutex as TokioMutex;
 
 use crate::migration::pipeline::runner::PipelineRunner;

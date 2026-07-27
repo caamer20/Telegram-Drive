@@ -94,6 +94,12 @@ pub struct NetworkConfig {
     pub bridge_handle: std::sync::Mutex<Option<(u16, tokio::task::JoinHandle<()>)>>,
 }
 
+impl Default for NetworkConfig {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl NetworkConfig {
     pub fn new() -> Self {
         Self {
