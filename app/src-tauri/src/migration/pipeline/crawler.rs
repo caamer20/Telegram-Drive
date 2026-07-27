@@ -1,4 +1,5 @@
 use crate::migration::db::MigrationDb;
+use crate::migration::microsoft::MicrosoftSession;
 use crate::migration::microsoft::{parse_graph_item, send_graph_request};
 use crate::migration::models::FolderQueueItem;
 use crate::migration::pipeline::runner::CancellationToken;
@@ -7,7 +8,6 @@ use chrono::Utc;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::sync::Mutex as TokioMutex;
-use crate::migration::microsoft::MicrosoftSession;
 
 pub struct StreamingCrawler {
     pub db: MigrationDb,
@@ -43,21 +43,21 @@ impl StreamingCrawler {
                 }
             }
         }
-        
+
         println!("Crawler loop exited for job {}", self.job_id);
         Ok(())
     }
 
     fn get_next_folder(&self) -> Result<Option<FolderQueueItem>, String> {
         let conn = self.db.lock().map_err(|e| e.to_string())?;
-        
+
         let mut stmt = conn.prepare(
             "SELECT id, job_id, folder_id, parent_id, folder_path, state, next_page_link, has_more, discovered_files_count, discovered_folders_count, completed_files_count, last_error, created_at, updated_at
              FROM folder_queue
              WHERE job_id = ? AND state IN ('pending', 'fetching') AND has_more = 1
              ORDER BY id ASC LIMIT 1;"
         ).map_err(|e| e.to_string())?;
-        
+
         stmt.bind((1, self.job_id)).map_err(|e| e.to_string())?;
 
         if let Ok(sqlite::State::Row) = stmt.next() {
@@ -82,11 +82,17 @@ impl StreamingCrawler {
         }
     }
 
-    async fn process_folder(&self, folder: FolderQueueItem, tx: &mpsc::Sender<PipelineItem>) -> Result<(), String> {
+    async fn process_folder(
+        &self,
+        folder: FolderQueueItem,
+        tx: &mpsc::Sender<PipelineItem>,
+    ) -> Result<(), String> {
         // Cập nhật state sang 'fetching'
         {
             let conn = self.db.lock().map_err(|e| e.to_string())?;
-            let mut upd = conn.prepare("UPDATE folder_queue SET state = 'fetching' WHERE id = ?;").unwrap();
+            let mut upd = conn
+                .prepare("UPDATE folder_queue SET state = 'fetching' WHERE id = ?;")
+                .unwrap();
             upd.bind((1, folder.id)).unwrap();
             upd.next().unwrap();
         }
@@ -114,7 +120,7 @@ impl StreamingCrawler {
             )
         };
         let http = reqwest::Client::new();
-        
+
         let cancel_future = async {
             loop {
                 if self.cancel_token.is_cancelled() || self.cancel_token.is_stopped() {
@@ -162,14 +168,15 @@ impl StreamingCrawler {
         let state = if has_more { "fetching" } else { "completed" };
 
         let now = Utc::now().timestamp();
-        
+
         let mut db_pipeline_items = Vec::new();
 
-        // Transaction insert 
+        // Transaction insert
         {
             let conn = self.db.lock().map_err(|e| e.to_string())?;
-            conn.execute("BEGIN TRANSACTION;").map_err(|e| e.to_string())?;
-            
+            conn.execute("BEGIN TRANSACTION;")
+                .map_err(|e| e.to_string())?;
+
             struct TransactionGuard<'a>(&'a sqlite::Connection, bool);
             impl<'a> Drop for TransactionGuard<'a> {
                 fn drop(&mut self) {
@@ -181,19 +188,21 @@ impl StreamingCrawler {
             let mut guard = TransactionGuard(&conn, false);
 
             // 1. Insert child folders
-            let mut stmt_folder = conn.prepare(
-                "INSERT OR IGNORE INTO folder_queue (
+            let mut stmt_folder = conn
+                .prepare(
+                    "INSERT OR IGNORE INTO folder_queue (
                     job_id, folder_id, parent_id, folder_path, state, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, 'pending', ?, ?);"
-            ).map_err(|e| e.to_string())?;
-            
+                ) VALUES (?, ?, ?, ?, 'pending', ?, ?);",
+                )
+                .map_err(|e| e.to_string())?;
+
             for child_folder in &folders_to_insert {
                 let child_path = if folder.folder_path.is_empty() || folder.folder_path == "/" {
                     child_folder.name.clone()
                 } else {
                     format!("{}/{}", folder.folder_path, child_folder.name)
                 };
-                
+
                 stmt_folder.bind((1, self.job_id)).unwrap();
                 stmt_folder.bind((2, child_folder.id.as_str())).unwrap();
                 stmt_folder.bind((3, folder.folder_id.as_str())).unwrap();
@@ -227,20 +236,25 @@ impl StreamingCrawler {
                 stmt_file.bind((7, child_file.item_type.as_str())).unwrap();
                 stmt_file.bind((8, now)).unwrap();
                 stmt_file.bind((9, now)).unwrap();
-                
+
                 stmt_file.next().ok();
-                
+
                 // Get the inserted row id and current stage to decide if we should push to the pipeline
                 let mut last_id_stmt = conn.prepare("SELECT id, pipeline_stage FROM migration_items WHERE job_id = ? AND source_item_id = ? LIMIT 1;").unwrap();
                 last_id_stmt.bind((1, self.job_id)).unwrap();
                 last_id_stmt.bind((2, child_file.id.as_str())).unwrap();
-                
+
                 if let Ok(sqlite::State::Row) = last_id_stmt.next() {
                     let item_id = last_id_stmt.read::<i64, _>(0).unwrap();
                     let stage = last_id_stmt.read::<String, _>(1).unwrap_or_default();
-                    
+
                     // Do not enqueue if completed, failed, or skipped
-                    let terminal_states = ["completed_telegram", "completed_local", "failed", "reconciliation_required"];
+                    let terminal_states = [
+                        "completed_telegram",
+                        "completed_local",
+                        "failed",
+                        "reconciliation_required",
+                    ];
                     if !terminal_states.contains(&stage.as_str()) {
                         db_pipeline_items.push(PipelineItem {
                             id: item_id,
@@ -260,22 +274,23 @@ impl StreamingCrawler {
                             processed_artifact_path: None,
                             telegram_random_id: None,
                             video_decision: None,
-
                         });
                     }
                 }
                 last_id_stmt.reset().ok();
                 stmt_file.reset().ok();
             }
-            
+
             // 3. Cập nhật thống kê job
-            let mut upd_job = conn.prepare(
-                "UPDATE migration_jobs 
+            let mut upd_job = conn
+                .prepare(
+                    "UPDATE migration_jobs 
                  SET discovered_folders = discovered_folders + ?, 
                      discovered_items = discovered_items + ?, 
                      waiting_items = waiting_items + ?
-                 WHERE id = ?;"
-            ).unwrap();
+                 WHERE id = ?;",
+                )
+                .unwrap();
             upd_job.bind((1, folders_to_insert.len() as i64)).unwrap();
             upd_job.bind((2, files_to_insert.len() as i64)).unwrap();
             upd_job.bind((3, files_to_insert.len() as i64)).unwrap();
@@ -283,8 +298,9 @@ impl StreamingCrawler {
             upd_job.next().unwrap();
 
             // 4. Update folder state
-            let mut upd_folder = conn.prepare(
-                "UPDATE folder_queue 
+            let mut upd_folder = conn
+                .prepare(
+                    "UPDATE folder_queue 
                  SET state = ?, 
                      next_page_link = ?, 
                      has_more = ?, 
@@ -292,16 +308,21 @@ impl StreamingCrawler {
                      discovered_folders_count = discovered_folders_count + ?,
                      last_error = NULL,
                      updated_at = ?
-                 WHERE id = ?;"
-            ).unwrap();
+                 WHERE id = ?;",
+                )
+                .unwrap();
             upd_folder.bind((1, state)).unwrap();
             match next_link {
                 Some(link) => upd_folder.bind((2, link.as_str())).unwrap(),
                 None => upd_folder.bind((2, sqlite::Value::Null)).unwrap(),
             }
-            upd_folder.bind((3, if has_more { 1i64 } else { 0i64 })).unwrap();
+            upd_folder
+                .bind((3, if has_more { 1i64 } else { 0i64 }))
+                .unwrap();
             upd_folder.bind((4, files_to_insert.len() as i64)).unwrap();
-            upd_folder.bind((5, folders_to_insert.len() as i64)).unwrap();
+            upd_folder
+                .bind((5, folders_to_insert.len() as i64))
+                .unwrap();
             upd_folder.bind((6, now)).unwrap();
             upd_folder.bind((7, folder.id)).unwrap();
             upd_folder.next().unwrap();

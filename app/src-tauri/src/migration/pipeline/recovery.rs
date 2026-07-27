@@ -29,7 +29,9 @@ pub fn run_crash_recovery(db: &MigrationDb, job_id: i64) -> Result<(), String> {
                 // Trả về Downloaded để processor xử lý lại
                 Some(PipelineStage::Downloaded)
             }
-            PipelineStage::Uploading | PipelineStage::QueuedUpload | PipelineStage::WaitingForQuota => {
+            PipelineStage::Uploading
+            | PipelineStage::QueuedUpload
+            | PipelineStage::WaitingForQuota => {
                 // Đổi thành ReconciliationRequired để kiểm tra trùng lặp trước khi upload lại
                 Some(PipelineStage::ReconciliationRequired)
             }

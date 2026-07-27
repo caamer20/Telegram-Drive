@@ -931,9 +931,10 @@ async fn cmd_upload_file_inner(
     }
 
     // Create progress-tracking reader
-    let (mut reader, file_size, bytes_counter) = ProgressReader::new(&path).await.inspect_err(|_e| {
-        bw_state.release_up(size);
-    })?;
+    let (mut reader, file_size, bytes_counter) =
+        ProgressReader::new(&path).await.inspect_err(|_e| {
+            bw_state.release_up(size);
+        })?;
     let file_name = std::path::Path::new(&path)
         .file_name()
         .map(|n| n.to_string_lossy().to_string())

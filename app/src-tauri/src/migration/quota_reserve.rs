@@ -87,7 +87,8 @@ pub fn reserve_quota(
     stmt.bind((5, expires_at)).map_err(|e| e.to_string())?;
     stmt.next().map_err(|e| e.to_string())?;
 
-    conn.execute("COMMIT;").map_err(|e| format!("reserve_quota: COMMIT failed: {}", e))?;
+    conn.execute("COMMIT;")
+        .map_err(|e| format!("reserve_quota: COMMIT failed: {}", e))?;
     Ok(())
 }
 
@@ -115,21 +116,27 @@ pub fn commit_quota(conn: &Connection, item_id: i64, date_string: &str) -> Resul
         let mut upd_res = conn
             .prepare("UPDATE quota_reservations SET status = 'committed' WHERE id = ?;")
             .map_err(|e| e.to_string())?;
-        upd_res.bind((1, reservation_id)).map_err(|e| e.to_string())?;
+        upd_res
+            .bind((1, reservation_id))
+            .map_err(|e| e.to_string())?;
         upd_res.next().map_err(|e| e.to_string())?;
 
         // 2. Upsert daily_migration_quota
         let mut check_stmt = conn
             .prepare("SELECT used_bytes FROM daily_migration_quota WHERE date_string = ? LIMIT 1;")
             .map_err(|e| e.to_string())?;
-        check_stmt.bind((1, date_string)).map_err(|e| e.to_string())?;
+        check_stmt
+            .bind((1, date_string))
+            .map_err(|e| e.to_string())?;
 
         if let Ok(State::Row) = check_stmt.next() {
             let current: i64 = check_stmt.read(0).unwrap_or(0);
             let mut upd_q = conn
                 .prepare("UPDATE daily_migration_quota SET used_bytes = ?, reset_at = ? WHERE date_string = ?;")
                 .map_err(|e| e.to_string())?;
-            upd_q.bind((1, current + bytes)).map_err(|e| e.to_string())?;
+            upd_q
+                .bind((1, current + bytes))
+                .map_err(|e| e.to_string())?;
             upd_q.bind((2, now)).map_err(|e| e.to_string())?;
             upd_q.bind((3, date_string)).map_err(|e| e.to_string())?;
             upd_q.next().map_err(|e| e.to_string())?;
@@ -144,7 +151,8 @@ pub fn commit_quota(conn: &Connection, item_id: i64, date_string: &str) -> Resul
         }
     }
 
-    conn.execute("COMMIT;").map_err(|e| format!("commit_quota: COMMIT failed: {}", e))?;
+    conn.execute("COMMIT;")
+        .map_err(|e| format!("commit_quota: COMMIT failed: {}", e))?;
     Ok(())
 }
 
@@ -175,7 +183,9 @@ pub fn release_quota(conn: &Connection, item_id: i64, date_string: &str) -> Resu
         let mut check_stmt = conn
             .prepare("SELECT used_bytes FROM daily_migration_quota WHERE date_string = ? LIMIT 1;")
             .map_err(|e| e.to_string())?;
-        check_stmt.bind((1, date_string)).map_err(|e| e.to_string())?;
+        check_stmt
+            .bind((1, date_string))
+            .map_err(|e| e.to_string())?;
 
         if let Ok(State::Row) = check_stmt.next() {
             let current: i64 = check_stmt.read(0).unwrap_or(0);
@@ -189,12 +199,17 @@ pub fn release_quota(conn: &Connection, item_id: i64, date_string: &str) -> Resu
         }
     }
 
-    conn.execute("COMMIT;").map_err(|e| format!("release_quota: COMMIT failed: {}", e))?;
+    conn.execute("COMMIT;")
+        .map_err(|e| format!("release_quota: COMMIT failed: {}", e))?;
     Ok(())
 }
 
 /// Quét dọn dẹp (recovery) các quota reservation bị kẹt khi startup hoặc qua ngày mới
-pub fn run_quota_recovery(conn: &Connection, date_string: &str, now_secs: i64) -> Result<(), String> {
+pub fn run_quota_recovery(
+    conn: &Connection,
+    date_string: &str,
+    now_secs: i64,
+) -> Result<(), String> {
     conn.execute("BEGIN IMMEDIATE TRANSACTION;")
         .map_err(|e| format!("quota_recovery: BEGIN failed: {}", e))?;
 
@@ -227,7 +242,9 @@ pub fn run_quota_recovery(conn: &Connection, date_string: &str, now_secs: i64) -
         let mut check_stmt = conn
             .prepare("SELECT used_bytes FROM daily_migration_quota WHERE date_string = ? LIMIT 1;")
             .map_err(|e| e.to_string())?;
-        check_stmt.bind((1, date_string)).map_err(|e| e.to_string())?;
+        check_stmt
+            .bind((1, date_string))
+            .map_err(|e| e.to_string())?;
 
         if let Ok(State::Row) = check_stmt.next() {
             let current: i64 = check_stmt.read(0).unwrap_or(0);
@@ -241,6 +258,7 @@ pub fn run_quota_recovery(conn: &Connection, date_string: &str, now_secs: i64) -
         }
     }
 
-    conn.execute("COMMIT;").map_err(|e| format!("quota_recovery: COMMIT failed: {}", e))?;
+    conn.execute("COMMIT;")
+        .map_err(|e| format!("quota_recovery: COMMIT failed: {}", e))?;
     Ok(())
 }

@@ -547,8 +547,6 @@ pub struct DeltaScanResume {
     pub entries: Vec<serde_json::Value>,
 }
 
-
-
 pub async fn download_item<F>(
     http: &Client,
     access_token: &str,
@@ -659,4 +657,3 @@ pub async fn delete_onedrive_item(
         return Err(format!("Failed to delete item from OneDrive: {}", text));
     }
 }
-

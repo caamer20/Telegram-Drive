@@ -41,9 +41,9 @@ impl Default for PipelineConfig {
             upload_queue_capacity: 4,
             local_finalizer_queue_capacity: 8,
 
-            download_timeout_secs: 600,   // 10 phút
-            process_timeout_secs: 3600,   // 1 giờ
-            upload_timeout_secs: 600,     // 10 phút
+            download_timeout_secs: 600, // 10 phút
+            process_timeout_secs: 3600, // 1 giờ
+            upload_timeout_secs: 600,   // 10 phút
 
             max_network_retries: 3,
             retry_delay_secs: vec![2, 5, 15],

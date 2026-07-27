@@ -1,6 +1,6 @@
 pub mod classifier;
-pub mod crawler;
 pub mod config;
+pub mod crawler;
 pub mod recovery;
 pub mod runner;
 pub mod stages;
@@ -8,6 +8,4 @@ pub mod transitions;
 
 pub use config::PipelineConfig;
 pub use runner::PipelineRunner;
-pub use stages::{
-    PipelineStage, TelegramMediaKind, TelegramUploadRequest, TelegramUploadResult,
-};
+pub use stages::{PipelineStage, TelegramMediaKind, TelegramUploadRequest, TelegramUploadResult};

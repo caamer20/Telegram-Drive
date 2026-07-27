@@ -29,7 +29,7 @@ pub struct MigrationState {
     pub scan_running: Arc<AtomicBool>,
     pub scan_stop_requested: Arc<AtomicBool>,
 
-    pub cancel_token: Arc<AtomicBool>,
+    pub cancel_token: tokio_util::sync::CancellationToken,
     pub pause_token: Arc<AtomicBool>,
     /// Active pipeline run (only one at a time)
     pub active_pipeline: Arc<TokioMutex<Option<ActivePipeline>>>,
@@ -50,7 +50,7 @@ impl MigrationState {
             worker_running: Arc::new(AtomicBool::new(false)),
             scan_running: Arc::new(AtomicBool::new(false)),
             scan_stop_requested: Arc::new(AtomicBool::new(false)),
-            cancel_token: Arc::new(AtomicBool::new(false)),
+            cancel_token: tokio_util::sync::CancellationToken::new(),
             pause_token: Arc::new(AtomicBool::new(false)),
             active_pipeline: Arc::new(TokioMutex::new(None)),
         }
@@ -63,7 +63,7 @@ impl MigrationState {
             worker_running: self.worker_running.clone(),
             scan_running: self.scan_running.clone(),
             scan_stop_requested: self.scan_stop_requested.clone(),
-            cancel_token: Arc::new(AtomicBool::new(false)),
+            cancel_token: tokio_util::sync::CancellationToken::new(),
             pause_token: Arc::new(AtomicBool::new(false)),
             active_pipeline: self.active_pipeline.clone(),
         })

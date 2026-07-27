@@ -173,7 +173,7 @@ impl PipelineRunner {
             cancel_token: self.cancel_token.clone(),
         };
         let crawler_arc = Arc::new(crawler);
-        
+
         let runner_for_loader = self.clone();
         let download_tx_loader = download_tx.clone();
         let process_tx_loader = process_tx.clone();
@@ -181,12 +181,14 @@ impl PipelineRunner {
         let local_tx_loader = local_tx.clone();
 
         let planner_handle = tokio::spawn(async move {
-            let _ = runner_for_loader.dispatch_recovering_items(
-                download_tx_loader,
-                process_tx_loader,
-                upload_tx_loader,
-                local_tx_loader,
-            ).await;
+            let _ = runner_for_loader
+                .dispatch_recovering_items(
+                    download_tx_loader,
+                    process_tx_loader,
+                    upload_tx_loader,
+                    local_tx_loader,
+                )
+                .await;
             let _ = crawler_arc.run(download_tx).await;
         });
 
@@ -218,7 +220,9 @@ impl PipelineRunner {
         let runner_clone = self.clone();
         let upload_tx_uploader = upload_tx.clone();
         let upload_handle = tokio::spawn(async move {
-            let _ = runner_clone.run_uploader(upload_rx, upload_tx_uploader, uploader).await;
+            let _ = runner_clone
+                .run_uploader(upload_rx, upload_tx_uploader, uploader)
+                .await;
         });
 
         // 5. Task Local Finalizer (di chuyển tệp backup local)
@@ -275,20 +279,20 @@ impl PipelineRunner {
     /// Finalize job state based on item outcomes
     async fn finalize_job(&self) -> Result<(), String> {
         let conn = self.db.lock().map_err(|e| e.to_string())?;
-        
+
         // Count items by stage
         let mut stmt = conn.prepare(
             "SELECT pipeline_stage, COUNT(*) FROM migration_items WHERE job_id = ? GROUP BY pipeline_stage"
         ).map_err(|e| e.to_string())?;
         stmt.bind((1, self.job_id)).map_err(|e| e.to_string())?;
-        
+
         let mut failed_count: i64 = 0;
         let mut completed_telegram: i64 = 0;
         let mut completed_local: i64 = 0;
         let mut waiting_quota: i64 = 0;
         let mut reconciliation: i64 = 0;
         let mut pending_count: i64 = 0;
-        
+
         while let Ok(sqlite::State::Row) = stmt.next() {
             let stage: String = stmt.read(0).unwrap_or_default();
             let count: i64 = stmt.read(1).unwrap_or(0);
@@ -301,12 +305,12 @@ impl PipelineRunner {
                 _ => pending_count += count,
             }
         }
-        
+
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_millis() as i64;
-        
+
         let job_state = if self.cancel_token.is_stopped() {
             "stopped"
         } else if waiting_quota > 0 && pending_count == 0 {
@@ -316,19 +320,21 @@ impl PipelineRunner {
         } else {
             "completed"
         };
-        
+
         let mut upd = conn.prepare(
             "UPDATE migration_jobs SET state = ?, completed_items = ?, failed_items = ?, waiting_items = ?, completed_at = ?, updated_at = ? WHERE id = ?"
         ).map_err(|e| e.to_string())?;
         upd.bind((1, job_state)).map_err(|e| e.to_string())?;
-        upd.bind((2, completed_telegram + completed_local)).map_err(|e| e.to_string())?;
+        upd.bind((2, completed_telegram + completed_local))
+            .map_err(|e| e.to_string())?;
         upd.bind((3, failed_count)).map_err(|e| e.to_string())?;
-        upd.bind((4, waiting_quota + reconciliation)).map_err(|e| e.to_string())?;
+        upd.bind((4, waiting_quota + reconciliation))
+            .map_err(|e| e.to_string())?;
         upd.bind((5, now)).map_err(|e| e.to_string())?;
         upd.bind((6, now)).map_err(|e| e.to_string())?;
         upd.bind((7, self.job_id)).map_err(|e| e.to_string())?;
         upd.next().map_err(|e| e.to_string())?;
-        
+
         Ok(())
     }
 
@@ -340,7 +346,8 @@ impl PipelineRunner {
         local_tx: mpsc::Sender<PipelineItem>,
     ) -> Result<(), String> {
         // Recover all non-terminal items on pipeline start/restart
-        let terminal_stages = "'completed_telegram', 'completed_local', 'failed', 'reconciliation_required'";
+        let terminal_stages =
+            "'completed_telegram', 'completed_local', 'failed', 'reconciliation_required'";
         let items = {
             let conn = self.db.lock().map_err(|e| e.to_string())?;
             let query = format!(
@@ -352,9 +359,9 @@ impl PipelineRunner {
                 terminal_stages
             );
             let mut stmt = conn.prepare(&query).map_err(|e| e.to_string())?;
-            
+
             stmt.bind((1, self.job_id)).map_err(|e| e.to_string())?;
-            
+
             let mut items = Vec::new();
             while let Ok(sqlite::State::Row) = stmt.next() {
                 let id: i64 = stmt.read(0).unwrap();
@@ -370,7 +377,7 @@ impl PipelineRunner {
                 let state: String = stmt.read(10).unwrap();
                 let original_path: Option<String> = stmt.read(11).unwrap_or_default();
                 let processed_path: Option<String> = stmt.read(12).unwrap_or_default();
-                
+
                 items.push(PipelineItem {
                     id,
                     job_id,
@@ -405,52 +412,93 @@ impl PipelineRunner {
                 // Items that need (re-)download
                 "discovered" | "queued_download" | "downloading" => {
                     // Reset downloading items — .part files will be cleaned up by downloader
-                    let _ = update_item_pipeline_stage(&self.db, item.id, PipelineStage::QueuedDownload);
+                    let _ = update_item_pipeline_stage(
+                        &self.db,
+                        item.id,
+                        PipelineStage::QueuedDownload,
+                    );
                     let _ = download_tx.send(item).await;
                 }
                 // Items already downloaded — verify and route
-                "downloaded" | "queued_processing" | "processing" | "processed" | "queued_upload" | "uploading" => {
+                "downloaded" | "queued_processing" | "processing" | "processed"
+                | "queued_upload" | "uploading" => {
                     // Check if processed artifact exists and is valid
                     let workspace = &self.workspace_dir;
-                    let processed_exists = std::path::Path::new(item.processed_artifact_path.as_deref().unwrap_or("")).exists();
-                    let original_exists = std::path::Path::new(item.local_artifact_path.as_deref().unwrap_or("")).exists();
-                    
-                    let category = crate::migration::pipeline::classifier::classify_file(&item.name);
-                    
-                    if processed_exists && matches!(category, crate::migration::pipeline::classifier::FileCategory::Video) {
+                    let processed_exists =
+                        std::path::Path::new(item.processed_artifact_path.as_deref().unwrap_or(""))
+                            .exists();
+                    let original_exists =
+                        std::path::Path::new(item.local_artifact_path.as_deref().unwrap_or(""))
+                            .exists();
+
+                    let category =
+                        crate::migration::pipeline::classifier::classify_file(&item.name);
+
+                    if processed_exists
+                        && matches!(
+                            category,
+                            crate::migration::pipeline::classifier::FileCategory::Video
+                        )
+                    {
                         // Has processed video → retry upload
-                        let _ = update_item_pipeline_stage(&self.db, item.id, PipelineStage::QueuedUpload);
+                        let _ = update_item_pipeline_stage(
+                            &self.db,
+                            item.id,
+                            PipelineStage::QueuedUpload,
+                        );
                         let _ = upload_tx.send(item).await;
                     } else if original_exists {
                         // Has original file → route based on category
                         match category {
                             crate::migration::pipeline::classifier::FileCategory::Video => {
-                                let _ = update_item_pipeline_stage(&self.db, item.id, PipelineStage::QueuedProcessing);
+                                let _ = update_item_pipeline_stage(
+                                    &self.db,
+                                    item.id,
+                                    PipelineStage::QueuedProcessing,
+                                );
                                 let _ = process_tx.send(item).await;
                             }
                             crate::migration::pipeline::classifier::FileCategory::Image => {
-                                let _ = update_item_pipeline_stage(&self.db, item.id, PipelineStage::QueuedUpload);
+                                let _ = update_item_pipeline_stage(
+                                    &self.db,
+                                    item.id,
+                                    PipelineStage::QueuedUpload,
+                                );
                                 let _ = upload_tx.send(item).await;
                             }
                             crate::migration::pipeline::classifier::FileCategory::Other => {
-                                let _ = update_item_pipeline_stage(&self.db, item.id, PipelineStage::SavingLocal);
+                                let _ = update_item_pipeline_stage(
+                                    &self.db,
+                                    item.id,
+                                    PipelineStage::SavingLocal,
+                                );
                                 let _ = local_tx.send(item).await;
                             }
                         }
                     } else {
                         // No artifacts — re-download
-                        let _ = update_item_pipeline_stage(&self.db, item.id, PipelineStage::QueuedDownload);
+                        let _ = update_item_pipeline_stage(
+                            &self.db,
+                            item.id,
+                            PipelineStage::QueuedDownload,
+                        );
                         let _ = download_tx.send(item).await;
                     }
                 }
                 // Items needing local finalization
                 "saving_local" => {
-                    let original_exists = std::path::Path::new(item.local_artifact_path.as_deref().unwrap_or("")).exists();
+                    let original_exists =
+                        std::path::Path::new(item.local_artifact_path.as_deref().unwrap_or(""))
+                            .exists();
                     if original_exists {
                         let _ = local_tx.send(item).await;
                     } else {
                         // No artifact — download first
-                        let _ = update_item_pipeline_stage(&self.db, item.id, PipelineStage::QueuedDownload);
+                        let _ = update_item_pipeline_stage(
+                            &self.db,
+                            item.id,
+                            PipelineStage::QueuedDownload,
+                        );
                         let _ = download_tx.send(item).await;
                     }
                 }
@@ -464,8 +512,16 @@ impl PipelineRunner {
                     let _ = upload_tx.send(item).await;
                 }
                 _ => {
-                    log::warn!("Recovery: unknown stage '{}' for item {} — queuing for download", stage, item.id);
-                    let _ = update_item_pipeline_stage(&self.db, item.id, PipelineStage::QueuedDownload);
+                    log::warn!(
+                        "Recovery: unknown stage '{}' for item {} — queuing for download",
+                        stage,
+                        item.id
+                    );
+                    let _ = update_item_pipeline_stage(
+                        &self.db,
+                        item.id,
+                        PipelineStage::QueuedDownload,
+                    );
                     let _ = download_tx.send(item).await;
                 }
             }
@@ -494,8 +550,6 @@ impl PipelineRunner {
         }
     }
 
-
-
     /// Task Downloader tải tệp và định tuyến
     async fn run_downloader(
         &self,
@@ -507,7 +561,10 @@ impl PipelineRunner {
     ) -> Result<(), String> {
         let rx = Arc::new(tokio::sync::Mutex::new(rx));
         let mut workers = Vec::new();
-        println!("Downloader loop started with {} workers", self.config.download_concurrency);
+        println!(
+            "Downloader loop started with {} workers",
+            self.config.download_concurrency
+        );
 
         for _ in 0..self.config.download_concurrency {
             let rx_clone = rx.clone();
@@ -534,127 +591,138 @@ impl PipelineRunner {
                         None => break, // Channel closed
                     };
 
-                println!("Downloader task active for item {}", item.id);
+                    println!("Downloader task active for item {}", item.id);
 
-                // 1. Chuyển sang Downloading
-                if let Err(e) =
-                    update_item_pipeline_stage(&db_clone, item.id, PipelineStage::Downloading)
-                {
-                    println!(
-                        "Downloader failed to update stage to Downloading for item {}: {}",
-                        item.id, e
-                    );
-                }
-
-
-                let category = classify_file(&item.name);
-
-                // 3. Thực hiện tải (ghi tệp tạm .part rồi rename)
-                let part_path = workspace.join(format!("{}.part", item.id));
-                let final_path = workspace.join(format!("{}", item.id));
-
-                if let Some(source_id) = &item.source_item_id {
-                    println!("Downloader starting download_file for item {}", item.id);
-                    match downloader_clone
-                        .download_file(item.id, source_id, &part_path)
-                        .await
+                    // 1. Chuyển sang Downloading
+                    if let Err(e) =
+                        update_item_pipeline_stage(&db_clone, item.id, PipelineStage::Downloading)
                     {
-                        Ok(sha256) => {
-                            println!(
-                                "Downloader download_file OK for item {}, sha256={}",
-                                item.id, sha256
-                            );
-                            // Đảm bảo tạo directory đích
-                            if let Some(parent) = final_path.parent() {
-                                let _ = std::fs::create_dir_all(parent);
+                        println!(
+                            "Downloader failed to update stage to Downloading for item {}: {}",
+                            item.id, e
+                        );
+                    }
+
+                    let category = classify_file(&item.name);
+
+                    // 3. Thực hiện tải (ghi tệp tạm .part rồi rename)
+                    let part_path = workspace.join(format!("{}.part", item.id));
+                    let final_path = workspace.join(format!("{}", item.id));
+
+                    if let Some(source_id) = &item.source_item_id {
+                        println!("Downloader starting download_file for item {}", item.id);
+                        match downloader_clone
+                            .download_file(item.id, source_id, &part_path)
+                            .await
+                        {
+                            Ok(sha256) => {
+                                println!(
+                                    "Downloader download_file OK for item {}, sha256={}",
+                                    item.id, sha256
+                                );
+                                // Đảm bảo tạo directory đích
+                                if let Some(parent) = final_path.parent() {
+                                    let _ = std::fs::create_dir_all(parent);
+                                }
+                                // Atomic Rename
+                                if let Err(e) = std::fs::rename(&part_path, &final_path) {
+                                    println!(
+                                        "Downloader rename failed for item {}: {}",
+                                        item.id, e
+                                    );
+                                    let _ = update_item_pipeline_stage(
+                                        &db_clone,
+                                        item.id,
+                                        PipelineStage::Failed,
+                                    );
+                                    // Release disk on rename failure
+                                    {}
+                                } else {
+                                    println!("Downloader rename OK for item {}", item.id);
+                                    item.original_sha256 = Some(sha256.clone());
+                                    // Update original hash + path + size in DB
+                                    {
+                                        let conn = db_clone.lock().unwrap();
+                                        let file_meta = std::fs::metadata(&final_path).ok();
+                                        let file_size =
+                                            file_meta.map(|m| m.len() as i64).unwrap_or(0);
+                                        let mut upd_hash = conn.prepare(
+                                        "UPDATE migration_items SET original_sha256 = ?, original_artifact_path = ?, artifact_size = ? WHERE id = ?;"
+                                    ).unwrap();
+                                        upd_hash.bind((1, sha256.as_str())).unwrap();
+                                        upd_hash
+                                            .bind((2, final_path.to_str().unwrap_or_default()))
+                                            .unwrap();
+                                        upd_hash.bind((3, file_size)).unwrap();
+                                        upd_hash.bind((4, item.id)).unwrap();
+                                        upd_hash.next().unwrap();
+                                    }
+
+                                    if let Err(e) = update_item_pipeline_stage(
+                                        &db_clone,
+                                        item.id,
+                                        PipelineStage::Downloaded,
+                                    ) {
+                                        println!("Downloader failed to update stage to Downloaded for item {}: {}", item.id, e);
+                                    }
+
+                                    // 4. Giải phóng disk reservation
+                                    {
+                                        let _conn = db_clone.lock().unwrap();
+                                    }
+
+                                    println!(
+                                        "Downloader routing item {} as {:?}",
+                                        item.id, category
+                                    );
+
+                                    // 5. Định tuyến (routing)
+                                    match category {
+                                        FileCategory::Video => {
+                                            let _ = update_item_pipeline_stage(
+                                                &db_clone,
+                                                item.id,
+                                                PipelineStage::QueuedProcessing,
+                                            );
+                                            let _ = process_tx_clone.send(item).await;
+                                        }
+                                        FileCategory::Image => {
+                                            let _ = update_item_pipeline_stage(
+                                                &db_clone,
+                                                item.id,
+                                                PipelineStage::QueuedUpload,
+                                            );
+                                            let _ = upload_tx_clone.send(item).await;
+                                        }
+                                        FileCategory::Other => {
+                                            let _ = update_item_pipeline_stage(
+                                                &db_clone,
+                                                item.id,
+                                                PipelineStage::SavingLocal,
+                                            );
+                                            let _ = local_tx_clone.send(item).await;
+                                        }
+                                    }
+                                }
                             }
-                            // Atomic Rename
-                            if let Err(e) = std::fs::rename(&part_path, &final_path) {
-                                println!("Downloader rename failed for item {}: {}", item.id, e);
+                            Err(e) => {
+                                println!(
+                                    "Downloader download_file Err for item {}: {}",
+                                    item.id, e
+                                );
                                 let _ = update_item_pipeline_stage(
                                     &db_clone,
                                     item.id,
                                     PipelineStage::Failed,
                                 );
-                                // Release disk on rename failure
-                                {
-                            }
-                            } else {
-                                println!("Downloader rename OK for item {}", item.id);
-                                item.original_sha256 = Some(sha256.clone());
-                                // Update original hash + path + size in DB
-                                {
-                                    let conn = db_clone.lock().unwrap();
-                                    let file_meta = std::fs::metadata(&final_path).ok();
-                                    let file_size = file_meta.map(|m| m.len() as i64).unwrap_or(0);
-                                    let mut upd_hash = conn.prepare(
-                                        "UPDATE migration_items SET original_sha256 = ?, original_artifact_path = ?, artifact_size = ? WHERE id = ?;"
-                                    ).unwrap();
-                                    upd_hash.bind((1, sha256.as_str())).unwrap();
-                                    upd_hash.bind((2, final_path.to_str().unwrap_or_default())).unwrap();
-                                    upd_hash.bind((3, file_size)).unwrap();
-                                    upd_hash.bind((4, item.id)).unwrap();
-                                    upd_hash.next().unwrap();
-                                }
-
-                                if let Err(e) = update_item_pipeline_stage(
-                                    &db_clone,
-                                    item.id,
-                                    PipelineStage::Downloaded,
-                                ) {
-                                    println!("Downloader failed to update stage to Downloaded for item {}: {}", item.id, e);
-                                }
-
-                                // 4. Giải phóng disk reservation
-                                {
-                                    let _conn = db_clone.lock().unwrap();
-                                }
-
-                                println!("Downloader routing item {} as {:?}", item.id, category);
-
-                                // 5. Định tuyến (routing)
-                                match category {
-                                    FileCategory::Video => {
-                                        let _ = update_item_pipeline_stage(
-                                            &db_clone,
-                                            item.id,
-                                            PipelineStage::QueuedProcessing,
-                                        );
-                                        let _ = process_tx_clone.send(item).await;
-                                    }
-                                    FileCategory::Image => {
-                                        let _ = update_item_pipeline_stage(
-                                            &db_clone,
-                                            item.id,
-                                            PipelineStage::QueuedUpload,
-                                        );
-                                        let _ = upload_tx_clone.send(item).await;
-                                    }
-                                    FileCategory::Other => {
-                                        let _ = update_item_pipeline_stage(
-                                            &db_clone,
-                                            item.id,
-                                            PipelineStage::SavingLocal,
-                                        );
-                                        let _ = local_tx_clone.send(item).await;
-                                    }
-                                }
+                                let _ = std::fs::remove_file(&part_path);
                             }
                         }
-                        Err(e) => {
-                            println!("Downloader download_file Err for item {}: {}", item.id, e);
-                            let _ = update_item_pipeline_stage(
-                                &db_clone,
-                                item.id,
-                                PipelineStage::Failed,
-                            );
-                            let _ = std::fs::remove_file(&part_path);
-                        }
+                    } else {
+                        println!("Downloader source_item_id is None for item {}", item.id);
+                        let _ =
+                            update_item_pipeline_stage(&db_clone, item.id, PipelineStage::Failed);
                     }
-                } else {
-                    println!("Downloader source_item_id is None for item {}", item.id);
-                    let _ = update_item_pipeline_stage(&db_clone, item.id, PipelineStage::Failed);
-                }
                 }
             });
             workers.push(handle);
@@ -697,7 +765,7 @@ impl PipelineRunner {
                     if cancel.is_cancelled() || cancel.is_stopped() {
                         break;
                     }
-                    
+
                     let item_opt = {
                         let mut guard = rx_clone.lock().await;
                         guard.recv().await
@@ -707,116 +775,143 @@ impl PipelineRunner {
                         None => break,
                     };
 
-                let _ = update_item_pipeline_stage(&db_clone, item.id, PipelineStage::Processing);
+                    let _ =
+                        update_item_pipeline_stage(&db_clone, item.id, PipelineStage::Processing);
 
-                let input_path = workspace.join(format!("{}", item.id));
-                let output_path = workspace.join(format!("{}.processed.mp4", item.id));
+                    let input_path = workspace.join(format!("{}", item.id));
+                    let output_path = workspace.join(format!("{}.processed.mp4", item.id));
 
-                // Inspect video
-                match inspector_clone.inspect_file(&input_path).await {
-                    Ok(meta) => {
-                        let is_hdr = meta.color_transfer == "smpte2084"
-                            || meta.color_transfer == "arib-std-b67"
-                            || meta.pixel_format.contains("10")
-                            || meta.profile.to_ascii_lowercase().contains("10");
+                    // Inspect video
+                    match inspector_clone.inspect_file(&input_path).await {
+                        Ok(meta) => {
+                            let is_hdr = meta.color_transfer == "smpte2084"
+                                || meta.color_transfer == "arib-std-b67"
+                                || meta.pixel_format.contains("10")
+                                || meta.profile.to_ascii_lowercase().contains("10");
 
-                        let is_hevc = meta.video_codec == "hevc" || meta.video_codec == "h265";
-                        let is_mp4 = meta.container == "mp4" || meta.container.contains("mp4");
-                        let valid_audio = meta.audio_codec.is_empty() || meta.audio_codec == "aac";
-                        let valid_res = meta.width <= 1920 && meta.height <= 1080;
-                        let valid_fps = meta.fps <= 60.0;
+                            let is_hevc = meta.video_codec == "hevc" || meta.video_codec == "h265";
+                            let is_mp4 = meta.container == "mp4" || meta.container.contains("mp4");
+                            let valid_audio =
+                                meta.audio_codec.is_empty() || meta.audio_codec == "aac";
+                            let valid_res = meta.width <= 1920 && meta.height <= 1080;
+                            let valid_fps = meta.fps <= 60.0;
 
-                        let decision = if is_hdr {
-                            if is_hevc && is_mp4 && valid_audio && valid_res && valid_fps && meta.is_valid {
-                                "canonical_passthrough_main10"
+                            let decision = if is_hdr {
+                                if is_hevc
+                                    && is_mp4
+                                    && valid_audio
+                                    && valid_res
+                                    && valid_fps
+                                    && meta.is_valid
+                                {
+                                    "canonical_passthrough_main10"
+                                } else {
+                                    "canonical_transcode_main10"
+                                }
                             } else {
-                                "canonical_transcode_main10"
-                            }
-                        } else {
-                            if is_hevc && is_mp4 && valid_audio && valid_res && valid_fps && meta.is_valid && meta.pixel_format == "yuv420p" {
-                                "canonical_passthrough_main8"
-                            } else {
-                                "canonical_transcode_main8"
-                            }
-                        };
+                                if is_hevc
+                                    && is_mp4
+                                    && valid_audio
+                                    && valid_res
+                                    && valid_fps
+                                    && meta.is_valid
+                                    && meta.pixel_format == "yuv420p"
+                                {
+                                    "canonical_passthrough_main8"
+                                } else {
+                                    "canonical_transcode_main8"
+                                }
+                            };
 
-                        item.video_decision = Some(decision.to_string());
+                            item.video_decision = Some(decision.to_string());
 
-                        // Cập nhật decision
-                        {
-                            let conn = db_clone.lock().unwrap();
-                            let mut upd = conn
+                            // Cập nhật decision
+                            {
+                                let conn = db_clone.lock().unwrap();
+                                let mut upd = conn
                                 .prepare(
                                     "UPDATE migration_items SET video_decision = ? WHERE id = ?;",
                                 )
                                 .unwrap();
-                            upd.bind((1, decision)).unwrap();
-                            upd.bind((2, item.id)).unwrap();
-                            upd.next().unwrap();
-                        }
+                                upd.bind((1, decision)).unwrap();
+                                upd.bind((2, item.id)).unwrap();
+                                upd.next().unwrap();
+                            }
 
-                        if decision.starts_with("canonical_passthrough") {
-                            let _ = update_item_pipeline_stage(
-                                &db_clone,
-                                item.id,
-                                PipelineStage::QueuedUpload,
-                            );
-                            let _ = upload_tx_clone.send(item).await;
-                        } else {
-                            // Gọi FFmpeg processor
-                            match processor_clone
-                                .process_video(&input_path, &output_path, decision, item.id, item.job_id, meta.duration, &item.name)
-                                .await
-                            {
-                                Ok(proc_hash) => {
-                                    item.processed_sha256 = Some(proc_hash.clone());
-                                    // Update processed hash + path
-                                    {
-                                        let conn = db_clone.lock().unwrap();
-                                        let mut upd = conn.prepare(
+                            if decision.starts_with("canonical_passthrough") {
+                                let _ = update_item_pipeline_stage(
+                                    &db_clone,
+                                    item.id,
+                                    PipelineStage::QueuedUpload,
+                                );
+                                let _ = upload_tx_clone.send(item).await;
+                            } else {
+                                // Gọi FFmpeg processor
+                                match processor_clone
+                                    .process_video(
+                                        &input_path,
+                                        &output_path,
+                                        decision,
+                                        item.id,
+                                        item.job_id,
+                                        meta.duration, meta.fps, &item.name,
+                                    )
+                                    .await
+                                {
+                                    Ok(proc_hash) => {
+                                        item.processed_sha256 = Some(proc_hash.clone());
+                                        // Update processed hash + path
+                                        {
+                                            let conn = db_clone.lock().unwrap();
+                                            let mut upd = conn.prepare(
                                             "UPDATE migration_items SET processed_sha256 = ?, processed_artifact_path = ?, artifact_size = ? WHERE id = ?;"
                                         ).unwrap();
-                                        upd.bind((1, proc_hash.as_str())).unwrap();
-                                        upd.bind((2, output_path.to_str().unwrap_or_default())).unwrap();
-                                        let out_meta = std::fs::metadata(&output_path).ok();
-                                        let out_size = out_meta.map(|m| m.len() as i64).unwrap_or(0);
-                                        upd.bind((3, out_size)).unwrap();
-                                        upd.bind((4, item.id)).unwrap();
-                                        upd.next().unwrap();
+                                            upd.bind((1, proc_hash.as_str())).unwrap();
+                                            upd.bind((2, output_path.to_str().unwrap_or_default()))
+                                                .unwrap();
+                                            let out_meta = std::fs::metadata(&output_path).ok();
+                                            let out_size =
+                                                out_meta.map(|m| m.len() as i64).unwrap_or(0);
+                                            upd.bind((3, out_size)).unwrap();
+                                            upd.bind((4, item.id)).unwrap();
+                                            upd.next().unwrap();
+                                        }
+
+                                        let item_id = item.id;
+                                        let _ = update_item_pipeline_stage(
+                                            &db_clone,
+                                            item_id,
+                                            PipelineStage::Processed,
+                                        );
+                                        println!("Processor sending item {} to upload_tx", item_id);
+                                        let _ = upload_tx_clone.send(item).await;
+
+                                        // Dọn dẹp tệp tin gốc sau remux/transcode thành công
+                                        // Yêu cầu: Không xóa file gốc ở đây, giữ lại cho đến khi Telegram Confirmed
                                     }
-
-                                    let item_id = item.id;
-                                    let _ = update_item_pipeline_stage(
-                                        &db_clone,
-                                        item_id,
-                                        PipelineStage::Processed,
-                                    );
-                                    println!("Processor sending item {} to upload_tx", item_id);
-                                    let _ = upload_tx_clone.send(item).await;
-
-                                    // Dọn dẹp tệp tin gốc sau remux/transcode thành công
-                                    // Yêu cầu: Không xóa file gốc ở đây, giữ lại cho đến khi Telegram Confirmed
-                                }
-                                Err(_) => {
-                                    let _ = update_item_pipeline_stage(
-                                        &db_clone,
-                                        item.id,
-                                        PipelineStage::Failed,
-                                    );
+                                    Err(_) => {
+                                        let _ = update_item_pipeline_stage(
+                                            &db_clone,
+                                            item.id,
+                                            PipelineStage::Failed,
+                                        );
+                                    }
                                 }
                             }
                         }
+                        Err(_) => {
+                            let _ = update_item_pipeline_stage(
+                                &db_clone,
+                                item.id,
+                                PipelineStage::Failed,
+                            );
+                        }
                     }
-                    Err(_) => {
-                        let _ =
-                            update_item_pipeline_stage(&db_clone, item.id, PipelineStage::Failed);
-                    }
-                }
                 }
             });
             workers.push(handle);
         }
-        
+
         for w in workers {
             if let Err(e) = w.await {
                 let err_msg = if e.is_panic() {
@@ -854,7 +949,7 @@ impl PipelineRunner {
                     if cancel.is_cancelled() || cancel.is_stopped() {
                         break;
                     }
-                    
+
                     let item_opt = {
                         let mut guard = rx_clone.lock().await;
                         guard.recv().await
@@ -865,253 +960,263 @@ impl PipelineRunner {
                     };
 
                     println!("Uploader loop received item {}", item.id);
-            // Enforce flood wait check before uploading
-            let wait_until = {
-                let conn = db_clone.lock().unwrap();
-                let mut stmt = conn.prepare("SELECT flood_wait_until FROM migration_jobs WHERE id = ? LIMIT 1").unwrap();
-                stmt.bind((1, item.job_id)).unwrap();
-                if let Ok(sqlite::State::Row) = stmt.next() {
-                    stmt.read::<i64, _>(0).unwrap_or(0)
-                } else {
-                    0
-                }
-            };
-
-            let now = Utc::now().timestamp();
-            if wait_until > now {
-                let sleep_secs = (wait_until - now) as u64;
-                log::info!("Upload: Job {} is under FloodWait, sleeping for {} seconds (non-blocking)", item.job_id, sleep_secs);
-                let _ = update_item_pipeline_stage(&db_clone, item.id, PipelineStage::WaitingForQuota);
-                let upload_tx_requeue = upload_tx_clone.clone();
-                let item_requeue = item.clone();
-                tokio::spawn(async move {
-                    tokio::time::sleep(tokio::time::Duration::from_secs(sleep_secs)).await;
-                    let _ = upload_tx_requeue.send(item_requeue).await;
-                });
-                continue;
-            }
-
-            println!("Uploader spawned task active for item {}", item.id);
-
-                // Chọn đúng tệp processed hoặc original để upload
-                
-                let (file_path, artifact_size) = {
-                    let path = if let Some(p) = &item.processed_artifact_path {
-                        std::path::PathBuf::from(p)
-                    } else if let Some(p) = &item.local_artifact_path {
-                        std::path::PathBuf::from(p)
-                    } else {
-                        workspace.join(format!("{}", item.id))
+                    // Enforce flood wait check before uploading
+                    let wait_until = {
+                        let conn = db_clone.lock().unwrap();
+                        let mut stmt = conn
+                            .prepare(
+                                "SELECT flood_wait_until FROM migration_jobs WHERE id = ? LIMIT 1",
+                            )
+                            .unwrap();
+                        stmt.bind((1, item.job_id)).unwrap();
+                        if let Ok(sqlite::State::Row) = stmt.next() {
+                            stmt.read::<i64, _>(0).unwrap_or(0)
+                        } else {
+                            0
+                        }
                     };
-                    let size = std::fs::metadata(&path)
-                        .map(|m| m.len() as i64)
-                        .unwrap_or(item.size_bytes);
-                    (path, size)
-                };
 
-                // Quota check — atomic reserve before upload
-                let date_string = Utc::now().format("%Y-%m-%d").to_string();
-                let reserved = {
-                    let conn = db_clone.lock().unwrap();
-                    reserve_quota(
-                        &conn,
-                        item.id,
-                        item.job_id,
-                        &date_string,
-                        artifact_size,
-                        7200, // 2 hour expiry
-                    )
-                };
-                
-                match reserved {
-                    Ok(_) => {},
-                    Err(e) => {
-                        log::warn!("Upload: quota reserve failed for item {}: {} — requeuing in 5 mins", item.id, e);
-                        let _ = update_item_pipeline_stage(&db_clone, item.id, PipelineStage::WaitingForQuota);
+                    let now = Utc::now().timestamp();
+                    if wait_until > now {
+                        let sleep_secs = (wait_until - now) as u64;
+                        log::info!("Upload: Job {} is under FloodWait, sleeping for {} seconds (non-blocking)", item.job_id, sleep_secs);
+                        let _ = update_item_pipeline_stage(
+                            &db_clone,
+                            item.id,
+                            PipelineStage::WaitingForQuota,
+                        );
                         let upload_tx_requeue = upload_tx_clone.clone();
                         let item_requeue = item.clone();
                         tokio::spawn(async move {
-                            tokio::time::sleep(tokio::time::Duration::from_secs(300)).await;
+                            tokio::time::sleep(tokio::time::Duration::from_secs(sleep_secs)).await;
                             let _ = upload_tx_requeue.send(item_requeue).await;
                         });
                         continue;
                     }
-                }
-                
-                if cancel.is_cancelled() || cancel.is_stopped() {
-                    return; // Exit worker
-                }
 
-                let _ = update_item_pipeline_stage(&db_clone, item.id, PipelineStage::Uploading);
+                    println!("Uploader spawned task active for item {}", item.id);
 
-                // Sinh deterministic random_id
-                let upload_attempt_id =
-                    format!("job_{}_item_{}_attempt_1", item.job_id, item.id);
-                let random_id = get_deterministic_random_id(&upload_attempt_id);
+                    // Chọn đúng tệp processed hoặc original để upload
 
-                // Determine media kind
-                let media_kind = match classify_file(&item.name) {
-                    FileCategory::Video => TelegramMediaKind::Video,
-                    FileCategory::Image => TelegramMediaKind::Image,
-                    FileCategory::Other => TelegramMediaKind::Other,
-                };
+                    let (file_path, artifact_size) = {
+                        let path = if let Some(p) = &item.processed_artifact_path {
+                            std::path::PathBuf::from(p)
+                        } else if let Some(p) = &item.local_artifact_path {
+                            std::path::PathBuf::from(p)
+                        } else {
+                            workspace.join(format!("{}", item.id))
+                        };
+                        let size = std::fs::metadata(&path)
+                            .map(|m| m.len() as i64)
+                            .unwrap_or(item.size_bytes);
+                        (path, size)
+                    };
 
-                let request = TelegramUploadRequest {
-                    job_id: item.job_id,
-                    item_id: item.id,
-                    path: file_path.clone(),
-                    filename: if media_kind == TelegramMediaKind::Video {
-                        let mut name = item.name.clone();
-                        if let Some(idx) = name.rfind('.') {
-                            name.truncate(idx);
+                    // Quota check — atomic reserve before upload
+                    let date_string = Utc::now().format("%Y-%m-%d").to_string();
+                    let reserved = {
+                        let conn = db_clone.lock().unwrap();
+                        reserve_quota(
+                            &conn,
+                            item.id,
+                            item.job_id,
+                            &date_string,
+                            artifact_size,
+                            7200, // 2 hour expiry
+                        )
+                    };
+
+                    match reserved {
+                        Ok(_) => {}
+                        Err(e) => {
+                            log::warn!("Upload: quota reserve failed for item {}: {} — requeuing in 5 mins", item.id, e);
+                            let _ = update_item_pipeline_stage(
+                                &db_clone,
+                                item.id,
+                                PipelineStage::WaitingForQuota,
+                            );
+                            let upload_tx_requeue = upload_tx_clone.clone();
+                            let item_requeue = item.clone();
+                            tokio::spawn(async move {
+                                tokio::time::sleep(tokio::time::Duration::from_secs(300)).await;
+                                let _ = upload_tx_requeue.send(item_requeue).await;
+                            });
+                            continue;
                         }
-                        format!("{}.mp4", name)
-                    } else {
-                        item.name.clone()
-                    },
-                    random_id,
-                    destination_id: None,
-                    media_kind,
-                };
+                    }
 
-                match uploader_clone.upload_file(request).await {
-                    Ok(result) => match result {
-                        TelegramUploadResult::Confirmed {
-                            message_id,
-                            random_id: confirmed_random_id,
-                        } => {
-                            // Update artifact size in DB
-                            {
-                                let conn = db_clone.lock().unwrap();
-                                let mut upd = conn
+                    if cancel.is_cancelled() || cancel.is_stopped() {
+                        return; // Exit worker
+                    }
+
+                    let _ =
+                        update_item_pipeline_stage(&db_clone, item.id, PipelineStage::Uploading);
+
+                    // Sinh deterministic random_id
+                    let upload_attempt_id =
+                        format!("job_{}_item_{}_attempt_1", item.job_id, item.id);
+                    let random_id = get_deterministic_random_id(&upload_attempt_id);
+
+                    // Determine media kind
+                    let media_kind = match classify_file(&item.name) {
+                        FileCategory::Video => TelegramMediaKind::Video,
+                        FileCategory::Image => TelegramMediaKind::Image,
+                        FileCategory::Other => TelegramMediaKind::Other,
+                    };
+
+                    let request = TelegramUploadRequest {
+                        job_id: item.job_id,
+                        item_id: item.id,
+                        path: file_path.clone(),
+                        filename: if media_kind == TelegramMediaKind::Video {
+                            let mut name = item.name.clone();
+                            if let Some(idx) = name.rfind('.') {
+                                name.truncate(idx);
+                            }
+                            format!("{}.mp4", name)
+                        } else {
+                            item.name.clone()
+                        },
+                        random_id,
+                        destination_id: None,
+                        media_kind,
+                    };
+
+                    match uploader_clone.upload_file(request).await {
+                        Ok(result) => match result {
+                            TelegramUploadResult::Confirmed {
+                                message_id,
+                                random_id: confirmed_random_id,
+                            } => {
+                                // Update artifact size in DB
+                                {
+                                    let conn = db_clone.lock().unwrap();
+                                    let mut upd = conn
                                     .prepare(
                                         "UPDATE migration_items SET artifact_size = ? WHERE id = ?;",
                                     )
                                     .unwrap();
-                                upd.bind((1, artifact_size)).unwrap();
-                                upd.bind((2, item.id)).unwrap();
-                                upd.next().unwrap();
-                            }
+                                    upd.bind((1, artifact_size)).unwrap();
+                                    upd.bind((2, item.id)).unwrap();
+                                    upd.next().unwrap();
+                                }
 
-                            // Commit quota
-                            {
-                                let conn = db_clone.lock().unwrap();
-                                let _ = commit_quota(&conn, item.id, &date_string);
-                            }
+                                // Commit quota
+                                {
+                                    let conn = db_clone.lock().unwrap();
+                                    let _ = commit_quota(&conn, item.id, &date_string);
+                                }
 
-                            // Ghi nhận thành công
-                            {
-                                let conn = db_clone.lock().unwrap();
-                                let mut upd = conn
+                                // Ghi nhận thành công
+                                {
+                                    let conn = db_clone.lock().unwrap();
+                                    let mut upd = conn
                                     .prepare(
                                         "UPDATE migration_items SET telegram_message_id = ?, telegram_random_id = ? WHERE id = ?;",
                                     )
                                     .unwrap();
-                                upd.bind((1, message_id)).unwrap();
-                                upd.bind((2, confirmed_random_id)).unwrap();
-                                upd.bind((3, item.id)).unwrap();
-                                upd.next().unwrap();
+                                    upd.bind((1, message_id)).unwrap();
+                                    upd.bind((2, confirmed_random_id)).unwrap();
+                                    upd.bind((3, item.id)).unwrap();
+                                    upd.next().unwrap();
+                                }
+
+                                let _ = update_item_pipeline_stage(
+                                    &db_clone,
+                                    item.id,
+                                    PipelineStage::CompletedTelegram,
+                                );
+
+                                // Dọn dẹp tệp tin trong workspace
+                                let original_path = workspace.join(format!("{}", item.id));
+                                let processed_path =
+                                    workspace.join(format!("{}.processed.mp4", item.id));
+                                let _ = std::fs::remove_file(&original_path);
+                                let _ = std::fs::remove_file(&processed_path);
                             }
-
-                            let _ = update_item_pipeline_stage(
-                                &db_clone,
-                                item.id,
-                                PipelineStage::CompletedTelegram,
-                            );
-
-                            // Dọn dẹp tệp tin trong workspace
-                            let original_path = workspace.join(format!("{}", item.id));
-                            let processed_path = workspace.join(format!("{}.processed.mp4", item.id));
-                            let _ = std::fs::remove_file(&original_path);
-                            let _ = std::fs::remove_file(&processed_path);
-                        }
-                        TelegramUploadResult::ReconciliationRequired {
-                            random_id: rec_random_id,
-                            reason,
-                        } => {
-                            log::warn!(
+                            TelegramUploadResult::ReconciliationRequired {
+                                random_id: rec_random_id,
+                                reason,
+                            } => {
+                                log::warn!(
                                 "Upload: reconciliation_required for item {}, random_id={}, reason: {}",
                                 item.id, rec_random_id, reason
                             );
 
-                            // Commit quota conservatively (assume sent)
-                            {
-                                let conn = db_clone.lock().unwrap();
-                                let _ = commit_quota(&conn, item.id, &date_string);
-                            }
+                                // Commit quota conservatively (assume sent)
+                                {
+                                    let conn = db_clone.lock().unwrap();
+                                    let _ = commit_quota(&conn, item.id, &date_string);
+                                }
 
-                            // Update item stage
-                            {
-                                let conn = db_clone.lock().unwrap();
-                                let mut upd = conn
+                                // Update item stage
+                                {
+                                    let conn = db_clone.lock().unwrap();
+                                    let mut upd = conn
                                     .prepare(
                                         "UPDATE migration_items SET telegram_random_id = ?, last_error = ? WHERE id = ?;",
                                     )
                                     .unwrap();
-                                upd.bind((1, rec_random_id)).unwrap();
-                                upd.bind((2, reason.as_str())).unwrap();
-                                upd.bind((3, item.id)).unwrap();
-                                upd.next().unwrap();
+                                    upd.bind((1, rec_random_id)).unwrap();
+                                    upd.bind((2, reason.as_str())).unwrap();
+                                    upd.bind((3, item.id)).unwrap();
+                                    upd.next().unwrap();
+                                }
+
+                                let _ = update_item_pipeline_stage(
+                                    &db_clone,
+                                    item.id,
+                                    PipelineStage::ReconciliationRequired,
+                                );
+                            }
+                        },
+                        Err(e) => {
+                            // Release quota on confirmed failure
+                            {
+                                let conn = db_clone.lock().unwrap();
+                                let _ = release_quota(&conn, item.id, &date_string);
+                            }
+
+                            // Check if it's a FloodWait
+                            if let Some(seconds) = parse_flood_wait_seconds(&e) {
+                                log::warn!("Upload: FloodWait {}s for item {}", seconds, item.id);
+                                // Persist flood wait state
+                                let now = Utc::now().timestamp();
+                                let next_allowed = now + seconds;
+                                {
+                                    let conn = db_clone.lock().unwrap();
+                                    let mut upd = conn
+                                    .prepare(
+                                        "UPDATE migration_jobs SET flood_wait_until = ? WHERE id = ?;",
+                                    )
+                                    .unwrap();
+                                    upd.bind((1, next_allowed)).unwrap();
+                                    upd.bind((2, item.job_id)).unwrap();
+                                    upd.next().unwrap();
+                                }
+                                // Sleep outside of DB lock
+                                tokio::time::sleep(tokio::time::Duration::from_secs(
+                                    seconds as u64,
+                                ))
+                                .await;
                             }
 
                             let _ = update_item_pipeline_stage(
                                 &db_clone,
                                 item.id,
-                                PipelineStage::ReconciliationRequired,
+                                PipelineStage::Failed,
                             );
-                        }
-                    },
-                    Err(e) => {
-                        // Release quota on confirmed failure
-                        {
-                            let conn = db_clone.lock().unwrap();
-                            let _ = release_quota(&conn, item.id, &date_string);
-                        }
 
-                        // Check if it's a FloodWait
-                        if let Some(seconds) = parse_flood_wait_seconds(&e) {
-                            log::warn!(
-                                "Upload: FloodWait {}s for item {}",
-                                seconds,
-                                item.id
-                            );
-                            // Persist flood wait state
-                            let now = Utc::now().timestamp();
-                            let next_allowed = now + seconds;
-                            {
-                                let conn = db_clone.lock().unwrap();
-                                let mut upd = conn
-                                    .prepare(
-                                        "UPDATE migration_jobs SET flood_wait_until = ? WHERE id = ?;",
-                                    )
-                                    .unwrap();
-                                upd.bind((1, next_allowed)).unwrap();
-                                upd.bind((2, item.job_id)).unwrap();
-                                upd.next().unwrap();
+                            if e.contains("permanent_error") {
+                                // Dedupe promotion removed for canonical flow
                             }
-                            // Sleep outside of DB lock
-                            tokio::time::sleep(tokio::time::Duration::from_secs(
-                                seconds as u64,
-                            ))
-                            .await;
-                        }
-
-                        let _ = update_item_pipeline_stage(
-                            &db_clone,
-                            item.id,
-                            PipelineStage::Failed,
-                        );
-
-                        if e.contains("permanent_error") {
-                            // Dedupe promotion removed for canonical flow
                         }
                     }
-                }
                 }
             });
             workers.push(handle);
         }
-        
+
         for w in workers {
             if let Err(e) = w.await {
                 let err_msg = if e.is_panic() {
@@ -1148,7 +1253,7 @@ impl PipelineRunner {
                     if cancel.is_cancelled() || cancel.is_stopped() {
                         break;
                     }
-                    
+
                     let item_opt = {
                         let mut guard = rx_clone.lock().await;
                         guard.recv().await
@@ -1211,15 +1316,18 @@ impl PipelineRunner {
                             // No automatic removal of input_path here; cleanup happens centrally
                         }
                         Err(_) => {
-                            let _ =
-                                update_item_pipeline_stage(&db_clone, item.id, PipelineStage::Failed);
+                            let _ = update_item_pipeline_stage(
+                                &db_clone,
+                                item.id,
+                                PipelineStage::Failed,
+                            );
                         }
                     }
                 }
             });
             workers.push(handle);
         }
-        
+
         for w in workers {
             if let Err(e) = w.await {
                 let err_msg = if e.is_panic() {

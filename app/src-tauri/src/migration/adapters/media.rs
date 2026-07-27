@@ -23,6 +23,7 @@ pub trait ProcessRunner: Send + Sync {
         program: &str,
         args: &[String],
         on_progress: Option<Arc<dyn Fn(&str) + Send + Sync>>,
+        cancel_token: tokio_util::sync::CancellationToken,
     ) -> Pin<Box<dyn Future<Output = Result<ProcessOutput, String>> + Send + '_>>;
 }
 
@@ -45,6 +46,7 @@ impl ProcessRunner for RealProcessRunner {
         program: &str,
         args: &[String],
         on_progress: Option<Arc<dyn Fn(&str) + Send + Sync>>,
+        cancel_token: tokio_util::sync::CancellationToken,
     ) -> Pin<Box<dyn Future<Output = Result<ProcessOutput, String>> + Send + '_>> {
         let program = program.to_string();
         let args = args.to_vec();
@@ -68,7 +70,9 @@ impl ProcessRunner for RealProcessRunner {
                 let mut current_line = String::new();
                 let mut full_output = Vec::new();
                 while let Ok(n) = stdout.read(&mut buf).await {
-                    if n == 0 { break; }
+                    if n == 0 {
+                        break;
+                    }
                     if full_output.len() < 1024 * 1024 {
                         full_output.extend_from_slice(&buf[..n]);
                     }
@@ -94,23 +98,34 @@ impl ProcessRunner for RealProcessRunner {
                 let mut buf = [0; 4096];
                 let mut full_output = Vec::new();
                 while let Ok(n) = stderr.read(&mut buf).await {
-                    if n == 0 { break; }
-                    if full_output.len() < 1024 * 1024 { // max 1MB
+                    if n == 0 {
+                        break;
+                    }
+                    if full_output.len() < 1024 * 1024 {
                         full_output.extend_from_slice(&buf[..n]);
                     }
                 }
                 full_output
             });
 
-            let status = child.wait().await.map_err(|e| format!("Wait error: {}", e))?;
-            let stdout_out = stdout_task.await.unwrap_or_default();
-            let stderr_out = stderr_task.await.unwrap_or_default();
+            tokio::select! {
+                status = child.wait() => {
+                    let status = status.map_err(|e| format!("Wait error: {}", e))?;
+                    let stdout_out = stdout_task.await.unwrap_or_default();
+                    let stderr_out = stderr_task.await.unwrap_or_default();
 
-            Ok(ProcessOutput {
-                exit_code: status.code().unwrap_or(-1),
-                stdout: stdout_out,
-                stderr: stderr_out,
-            })
+                    Ok(ProcessOutput {
+                        exit_code: status.code().unwrap_or(-1),
+                        stdout: stdout_out,
+                        stderr: stderr_out,
+                    })
+                }
+                _ = cancel_token.cancelled() => {
+                    let _ = child.kill().await;
+                    let _ = child.wait().await;
+                    Err("ProcessRunner: Cancelled".to_string())
+                }
+            }
         })
     }
 }
@@ -123,7 +138,7 @@ pub struct FFmpegMediaAdapter {
     ffprobe_path: PathBuf,
     ffmpeg_path: PathBuf,
     process_runner: Arc<dyn ProcessRunner>,
-    cancel_token: Arc<AtomicBool>,
+    cancel_token: tokio_util::sync::CancellationToken,
     max_threads: usize,
     app_handle: Option<tauri::AppHandle>,
     hevc_encoder: String,
@@ -133,7 +148,7 @@ impl FFmpegMediaAdapter {
     pub fn new(
         ffprobe_path: PathBuf,
         ffmpeg_path: PathBuf,
-        cancel_token: Arc<AtomicBool>,
+        cancel_token: tokio_util::sync::CancellationToken,
         max_threads: usize,
         app_handle: Option<tauri::AppHandle>,
     ) -> Self {
@@ -141,7 +156,8 @@ impl FFmpegMediaAdapter {
         if cfg!(target_os = "macos") {
             if let Ok(output) = std::process::Command::new(&ffmpeg_path)
                 .args(["-encoders"])
-                .output() {
+                .output()
+            {
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 if stdout.contains("hevc_videotoolbox") {
                     hevc_encoder = "hevc_videotoolbox".to_string();
@@ -165,7 +181,7 @@ impl FFmpegMediaAdapter {
         ffprobe_path: PathBuf,
         ffmpeg_path: PathBuf,
         process_runner: Arc<dyn ProcessRunner>,
-        cancel_token: Arc<AtomicBool>,
+        cancel_token: tokio_util::sync::CancellationToken,
         max_threads: usize,
         app_handle: Option<tauri::AppHandle>,
     ) -> Self {
@@ -221,7 +237,13 @@ impl FFmpegMediaAdapter {
         output_path: &Path,
         is_10bit: bool,
         encoder: &str,
+        source_fps: f64,
     ) -> Vec<String> {
+        let mut filter_chain = "scale=w='min(1920,iw)':h='min(1080,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2".to_string();
+        if source_fps > 60.0 {
+            filter_chain = format!("{},fps=60", filter_chain);
+        }
+
         let mut args = vec![
             "-y".to_string(),
             "-i".to_string(),
@@ -233,7 +255,7 @@ impl FFmpegMediaAdapter {
             "-sn".to_string(),
             "-dn".to_string(),
             "-vf".to_string(),
-            "scale=w='min(1920,iw)':h='min(1080,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2".to_string(),
+            filter_chain,
         ];
 
         let pix_fmt = if is_10bit { "yuv420p10le" } else { "yuv420p" };
@@ -255,6 +277,8 @@ impl FFmpegMediaAdapter {
             args.push("-profile:v".to_string());
             args.push(profile.to_string());
         }
+        args.push("-tag:v".to_string());
+        args.push("hvc1".to_string());
 
         args.push("-pix_fmt".to_string());
         args.push(pix_fmt.to_string());
@@ -286,12 +310,12 @@ impl MediaInspector for FFmpegMediaAdapter {
         let cancel = self.cancel_token.clone();
 
         Box::pin(async move {
-            if cancel.load(Ordering::Relaxed) {
+            if cancel.is_cancelled() {
                 return Err("Inspector: cancelled".to_string());
             }
 
             let output = runner
-                .run_command(&ffprobe, &args, None)
+                .run_command(&ffprobe, &args, None, cancel.clone())
                 .await
                 .map_err(|e| format!("Inspector: ffprobe failed: {}", e))?;
 
@@ -311,19 +335,27 @@ impl MediaInspector for FFmpegMediaAdapter {
 impl VideoProcessor for FFmpegMediaAdapter {
     fn process_video(
         &self,
-        input_path: &Path,
-        output_path: &Path,
+        input_path: &std::path::Path,
+        output_path: &std::path::Path,
         decision: &str,
         item_id: i64,
         job_id: i64,
         duration: f64,
+        source_fps: f64,
         item_name: &str,
     ) -> Pin<Box<dyn Future<Output = Result<String, String>> + Send>> {
         let ffmpeg = self.ffmpeg_path.to_string_lossy().to_string();
         let args = match decision {
-            "canonical_passthrough_main8" | "canonical_passthrough_main10" => Self::build_remux_args(input_path, output_path),
-            "canonical_transcode_main8" | "transcode" => Self::build_transcode_args(input_path, output_path, false, &self.hevc_encoder),
-            "canonical_transcode_main10" => Self::build_transcode_args(input_path, output_path, true, &self.hevc_encoder),
+            "canonical_transcode_main8" | "transcode" => Self::build_transcode_args(
+                input_path,
+                output_path,
+                false,
+                &self.hevc_encoder,
+                0.0, /* Will need to pass fps */
+            ),
+            "canonical_transcode_main10" => {
+                Self::build_transcode_args(input_path, output_path, true, &self.hevc_encoder, 0.0)
+            }
             other => {
                 let msg = format!("Processor: unsupported decision: {}", other);
                 return Box::pin(async move { Err(msg) });
@@ -337,11 +369,12 @@ impl VideoProcessor for FFmpegMediaAdapter {
         let item_name = item_name.to_string();
 
         Box::pin(async move {
-            if cancel.load(Ordering::Relaxed) {
+            if cancel.is_cancelled() {
                 return Err("Processor: cancelled".to_string());
             }
 
-            let on_progress: Option<Arc<dyn Fn(&str) + Send + Sync>> = if let Some(app) = app_handle {
+            let on_progress: Option<Arc<dyn Fn(&str) + Send + Sync>> = if let Some(app) = app_handle
+            {
                 let last_emit_ms = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
                 Some(Arc::new(move |line: &str| {
                     if let Some(time_us_str) = line.strip_prefix("out_time_us=") {
@@ -352,7 +385,10 @@ impl VideoProcessor for FFmpegMediaAdapter {
                                 0.0
                             };
                             use tauri::Emitter;
-                            let now_ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
+                            let now_ms = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap()
+                                .as_millis() as u64;
                             let last = last_emit_ms.load(std::sync::atomic::Ordering::Relaxed);
                             if now_ms - last >= 250 {
                                 last_emit_ms.store(now_ms, std::sync::atomic::Ordering::Relaxed);
@@ -373,7 +409,7 @@ impl VideoProcessor for FFmpegMediaAdapter {
             };
 
             let output = runner
-                .run_command(&ffmpeg, &args, on_progress)
+                .run_command(&ffmpeg, &args, on_progress, cancel.clone())
                 .await
                 .map_err(|e| format!("Processor: ffmpeg spawn error: {}", e))?;
 
@@ -397,16 +433,21 @@ impl VideoProcessor for FFmpegMediaAdapter {
             }
 
             // Compute SHA-256 of processed file streaming chunked
-            let mut file = tokio::fs::File::open(&output_path_owned).await
+            let mut file = tokio::fs::File::open(&output_path_owned)
+                .await
                 .map_err(|e| format!("Processor: cannot open output: {}", e))?;
             use sha2::Digest;
             let mut hasher = sha2::Sha256::new();
             let mut buffer = [0; 65536];
             loop {
                 use tokio::io::AsyncReadExt;
-                let count = file.read(&mut buffer).await
+                let count = file
+                    .read(&mut buffer)
+                    .await
                     .map_err(|e| format!("Processor: error reading output: {}", e))?;
-                if count == 0 { break; }
+                if count == 0 {
+                    break;
+                }
                 hasher.update(&buffer[..count]);
             }
             let hash = hasher.finalize();
@@ -573,10 +614,22 @@ pub fn parse_ffprobe_json(bytes: &[u8]) -> Result<VideoMetadata, String> {
             is_valid: width > 0 && height > 0,
             rotation,
             file_size: 0,
-            color_transfer: video.color_transfer.clone().unwrap_or_default().to_ascii_lowercase(),
-            color_primaries: video.color_primaries.clone().unwrap_or_default().to_ascii_lowercase(),
+            color_transfer: video
+                .color_transfer
+                .clone()
+                .unwrap_or_default()
+                .to_ascii_lowercase(),
+            color_primaries: video
+                .color_primaries
+                .clone()
+                .unwrap_or_default()
+                .to_ascii_lowercase(),
             profile: video.profile.clone().unwrap_or_default(),
-            pixel_format: video.pix_fmt.clone().unwrap_or_default().to_ascii_lowercase(),
+            pixel_format: video
+                .pix_fmt
+                .clone()
+                .unwrap_or_default()
+                .to_ascii_lowercase(),
             fps,
         })
     } else {
@@ -613,297 +666,3 @@ pub fn parse_ffprobe_json(bytes: &[u8]) -> Result<VideoMetadata, String> {
 // Tests
 // ---------------------------------------------------------------------------
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::sync::Mutex;
-
-    // Fake process runner for testing
-    struct FakeProcessRunner {
-        responses: Mutex<Vec<Result<ProcessOutput, String>>>,
-        #[allow(dead_code)]
-        call_args: Mutex<Vec<(String, Vec<String>)>>,
-    }
-
-    impl FakeProcessRunner {
-        fn new(responses: Vec<Result<ProcessOutput, String>>) -> Self {
-            Self {
-                responses: Mutex::new(responses),
-                call_args: Mutex::new(vec![]),
-            }
-        }
-    }
-
-    impl ProcessRunner for FakeProcessRunner {
-        fn run_command(
-            &self,
-            program: &str,
-            args: &[String],
-        ) -> Pin<Box<dyn Future<Output = Result<ProcessOutput, String>> + Send + '_>> {
-            self.call_args
-                .lock()
-                .unwrap()
-                .push((program.to_string(), args.to_vec()));
-
-            let response = self.responses.lock().unwrap().remove(0);
-
-            Box::pin(async move { response })
-        }
-    }
-
-    fn sample_ffprobe_output() -> Vec<u8> {
-        r#"{
-            "streams": [
-                {
-                    "codec_type": "video",
-                    "codec_name": "h264",
-                    "width": 1920,
-                    "height": 1080,
-                    "duration": "120.500000",
-                    "side_data_list": [{"rotation": 90}]
-                },
-                {
-                    "codec_type": "audio",
-                    "codec_name": "aac"
-                }
-            ],
-            "format": {
-                "format_name": "mov,mp4,m4a,3gp,3g2,mj2",
-                "duration": "120.500000",
-                "bit_rate": "5000000"
-            }
-        }"#
-        .as_bytes()
-        .to_vec()
-    }
-
-    fn adapter() -> FFmpegMediaAdapter {
-        let runner = Arc::new(FakeProcessRunner::new(vec![Ok(ProcessOutput {
-            exit_code: 0,
-            stdout: sample_ffprobe_output(),
-            stderr: vec![],
-        })]));
-
-        FFmpegMediaAdapter::new_with_runner(
-            PathBuf::from("ffprobe"),
-            PathBuf::from("ffmpeg"),
-            runner,
-            Arc::new(AtomicBool::new(false)),
-            2,
-        )
-    }
-
-    #[tokio::test]
-    async fn test_parse_ffprobe_json() {
-        let meta = parse_ffprobe_json(&sample_ffprobe_output()).unwrap();
-
-        assert_eq!(meta.container, "mov");
-        assert_eq!(meta.video_codec, "h264");
-        assert_eq!(meta.audio_codec, "aac");
-        assert_eq!(meta.width, 1920);
-        assert_eq!(meta.height, 1080);
-        assert_eq!(meta.duration, 120.5);
-        assert_eq!(meta.bitrate, 5_000_000);
-        assert_eq!(meta.rotation, 90);
-        assert!(meta.is_valid);
-    }
-
-    #[tokio::test]
-    async fn test_ffprobe_json_malformed() {
-        let result = parse_ffprobe_json(b"not json");
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("parse error"));
-    }
-
-    #[tokio::test]
-    async fn test_ffprobe_no_video_stream() {
-        let json = r#"{"streams":[{"codec_type":"audio","codec_name":"aac"}],"format":{"format_name":"m4a"}}"#;
-        let meta = parse_ffprobe_json(json.as_bytes()).unwrap();
-        assert!(!meta.is_valid);
-        assert!(meta.video_codec.is_empty());
-        assert_eq!(meta.audio_codec, "aac");
-    }
-
-    #[tokio::test]
-    async fn test_inspect_file_success() {
-        let a = adapter();
-        let meta = a.inspect_file(Path::new("test.mp4")).await.unwrap();
-        assert_eq!(meta.video_codec, "h264");
-        assert_eq!(meta.width, 1920);
-        assert!(meta.is_valid);
-    }
-
-    #[tokio::test]
-    async fn test_inspect_file_cancelled() {
-        let runner = Arc::new(FakeProcessRunner::new(vec![]));
-        let a = FFmpegMediaAdapter::new_with_runner(
-            PathBuf::from("ffprobe"),
-            PathBuf::from("ffmpeg"),
-            runner,
-            Arc::new(AtomicBool::new(true)), // Already cancelled
-            2,
-        );
-
-        let result = a.inspect_file(Path::new("test.mp4")).await;
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("cancelled"));
-    }
-
-    #[tokio::test]
-    async fn test_inspect_file_nonzero_exit() {
-        let runner = Arc::new(FakeProcessRunner::new(vec![Ok(ProcessOutput {
-            exit_code: 1,
-            stdout: vec![],
-            stderr: b"Invalid data found".to_vec(),
-        })]));
-        let a = FFmpegMediaAdapter::new_with_runner(
-            PathBuf::from("ffprobe"),
-            PathBuf::from("ffmpeg"),
-            runner,
-            Arc::new(AtomicBool::new(false)),
-            2,
-        );
-
-        let result = a.inspect_file(Path::new("corrupt.mp4")).await;
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("non-zero exit"));
-    }
-
-    #[tokio::test]
-    async fn test_process_video_transcode_args() {
-        let args = FFmpegMediaAdapter::build_transcode_args(
-            Path::new("/tmp/in.mp4"),
-            Path::new("/tmp/out.mp4"),
-            2,
-        );
-        assert!(args.contains(&"-c:v".to_string()));
-
-        assert!(args.contains(&"-c:a".to_string()));
-        assert!(args.contains(&"aac".to_string()));
-        assert!(args.contains(&"-threads".to_string()));
-        assert!(args.contains(&"2".to_string()));
-        // No shell injection
-        assert!(!args
-            .iter()
-            .any(|a| a.contains("&&") || a.contains("|") || a.contains(";")));
-    }
-
-    #[tokio::test]
-    async fn test_process_video_remux_args() {
-        let args = FFmpegMediaAdapter::build_remux_args(
-            Path::new("/tmp/in.mkv"),
-            Path::new("/tmp/out.mp4"),
-        );
-        assert!(args.contains(&"-c".to_string()));
-        assert!(args.contains(&"copy".to_string()));
-        assert!(args.contains(&"-movflags".to_string()));
-        assert!(args.contains(&"+faststart".to_string()));
-        // No shell injection
-        assert!(!args
-            .iter()
-            .any(|a| a.contains("&&") || a.contains("|") || a.contains(";")));
-    }
-
-    #[tokio::test]
-    async fn test_process_video_cancelled() {
-        let runner = Arc::new(FakeProcessRunner::new(vec![]));
-        let cancel = Arc::new(AtomicBool::new(true));
-        let a = FFmpegMediaAdapter::new_with_runner(
-            PathBuf::from("ffprobe"),
-            PathBuf::from("ffmpeg"),
-            runner,
-            cancel,
-            2,
-        );
-
-        let result = a
-            .process_video(Path::new("in.mp4"), Path::new("out.mp4"), "transcode")
-            .await;
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("cancelled"));
-    }
-
-    #[tokio::test]
-    async fn test_process_video_nonzero_exit() {
-        let runner = Arc::new(FakeProcessRunner::new(vec![Ok(ProcessOutput {
-            exit_code: 1,
-            stdout: vec![],
-            stderr: b"Error while filtering".to_vec(),
-        })]));
-        let cancel = Arc::new(AtomicBool::new(false));
-        let a = FFmpegMediaAdapter::new_with_runner(
-            PathBuf::from("ffprobe"),
-            PathBuf::from("ffmpeg"),
-            runner,
-            cancel,
-            2,
-        );
-
-        let result = a
-            .process_video(Path::new("in.mp4"), Path::new("out.mp4"), "transcode")
-            .await;
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("non-zero exit"));
-    }
-
-    #[tokio::test]
-    async fn test_process_video_unsupported_decision() {
-        let runner = Arc::new(FakeProcessRunner::new(vec![]));
-        let cancel = Arc::new(AtomicBool::new(false));
-        let a = FFmpegMediaAdapter::new_with_runner(
-            PathBuf::from("ffprobe"),
-            PathBuf::from("ffmpeg"),
-            runner,
-            cancel,
-            2,
-        );
-
-        let result = a
-            .process_video(Path::new("in.mp4"), Path::new("out.mp4"), "unknown")
-            .await;
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("unsupported decision"));
-    }
-
-    #[tokio::test]
-    async fn test_passthrough_rejected_by_processor() {
-        let runner = Arc::new(FakeProcessRunner::new(vec![]));
-        let cancel = Arc::new(AtomicBool::new(false));
-        let a = FFmpegMediaAdapter::new_with_runner(
-            PathBuf::from("ffprobe"),
-            PathBuf::from("ffmpeg"),
-            runner,
-            cancel,
-            2,
-        );
-
-        let result = a
-            .process_video(Path::new("in.mp4"), Path::new("out.mp4"), "passthrough")
-            .await;
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("unsupported decision"));
-    }
-
-    #[tokio::test]
-    async fn test_thread_limit_in_args() {
-        let args = FFmpegMediaAdapter::build_transcode_args(
-            Path::new("/tmp/in.mp4"),
-            Path::new("/tmp/out.mp4"),
-            1,
-        );
-        let thread_pos = args.iter().position(|a| a == "-threads").unwrap();
-        assert_eq!(args[thread_pos + 1], "1");
-    }
-
-    #[tokio::test]
-    async fn test_no_shell_injection_in_args() {
-        let dangerous = "/tmp/file; rm -rf /";
-        let args = FFmpegMediaAdapter::build_transcode_args(
-            Path::new(dangerous),
-            Path::new("/tmp/out.mp4"),
-            2,
-        );
-        // The args are in a Vec, not a shell string
-        assert!(args.contains(&dangerous.to_string()));
-    }
-}

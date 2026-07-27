@@ -171,6 +171,7 @@ pub trait VideoProcessor: Send + Sync {
         item_id: i64,
         job_id: i64,
         duration: f64,
+        source_fps: f64,
         item_name: &str,
     ) -> Pin<Box<dyn Future<Output = Result<String, String>> + Send>>;
 }

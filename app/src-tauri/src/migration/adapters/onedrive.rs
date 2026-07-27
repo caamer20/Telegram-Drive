@@ -107,8 +107,6 @@ impl SourceDownloader for OneDriveDownloader {
                 None => return Err("InvalidResponse: Missing download URL".to_string()),
             };
 
-
-
             // 3. Download the file streamingly
             let mut stream_resp = match http.get(&download_url).send().await {
                 Ok(r) => r,
@@ -160,9 +158,9 @@ impl SourceDownloader for OneDriveDownloader {
 mod tests {
     use super::*;
     use crate::migration::db::open_migration_db_at_path;
+    use crate::migration::models::MsAccountInfo;
     use std::fs;
     use std::path::PathBuf;
-    use crate::migration::models::MsAccountInfo;
     use wiremock::matchers::{header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -255,8 +253,6 @@ mod tests {
         assert!(dest.exists());
         let content = std::fs::read_to_string(&dest).unwrap();
         assert_eq!(content, "hello world");
-
-
     }
 
     #[tokio::test]

@@ -11,35 +11,21 @@ pub fn validate_stage_transition(from: PipelineStage, to: PipelineStage) -> bool
     }
 
     match from {
-        PipelineStage::Discovered => {
-            to == PipelineStage::QueuedDownload
-        }
+        PipelineStage::Discovered => to == PipelineStage::QueuedDownload,
         PipelineStage::QueuedDownload => to == PipelineStage::Downloading,
-        PipelineStage::Downloading => {
-            to == PipelineStage::Downloaded
-        }
+        PipelineStage::Downloading => to == PipelineStage::Downloaded,
         PipelineStage::Downloaded => {
             to == PipelineStage::QueuedProcessing
                 || to == PipelineStage::QueuedUpload
                 || to == PipelineStage::SavingLocal
         }
         PipelineStage::QueuedProcessing => to == PipelineStage::Processing,
-        PipelineStage::Processing => {
-            to == PipelineStage::Processed
-        }
-        PipelineStage::Processed => {
-            to == PipelineStage::QueuedUpload
-        }
+        PipelineStage::Processing => to == PipelineStage::Processed,
+        PipelineStage::Processed => to == PipelineStage::QueuedUpload,
         PipelineStage::QueuedUpload => to == PipelineStage::Uploading,
-        PipelineStage::Uploading => {
-            to == PipelineStage::CompletedTelegram
-        }
-        PipelineStage::WaitingForQuota => {
-            to == PipelineStage::QueuedUpload
-        }
-        PipelineStage::SavingLocal => {
-            to == PipelineStage::CompletedLocal
-        }
+        PipelineStage::Uploading => to == PipelineStage::CompletedTelegram,
+        PipelineStage::WaitingForQuota => to == PipelineStage::QueuedUpload,
+        PipelineStage::SavingLocal => to == PipelineStage::CompletedLocal,
         // Recovery transitions:
         // Allow retry from failed back to appropriate queue stage
         PipelineStage::Failed => {
@@ -110,8 +96,6 @@ pub fn update_item_pipeline_stage(
 
     Ok(())
 }
-
-
 
 #[cfg(test)]
 mod tests {

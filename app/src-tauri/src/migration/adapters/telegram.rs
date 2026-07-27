@@ -102,7 +102,7 @@ pub trait BinaryUploader: Send + Sync {
 pub struct TelegramProductionAdapter {
     client: Arc<tokio::sync::Mutex<Option<grammers_client::Client>>>,
     peer_cache: Arc<RwLock<HashMap<i64, Peer>>>,
-    cancel_token: Arc<AtomicBool>,
+    cancel_token: tokio_util::sync::CancellationToken,
     destination_folder_id: Option<i64>,
     db: Option<crate::migration::db::MigrationDb>,
 }
@@ -111,7 +111,7 @@ impl TelegramProductionAdapter {
     pub fn new(
         client: Arc<tokio::sync::Mutex<Option<grammers_client::Client>>>,
         peer_cache: Arc<RwLock<HashMap<i64, Peer>>>,
-        cancel_token: Arc<AtomicBool>,
+        cancel_token: tokio_util::sync::CancellationToken,
         destination_folder_id: Option<i64>,
         db: crate::migration::db::MigrationDb,
     ) -> Self {
@@ -253,7 +253,7 @@ impl TelegramUploader for TelegramProductionAdapter {
         let _media_kind = request.media_kind;
 
         Box::pin(async move {
-            if cancel_token.load(Ordering::Relaxed) {
+            if cancel_token.is_cancelled() {
                 return Err("Upload: cancelled".to_string());
             }
 
@@ -293,10 +293,8 @@ impl TelegramUploader for TelegramProductionAdapter {
                                 .map_err(|e| e.to_string())?;
                             upd.bind((1, telegram_attempt_id.as_str()))
                                 .map_err(|e| e.to_string())?;
-                            upd.bind((2, runner_random_id))
-                                .map_err(|e| e.to_string())?;
-                            upd.bind((3, item_id))
-                                .map_err(|e| e.to_string())?;
+                            upd.bind((2, runner_random_id)).map_err(|e| e.to_string())?;
+                            upd.bind((3, item_id)).map_err(|e| e.to_string())?;
                             upd.next().map_err(|e| e.to_string())?;
                         }
                         log::info!(
@@ -341,7 +339,7 @@ impl TelegramUploader for TelegramProductionAdapter {
                 }
             };
 
-            if cancel_token.load(Ordering::Relaxed) {
+            if cancel_token.is_cancelled() {
                 return Err("Upload: cancelled after binary upload".to_string());
             }
 
@@ -365,7 +363,7 @@ impl TelegramUploader for TelegramProductionAdapter {
                     .send_message_with_random_id(&peer, message, persisted_random_id)
                     .await
             };
-            
+
             let send_result = match tokio::time::timeout(
                 std::time::Duration::from_secs(send_timeout_secs),
                 send_future,
@@ -454,10 +452,10 @@ fn parse_flood_wait_seconds(err_str: &str) -> Option<i64> {
 mod tests {
     use super::*;
     use crate::migration::db::{init_migration_db, open_migration_db_at_path};
-    use std::fs;
-    use std::path::PathBuf;
     use crate::migration::telegram_idempotency::get_deterministic_random_id;
     use grammers_tl_types as tl;
+    use std::fs;
+    use std::path::PathBuf;
 
     /// Type-level proof: when grammers has `send_message_with_random_id`,
     /// the app will call it with a persisted `i64` random_id.
@@ -770,7 +768,9 @@ mod tests {
         // Verify DB was updated
         let conn = db.lock().unwrap();
         let mut stmt = conn
-            .prepare("SELECT telegram_attempt_id, telegram_random_id FROM migration_items WHERE id = 1;")
+            .prepare(
+                "SELECT telegram_attempt_id, telegram_random_id FROM migration_items WHERE id = 1;",
+            )
             .unwrap();
         assert_eq!(stmt.next().unwrap(), sqlite::State::Row);
         let db_attempt: String = stmt.read(0).unwrap();
@@ -781,14 +781,15 @@ mod tests {
         drop(conn);
 
         // Test 2: Retry with same attempt number reuses same ID
-        let (_aid2, rid2) =
-            TelegramProductionAdapter::persist_upload_attempt(&db, 1, 1).unwrap();
+        let (_aid2, rid2) = TelegramProductionAdapter::persist_upload_attempt(&db, 1, 1).unwrap();
         assert_eq!(rid2, random_id, "Same attempt must reuse same random_id");
 
         // Test 3: Different attempt number produces different ID
-        let (_aid3, rid3) =
-            TelegramProductionAdapter::persist_upload_attempt(&db, 1, 2).unwrap();
-        assert_ne!(rid3, random_id, "Different attempt must have different random_id");
+        let (_aid3, rid3) = TelegramProductionAdapter::persist_upload_attempt(&db, 1, 2).unwrap();
+        assert_ne!(
+            rid3, random_id,
+            "Different attempt must have different random_id"
+        );
 
         // Test 4: load_existing_attempt retrieves persisted data
         let loaded = TelegramProductionAdapter::load_existing_attempt(&db, 1).unwrap();

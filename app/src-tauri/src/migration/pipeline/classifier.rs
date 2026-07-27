@@ -18,11 +18,11 @@ pub fn classify_file(filename: &str) -> FileCategory {
 
     match extension {
         // Video containers
-        "mp4" | "mkv" | "mov" | "webm" | "avi" | "flv" | "wmv"
-        | "m4v" | "3gp" | "ts" | "mts" | "m2ts" | "ogv" | "divx" => FileCategory::Video,
+        "mp4" | "mkv" | "mov" | "webm" | "avi" | "flv" | "wmv" | "m4v" | "3gp" | "ts" | "mts"
+        | "m2ts" | "ogv" | "divx" => FileCategory::Video,
         // Image formats
-        "jpg" | "jpeg" | "png" | "gif" | "webp" | "heic" | "heif"
-        | "bmp" | "tiff" | "tif" | "svg" | "ico" | "avif" => FileCategory::Image,
+        "jpg" | "jpeg" | "png" | "gif" | "webp" | "heic" | "heif" | "bmp" | "tiff" | "tif"
+        | "svg" | "ico" | "avif" => FileCategory::Image,
         _ => FileCategory::Other,
     }
 }
@@ -73,11 +73,20 @@ mod tests {
     #[test]
     fn test_magic_bytes() {
         // JPEG: FF D8 FF xx
-        assert!(verify_magic_bytes(&[0xFF, 0xD8, 0xFF, 0xE0], FileCategory::Image));
+        assert!(verify_magic_bytes(
+            &[0xFF, 0xD8, 0xFF, 0xE0],
+            FileCategory::Image
+        ));
         // PNG: 89 50 4E 47
-        assert!(verify_magic_bytes(&[0x89, 0x50, 0x4E, 0x47], FileCategory::Image));
+        assert!(verify_magic_bytes(
+            &[0x89, 0x50, 0x4E, 0x47],
+            FileCategory::Image
+        ));
         // Not a JPEG (starts with 00)
-        assert!(!verify_magic_bytes(&[0x00, 0x00, 0x00, 0x00], FileCategory::Image));
+        assert!(!verify_magic_bytes(
+            &[0x00, 0x00, 0x00, 0x00],
+            FileCategory::Image
+        ));
         // MP4 ftyp box
         let mut mp4_header = vec![0u8; 12];
         mp4_header[4..8].copy_from_slice(&[0x66, 0x74, 0x79, 0x70]); // "ftyp"

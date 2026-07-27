@@ -129,9 +129,7 @@ pub async fn cmd_migration_start(
         .canonicalize()
         .unwrap_or_else(|_| workspace_path.to_path_buf());
     if backup_canon == workspace_canon {
-        return Err(
-            "Local backup directory and workspace directory must be different".into(),
-        );
+        return Err("Local backup directory and workspace directory must be different".into());
     }
 
     // 3. Create job in DB
@@ -146,8 +144,11 @@ pub async fn cmd_migration_start(
             &local_backup_dir,
             &workspace_dir,
         )?;
-        
-        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as i64;
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
         let mut stmt = conn.prepare(
             "INSERT INTO folder_queue (job_id, folder_id, folder_path, state, created_at, updated_at) VALUES (?, ?, ?, 'pending', ?, ?)"
         ).map_err(|e| e.to_string())?;
@@ -164,27 +165,28 @@ pub async fn cmd_migration_start(
     let mig_state = state.inner().clone_state();
     let tg_client_arc = tg_state.client.clone();
     let tg_peer_cache_arc = tg_state.peer_cache.clone();
-    
+
     tauri::async_runtime::spawn(async move {
         use std::path::PathBuf;
 
-        let (runner, downloader, media_adapter, uploader, finalizer, _cancel) = match crate::migration::adapters::factory::build_pipeline_services(
-            mig_state.db.clone(),
-            mig_state.ms_session.clone(),
-            tg_client_arc,
-            tg_peer_cache_arc,
-            job_id,
-            PathBuf::from(&workspace_dir),
-            PathBuf::from(&local_backup_dir),
-            telegram_destination_id,
-            Some(app_handle.clone()),
-        ) {
-            Ok(services) => services,
-            Err(e) => {
-                log::error!("Failed to build pipeline services: {}", e);
-                return;
-            }
-        };
+        let (runner, downloader, media_adapter, uploader, finalizer, _cancel) =
+            match crate::migration::adapters::factory::build_pipeline_services(
+                mig_state.db.clone(),
+                mig_state.ms_session.clone(),
+                tg_client_arc,
+                tg_peer_cache_arc,
+                job_id,
+                PathBuf::from(&workspace_dir),
+                PathBuf::from(&local_backup_dir),
+                telegram_destination_id,
+                Some(app_handle.clone()),
+            ) {
+                Ok(services) => services,
+                Err(e) => {
+                    log::error!("Failed to build pipeline services: {}", e);
+                    return;
+                }
+            };
 
         let cancel_token = runner.clone().start(
             downloader,
@@ -214,9 +216,7 @@ pub async fn cmd_migration_start(
 }
 
 #[tauri::command]
-pub async fn cmd_migration_stop(
-    state: State<'_, MigrationState>,
-) -> Result<(), String> {
+pub async fn cmd_migration_stop(state: State<'_, MigrationState>) -> Result<(), String> {
     let guard = state.active_pipeline.lock().await;
     if let Some(active) = guard.as_ref() {
         active.cancel_token.stop();
@@ -232,16 +232,18 @@ pub async fn cmd_migration_get_status(
     job_id: i64,
 ) -> Result<MigrationJobDetail, String> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
-    
+
     // 1. Get Job with explicit columns
-    let mut job_stmt = conn.prepare(
-        "SELECT id, source_folder_id, source_folder_path, telegram_destination_id, \
+    let mut job_stmt = conn
+        .prepare(
+            "SELECT id, source_folder_id, source_folder_path, telegram_destination_id, \
          telegram_destination_name, local_backup_dir, workspace_dir, state, \
          started_at, completed_at, last_error, flood_wait_until, \
          discovered_folders, completed_folders, discovered_items, completed_items, \
          failed_items, waiting_items, created_at, updated_at \
-         FROM migration_jobs WHERE id = ?"
-    ).map_err(|e| e.to_string())?;
+         FROM migration_jobs WHERE id = ?",
+        )
+        .map_err(|e| e.to_string())?;
     job_stmt.bind((1, job_id)).map_err(|e| e.to_string())?;
     let job = if let Ok(sqlite::State::Row) = job_stmt.next() {
         MigrationJob {
@@ -271,14 +273,16 @@ pub async fn cmd_migration_get_status(
     };
 
     // 2. Get Files with explicit columns
-    let mut files_stmt = conn.prepare(
-        "SELECT id, job_id, folder_id, source_item_id, name, path, size, item_category, \
+    let mut files_stmt = conn
+        .prepare(
+            "SELECT id, job_id, folder_id, source_item_id, name, path, size, item_category, \
          pipeline_stage, original_artifact_path, processed_artifact_path, \
          original_sha256, processed_sha256, video_decision, artifact_size, \
          telegram_attempt_id, telegram_random_id, telegram_message_id, \
          retry_count, last_error, created_at, updated_at, completed_at \
-         FROM migration_items WHERE job_id = ?"
-    ).map_err(|e| e.to_string())?;
+         FROM migration_items WHERE job_id = ?",
+        )
+        .map_err(|e| e.to_string())?;
     files_stmt.bind((1, job_id)).map_err(|e| e.to_string())?;
     let mut files = Vec::new();
     while let Ok(sqlite::State::Row) = files_stmt.next() {
@@ -313,15 +317,39 @@ pub async fn cmd_migration_get_status(
     let total_folders = job.discovered_folders;
     let total_files = files.len() as i64;
     let total_bytes: i64 = files.iter().map(|f| f.size).sum();
-    let completed_telegram = files.iter().filter(|f| f.pipeline_stage == "completed_telegram").count() as i64;
-    let completed_local = files.iter().filter(|f| f.pipeline_stage == "completed_local").count() as i64;
-    let completed_bytes: i64 = files.iter()
-        .filter(|f| f.pipeline_stage == "completed_telegram" || f.pipeline_stage == "completed_local")
-        .map(|f| f.size).sum();
-    let failed_files = files.iter().filter(|f| f.pipeline_stage == "failed").count() as i64;
-    let waiting_files = files.iter().filter(|f| f.pipeline_stage == "waiting_for_quota").count() as i64;
-    let terminal_stages = ["completed_telegram", "completed_local", "failed", "reconciliation_required"];
-    let pending_files = files.iter().filter(|f| !terminal_stages.contains(&f.pipeline_stage.as_str())).count() as i64;
+    let completed_telegram = files
+        .iter()
+        .filter(|f| f.pipeline_stage == "completed_telegram")
+        .count() as i64;
+    let completed_local = files
+        .iter()
+        .filter(|f| f.pipeline_stage == "completed_local")
+        .count() as i64;
+    let completed_bytes: i64 = files
+        .iter()
+        .filter(|f| {
+            f.pipeline_stage == "completed_telegram" || f.pipeline_stage == "completed_local"
+        })
+        .map(|f| f.size)
+        .sum();
+    let failed_files = files
+        .iter()
+        .filter(|f| f.pipeline_stage == "failed")
+        .count() as i64;
+    let waiting_files = files
+        .iter()
+        .filter(|f| f.pipeline_stage == "waiting_for_quota")
+        .count() as i64;
+    let terminal_stages = [
+        "completed_telegram",
+        "completed_local",
+        "failed",
+        "reconciliation_required",
+    ];
+    let pending_files = files
+        .iter()
+        .filter(|f| !terminal_stages.contains(&f.pipeline_stage.as_str()))
+        .count() as i64;
 
     let stats = MigrationStats {
         total_folders,
@@ -371,22 +399,24 @@ pub async fn cmd_migration_retry_failed(
     job_id: i64,
 ) -> Result<(), String> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
-    
+
     // Load failed items
-    let mut load_stmt = conn.prepare(
-        "SELECT id, pipeline_stage, original_artifact_path, processed_artifact_path, \
+    let mut load_stmt = conn
+        .prepare(
+            "SELECT id, pipeline_stage, original_artifact_path, processed_artifact_path, \
          original_sha256, processed_sha256, video_decision, retry_count \
-         FROM migration_items WHERE job_id = ? AND pipeline_stage = 'failed'"
-    ).map_err(|e| e.to_string())?;
+         FROM migration_items WHERE job_id = ? AND pipeline_stage = 'failed'",
+        )
+        .map_err(|e| e.to_string())?;
     load_stmt.bind((1, job_id)).map_err(|e| e.to_string())?;
-    
+
     let mut updates: Vec<(i64, String, i64)> = Vec::new();
     while let Ok(sqlite::State::Row) = load_stmt.next() {
         let item_id: i64 = load_stmt.read(0).unwrap_or(0);
         let processed_path: Option<String> = load_stmt.read(3).ok();
         let original_path: Option<String> = load_stmt.read(2).ok();
         let retry_count: i64 = load_stmt.read(7).unwrap_or(0);
-        
+
         let new_stage = if processed_path.is_some() {
             // Has processed artifact -> retry from upload
             "queued_upload"
@@ -397,10 +427,10 @@ pub async fn cmd_migration_retry_failed(
             // No artifacts -> retry from download
             "queued_download"
         };
-        
+
         updates.push((item_id, new_stage.to_string(), retry_count + 1));
     }
-    
+
     // Apply updates
     for (item_id, stage, new_retry) in updates {
         let mut upd = conn.prepare(
@@ -416,7 +446,7 @@ pub async fn cmd_migration_retry_failed(
         upd.bind((4, item_id)).map_err(|e| e.to_string())?;
         upd.next().map_err(|e| e.to_string())?;
     }
-    
+
     // Also retry failed folders in folder_queue
     let mut fq_upd = conn.prepare(
         "UPDATE folder_queue SET state = 'pending', last_error = NULL, updated_at = ? WHERE job_id = ? AND state = 'failed'"
@@ -428,14 +458,12 @@ pub async fn cmd_migration_retry_failed(
     fq_upd.bind((1, now)).map_err(|e| e.to_string())?;
     fq_upd.bind((2, job_id)).map_err(|e| e.to_string())?;
     fq_upd.next().map_err(|e| e.to_string())?;
-    
+
     Ok(())
 }
 
 #[tauri::command]
-pub async fn cmd_migration_reset_database(
-    state: State<'_, MigrationState>,
-) -> Result<(), String> {
+pub async fn cmd_migration_reset_database(state: State<'_, MigrationState>) -> Result<(), String> {
     // Check if pipeline is running
     {
         let guard = state.active_pipeline.lock().await;
@@ -443,7 +471,7 @@ pub async fn cmd_migration_reset_database(
             return Err("Cannot reset database while a migration pipeline is active. Stop the pipeline first.".into());
         }
     }
-    
+
     let conn = state.db.lock().map_err(|e| e.to_string())?;
     crate::migration::db::reset_database(&conn)?;
     Ok(())
