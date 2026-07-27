@@ -29,7 +29,7 @@ jobs:
         run: cargo check --lib
       - name: Migration tests
         working-directory: app/src-tauri
-        run: cargo test --lib migration:: -- --nocapture
+        run: "cargo test --lib migration:: -- --nocapture"
       - name: Install frontend dependencies
         working-directory: app
         run: npm ci
