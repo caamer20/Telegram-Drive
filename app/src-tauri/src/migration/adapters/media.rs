@@ -5,6 +5,7 @@
 // Test seam: the `ProcessRunner` trait allows injecting a fake process runner
 // for automated tests without requiring FFmpeg on the test machine.
 
+use crate::migration::events::{emit_item_progress, now_millis, ItemProgressPayload};
 use crate::migration::pipeline::stages::{
     validate_canonical_output, CanonicalVideoProfile, MediaInspector, VideoMetadata, VideoProcessor,
 };
@@ -124,6 +125,10 @@ impl ProcessRunner for RealProcessRunner {
                 _ = cancel_token.cancelled() => {
                     let _ = child.kill().await;
                     let _ = child.wait().await;
+                    stdout_task.abort();
+                    stderr_task.abort();
+                    let _ = stdout_task.await;
+                    let _ = stderr_task.await;
                     Err("ProcessRunner: Cancelled".to_string())
                 }
             }
@@ -322,7 +327,7 @@ impl VideoProcessor for FFmpegMediaAdapter {
             _ => false,
         };
         let args = match decision {
-            "canonical_transcode_main8" | "transcode" => Self::build_transcode_args(
+            "canonical_transcode_main8" => Self::build_transcode_args(
                 input_path,
                 output_path,
                 false,
@@ -367,26 +372,25 @@ impl VideoProcessor for FFmpegMediaAdapter {
                             } else {
                                 0.0
                             };
-                            use tauri::Emitter;
-                            let now_ms = std::time::SystemTime::now()
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .unwrap()
-                                .as_millis() as u64;
+                            let now_ms = now_millis() as u64;
                             let last = last_emit_ms.load(std::sync::atomic::Ordering::Relaxed);
                             if now_ms - last >= 250 {
                                 last_emit_ms.store(now_ms, std::sync::atomic::Ordering::Relaxed);
-                                let payload = serde_json::json!({
-                                    "item_id": item_id,
-                                    "job_id": job_id,
-                                    "item_name": item_name,
-                                    "phase": "processing",
-                                    "percent": percent,
-                                    "bytes_done": (time_us / 1_000_000.0 * source_fps_val) as u64,
-                                    "bytes_total": (duration_us / 1_000_000.0 * source_fps_val) as u64,
-                                    "speed_bytes_per_sec": 0.0,
-                                    "timestamp": now_ms as i64,
-                                });
-                                let _ = app.emit("migration:item-progress", payload);
+                                emit_item_progress(
+                                    &app,
+                                    ItemProgressPayload {
+                                        item_id,
+                                        job_id,
+                                        item_name: item_name.clone(),
+                                        phase: "processing".to_string(),
+                                        percent,
+                                        bytes_done: (time_us / 1_000_000.0 * source_fps_val) as u64,
+                                        bytes_total: (duration_us / 1_000_000.0 * source_fps_val)
+                                            as u64,
+                                        speed_bytes_per_sec: 0.0,
+                                        timestamp: now_ms as i64,
+                                    },
+                                );
                             }
                         }
                     }
@@ -395,10 +399,19 @@ impl VideoProcessor for FFmpegMediaAdapter {
                 None
             };
 
-            let output = runner
+            let output = match runner
                 .run_command(&ffmpeg, &args, on_progress, cancel.clone())
                 .await
-                .map_err(|e| format!("Processor: ffmpeg spawn error: {}", e))?;
+            {
+                Ok(output) => output,
+                Err(error) => {
+                    let _ = tokio::fs::remove_file(&output_path_owned).await;
+                    if cancel.is_cancelled() {
+                        return Err("Processor: cancelled".to_string());
+                    }
+                    return Err(format!("Processor: ffmpeg spawn error: {}", error));
+                }
+            };
 
             if output.exit_code != 0 {
                 // Cleanup partial output on failure
@@ -542,6 +555,12 @@ struct ProbeFormat {
     format_name: Option<String>,
     #[serde(rename = "bit_rate")]
     bit_rate: Option<String>,
+    tags: Option<ProbeFormatTags>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ProbeFormatTags {
+    major_brand: Option<String>,
 }
 
 fn normalize_rotation(value: i32) -> i32 {
@@ -672,6 +691,12 @@ pub fn parse_ffprobe_json(bytes: &[u8]) -> Result<VideoMetadata, String> {
                 .unwrap_or_default()
                 .to_ascii_lowercase(),
             fps,
+            major_brand: document
+                .format
+                .as_ref()
+                .and_then(|format| format.tags.as_ref())
+                .and_then(|tags| tags.major_brand.clone())
+                .unwrap_or_default(),
         })
     } else {
         // No video stream
@@ -699,6 +724,12 @@ pub fn parse_ffprobe_json(bytes: &[u8]) -> Result<VideoMetadata, String> {
             profile: String::new(),
             pixel_format: String::new(),
             fps: 0.0,
+            major_brand: document
+                .format
+                .as_ref()
+                .and_then(|format| format.tags.as_ref())
+                .and_then(|tags| tags.major_brand.clone())
+                .unwrap_or_default(),
         })
     }
 }
@@ -743,7 +774,8 @@ mod tests {
             "format": {
                 "format_name": format_name,
                 "duration": duration.to_string(),
-                "bit_rate": "1000000"
+                "bit_rate": "1000000",
+                "tags": { "major_brand": "isom" }
             }
         })
         .to_string()
@@ -791,6 +823,97 @@ mod tests {
         assert!(meta.is_canonical_main10());
         assert!(meta.is_hdr());
         assert!(meta.is_10bit());
+    }
+
+    #[test]
+    fn test_mov_source_requires_mp4_extension_or_brand() {
+        let mut meta = VideoMetadata {
+            container_format_names: "mov,mp4,m4a,3gp,3g2,mj2".to_string(),
+            video_codec: "hevc".to_string(),
+            audio_codec: "aac".to_string(),
+            duration: 10.0,
+            width: 1920,
+            height: 1080,
+            is_valid: true,
+            profile: "Main".to_string(),
+            pixel_format: "yuv420p".to_string(),
+            fps: 30.0,
+            major_brand: "qt  ".to_string(),
+            ..Default::default()
+        };
+        assert!(meta.is_canonical_main8());
+        assert!(!meta.is_mp4_source(std::path::Path::new("movie.mov")));
+        assert!(meta.is_mp4_source(std::path::Path::new("movie.mp4")));
+        meta.major_brand = "isom".to_string();
+        assert!(meta.is_mp4_source(std::path::Path::new("movie.mov")));
+    }
+
+    #[test]
+    fn test_main10_passthrough_rejects_422_and_444() {
+        for pixel_format in ["yuv422p10le", "yuv422p10be", "yuv444p10le", "yuv444p10be"] {
+            let meta = VideoMetadata {
+                container_format_names: "mp4".to_string(),
+                video_codec: "hevc".to_string(),
+                audio_codec: "aac".to_string(),
+                duration: 10.0,
+                width: 1920,
+                height: 1080,
+                is_valid: true,
+                profile: "Main 10".to_string(),
+                pixel_format: pixel_format.to_string(),
+                fps: 30.0,
+                ..Default::default()
+            };
+            assert!(
+                !meta.is_canonical_main10(),
+                "{} must transcode",
+                pixel_format
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_real_process_runner_cancellation_kills_and_joins() {
+        let runner = RealProcessRunner;
+        let token = tokio_util::sync::CancellationToken::new();
+        let cancel = token.clone();
+        let args = vec!["-c".to_string(), "sleep 30".to_string()];
+        let result = tokio::time::timeout(std::time::Duration::from_secs(3), async {
+            tokio::join!(runner.run_command("sh", &args, None, token), async move {
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                cancel.cancel();
+            })
+            .0
+        })
+        .await
+        .expect("cancelled process must terminate promptly");
+        assert!(result.unwrap_err().contains("Cancelled"));
+    }
+
+    #[tokio::test]
+    async fn test_unknown_legacy_decision_fails_clearly() {
+        let adapter = FFmpegMediaAdapter::new_with_runner(
+            PathBuf::from("ffprobe"),
+            PathBuf::from("ffmpeg"),
+            Arc::new(RealProcessRunner),
+            tokio_util::sync::CancellationToken::new(),
+            None,
+        );
+        let error = adapter
+            .process_video(
+                std::path::Path::new("input.mp4"),
+                std::path::Path::new("output.mp4"),
+                "transcode",
+                1,
+                1,
+                1.0,
+                30.0,
+                "input.mp4",
+            )
+            .await
+            .unwrap_err();
+        assert!(error.contains("unsupported decision: transcode"));
     }
 
     #[test]

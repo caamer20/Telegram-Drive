@@ -13,17 +13,27 @@ pub fn validate_stage_transition(from: PipelineStage, to: PipelineStage) -> bool
     match from {
         PipelineStage::Discovered => to == PipelineStage::QueuedDownload,
         PipelineStage::QueuedDownload => to == PipelineStage::Downloading,
-        PipelineStage::Downloading => to == PipelineStage::Downloaded,
+        PipelineStage::Downloading => {
+            to == PipelineStage::Downloaded || to == PipelineStage::QueuedDownload
+        }
         PipelineStage::Downloaded => {
             to == PipelineStage::QueuedProcessing
                 || to == PipelineStage::QueuedUpload
                 || to == PipelineStage::SavingLocal
         }
         PipelineStage::QueuedProcessing => to == PipelineStage::Processing,
-        PipelineStage::Processing => to == PipelineStage::Processed,
+        PipelineStage::Processing => {
+            to == PipelineStage::Processed || to == PipelineStage::QueuedProcessing
+        }
         PipelineStage::Processed => to == PipelineStage::QueuedUpload,
-        PipelineStage::QueuedUpload => to == PipelineStage::Uploading,
-        PipelineStage::Uploading => to == PipelineStage::CompletedTelegram,
+        PipelineStage::QueuedUpload => {
+            to == PipelineStage::Uploading || to == PipelineStage::WaitingForQuota
+        }
+        PipelineStage::Uploading => {
+            to == PipelineStage::CompletedTelegram
+                || to == PipelineStage::WaitingForQuota
+                || to == PipelineStage::QueuedUpload
+        }
         PipelineStage::WaitingForQuota => to == PipelineStage::QueuedUpload,
         PipelineStage::SavingLocal => to == PipelineStage::CompletedLocal,
         // Recovery transitions:
@@ -32,6 +42,7 @@ pub fn validate_stage_transition(from: PipelineStage, to: PipelineStage) -> bool
             to == PipelineStage::QueuedDownload
                 || to == PipelineStage::QueuedProcessing
                 || to == PipelineStage::QueuedUpload
+                || to == PipelineStage::SavingLocal
         }
         PipelineStage::CompletedTelegram
         | PipelineStage::CompletedLocal
@@ -142,6 +153,30 @@ mod tests {
         assert!(validate_stage_transition(
             PipelineStage::Downloading,
             PipelineStage::Failed
+        ));
+        assert!(validate_stage_transition(
+            PipelineStage::QueuedUpload,
+            PipelineStage::WaitingForQuota
+        ));
+        assert!(validate_stage_transition(
+            PipelineStage::Uploading,
+            PipelineStage::WaitingForQuota
+        ));
+        assert!(validate_stage_transition(
+            PipelineStage::WaitingForQuota,
+            PipelineStage::QueuedUpload
+        ));
+        assert!(validate_stage_transition(
+            PipelineStage::Downloading,
+            PipelineStage::QueuedDownload
+        ));
+        assert!(validate_stage_transition(
+            PipelineStage::Processing,
+            PipelineStage::QueuedProcessing
+        ));
+        assert!(validate_stage_transition(
+            PipelineStage::Uploading,
+            PipelineStage::QueuedUpload
         ));
 
         // Invalid transitions

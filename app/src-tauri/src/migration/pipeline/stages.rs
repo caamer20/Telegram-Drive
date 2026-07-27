@@ -116,6 +116,8 @@ pub struct VideoMetadata {
     pub profile: String,
     pub pixel_format: String,
     pub fps: f64,
+    /// ISO BMFF major_brand from ffprobe format.tags.major_brand.
+    pub major_brand: String,
 }
 
 impl VideoMetadata {
@@ -132,6 +134,33 @@ impl VideoMetadata {
                 "mp4" | "mov" | "m4a" | "3gp" | "3g2" | "mj2" | "ismv" | "ipod"
             )
         })
+    }
+
+    /// Source passthrough is stricter than output validation: a QuickTime `.mov`
+    /// must not become canonical merely because FFprobe reports the shared MOV/MP4 demuxer.
+    pub fn is_mp4_source(&self, source_path: &Path) -> bool {
+        let has_mp4_extension = source_path
+            .extension()
+            .and_then(|value| value.to_str())
+            .map(|value| value.eq_ignore_ascii_case("mp4"))
+            .unwrap_or(false);
+        let brand = self.major_brand.trim().to_ascii_lowercase();
+        let has_mp4_brand = matches!(
+            brand.as_str(),
+            "isom"
+                | "iso2"
+                | "iso3"
+                | "iso4"
+                | "iso5"
+                | "iso6"
+                | "mp41"
+                | "mp42"
+                | "avc1"
+                | "dash"
+                | "mmp4"
+                | "msnv"
+        );
+        self.is_mp4_compatible() && (has_mp4_extension || has_mp4_brand)
     }
 
     /// Check if this is a valid HEVC Main 8-bit passthrough candidate
@@ -156,14 +185,7 @@ impl VideoMetadata {
         let profile_lower = self.profile.to_ascii_lowercase().replace(' ', "");
         let valid_10bit_pix_fmt = matches!(
             self.pixel_format.as_str(),
-            "yuv420p10le"
-                | "yuv420p10be"
-                | "yuv422p10le"
-                | "yuv422p10be"
-                | "yuv444p10le"
-                | "yuv444p10be"
-                | "p010le"
-                | "p010be"
+            "yuv420p10le" | "yuv420p10be" | "p010le" | "p010be"
         );
         self.is_valid
             && self.duration > 0.0

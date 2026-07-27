@@ -29,9 +29,15 @@ impl StreamingCrawler {
             match folder_queue_item {
                 Some(folder) => {
                     if let Err(e) = self.process_folder(folder, &tx).await {
+                        if self.cancel_token.is_cancelled() {
+                            break;
+                        }
                         log::error!("Crawler failed to process folder: {}", e);
                         // Sleep briefly on error to avoid tight spin loops on persistent network errors
-                        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+                        tokio::select! {
+                            _ = self.cancel_token.cancelled() => break,
+                            _ = tokio::time::sleep(tokio::time::Duration::from_secs(2)) => {}
+                        }
                     }
                 }
                 None => {
@@ -121,15 +127,6 @@ impl StreamingCrawler {
         };
         let http = reqwest::Client::new();
 
-        let cancel_future = async {
-            loop {
-                if self.cancel_token.is_cancelled() {
-                    break;
-                }
-                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-            }
-        };
-
         let json = tokio::select! {
             res = send_graph_request(&http, &request_url, &access_token) => {
                 match res {
@@ -144,8 +141,8 @@ impl StreamingCrawler {
                     }
                 }
             }
-            _ = cancel_future => {
-                return Err("Crawler cancelled during Graph API request".to_string());
+            _ = self.cancel_token.cancelled() => {
+                return Ok(());
             }
         };
 
@@ -339,12 +336,68 @@ impl StreamingCrawler {
             }
             // Gửi vào channel, block nếu channel đầy.
             // Điều này tạo ra backpressure tự nhiên lên Crawler.
-            if tx.send(item).await.is_err() {
-                log::error!("Crawler failed to send item to pipeline channel (channel closed)");
-                break;
+            tokio::select! {
+                _ = self.cancel_token.cancelled() => break,
+                result = tx.send(item) => {
+                    if result.is_err() {
+                        log::error!("Crawler failed to send item to pipeline channel (channel closed)");
+                        break;
+                    }
+                }
             }
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::migration::db::open_migration_db_at_path;
+    use crate::migration::models::MsAccountInfo;
+
+    #[tokio::test]
+    async fn cancellation_during_graph_request_is_not_fatal() {
+        let db_path = std::env::temp_dir().join(format!(
+            "crawler-cancel-{}-{}.db",
+            std::process::id(),
+            rand::random::<u64>()
+        ));
+        let db = open_migration_db_at_path(db_path.clone()).unwrap();
+        {
+            let conn = db.lock().unwrap();
+            conn.execute("INSERT INTO migration_jobs (id, source_folder_id, source_folder_path, telegram_destination_name, local_backup_dir, workspace_dir, state, started_at, created_at, updated_at) VALUES (1, 'root', '/', 'Saved Messages', '/tmp', '/tmp', 'running', 0, 0, 0)").unwrap();
+            conn.execute("INSERT INTO folder_queue (id, job_id, folder_id, folder_path, state, has_more, created_at, updated_at) VALUES (1, 1, 'root', '/', 'pending', 1, 0, 0)").unwrap();
+        }
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+        let crawler = StreamingCrawler {
+            db,
+            job_id: 1,
+            ms_session: Arc::new(TokioMutex::new(Some(MicrosoftSession {
+                client_id: "client".to_string(),
+                access_token: "token".to_string(),
+                refresh_token: "refresh".to_string(),
+                expires_at: chrono::Utc::now().timestamp() + 3600,
+                tenant: "common".to_string(),
+                redirect_uri: "http://localhost".to_string(),
+                account_info: MsAccountInfo {
+                    account_name: "Test".to_string(),
+                    account_email: "test@example.com".to_string(),
+                },
+            }))),
+            cancel_token: cancel,
+        };
+        let (tx, _rx) = mpsc::channel(1);
+        let folder = crawler.get_next_folder().unwrap().unwrap();
+        let result = tokio::time::timeout(
+            tokio::time::Duration::from_secs(2),
+            crawler.process_folder(folder, &tx),
+        )
+        .await
+        .expect("cancelled Graph request did not return");
+        assert!(result.is_ok());
+        let _ = std::fs::remove_file(db_path);
     }
 }

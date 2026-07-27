@@ -13,6 +13,7 @@
 // Does NOT change the existing upload adapter behavior.
 // Does NOT send as photo — always sends as document/file.
 
+use crate::migration::events::{emit_item_progress, now_millis, ItemProgressPayload};
 use crate::migration::pipeline::stages::{
     TelegramUploadRequest, TelegramUploadResult, TelegramUploader,
 };
@@ -104,6 +105,7 @@ pub struct TelegramProductionAdapter {
     cancel_token: tokio_util::sync::CancellationToken,
     destination_folder_id: Option<i64>,
     db: Option<crate::migration::db::MigrationDb>,
+    app_handle: Option<tauri::AppHandle>,
 }
 
 impl TelegramProductionAdapter {
@@ -113,6 +115,7 @@ impl TelegramProductionAdapter {
         cancel_token: tokio_util::sync::CancellationToken,
         destination_folder_id: Option<i64>,
         db: crate::migration::db::MigrationDb,
+        app_handle: Option<tauri::AppHandle>,
     ) -> Self {
         Self {
             client,
@@ -120,6 +123,7 @@ impl TelegramProductionAdapter {
             cancel_token,
             destination_folder_id,
             db: Some(db),
+            app_handle,
         }
     }
 
@@ -244,6 +248,7 @@ impl TelegramUploader for TelegramProductionAdapter {
         let cancel_token = self.cancel_token.clone();
         let folder_id = request.destination_id.or(self.destination_folder_id);
         let db = self.db.clone();
+        let app_handle = self.app_handle.clone();
         let path = request.path;
         let filename = request.filename;
         let item_id = request.item_id;
@@ -310,24 +315,78 @@ impl TelegramUploader for TelegramProductionAdapter {
 
             // 3. Binary upload via upload_stream — with timeout
             let upload_timeout_secs: u64 = 600; // 10 minutes timeout for binary upload
-            let (mut reader, total_size, _bytes_counter) =
+            let (mut reader, total_size, bytes_counter) =
                 crate::commands::fs::ProgressReader::new(path.to_str().unwrap_or(""))
                     .await
                     .map_err(|e| format!("Upload: failed to create reader: {}", e))?;
 
             let client_for_upload = tg_client.clone();
             let fname_for_upload = filename.clone();
-            let upload_result = tokio::time::timeout(
-                std::time::Duration::from_secs(upload_timeout_secs),
-                tokio::task::spawn(async move {
-                    client_for_upload
-                        .upload_stream(&mut reader, total_size as usize, fname_for_upload)
-                        .await
-                }),
-            )
-            .await
-            .map_err(|_| "Upload: binary upload timed out".to_string())?
-            .map_err(|e| format!("Upload: task join error: {}", e))?;
+            let progress_cancel = tokio_util::sync::CancellationToken::new();
+            let progress_handle = app_handle.map(|app| {
+                let progress_cancel = progress_cancel.clone();
+                let counter = bytes_counter.clone();
+                let progress_name = filename.clone();
+                tokio::spawn(async move {
+                    let mut interval = tokio::time::interval(std::time::Duration::from_millis(250));
+                    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                    let mut previous_bytes = 0u64;
+                    let mut previous_time = std::time::Instant::now();
+                    loop {
+                        tokio::select! {
+                            _ = progress_cancel.cancelled() => break,
+                            _ = interval.tick() => {
+                                let current = counter.load(std::sync::atomic::Ordering::Relaxed);
+                                let elapsed = previous_time.elapsed().as_secs_f64().max(0.001);
+                                emit_item_progress(&app, ItemProgressPayload {
+                                    job_id,
+                                    item_id,
+                                    item_name: progress_name.clone(),
+                                    phase: "uploading".to_string(),
+                                    percent: if total_size > 0 { current as f64 * 100.0 / total_size as f64 } else { 0.0 },
+                                    bytes_done: current,
+                                    bytes_total: total_size,
+                                    speed_bytes_per_sec: current.saturating_sub(previous_bytes) as f64 / elapsed,
+                                    timestamp: now_millis(),
+                                });
+                                previous_bytes = current;
+                                previous_time = std::time::Instant::now();
+                            }
+                        }
+                    }
+                })
+            });
+
+            let mut upload_handle = tokio::task::spawn(async move {
+                client_for_upload
+                    .upload_stream(&mut reader, total_size as usize, fname_for_upload)
+                    .await
+            });
+            let upload_result = tokio::select! {
+                _ = cancel_token.cancelled() => {
+                    upload_handle.abort();
+                    let _ = upload_handle.await;
+                    Err("Upload: cancelled".to_string())
+                }
+                result = tokio::time::timeout(
+                    std::time::Duration::from_secs(upload_timeout_secs),
+                    &mut upload_handle,
+                ) => {
+                    match result {
+                        Ok(joined) => joined.map_err(|error| format!("Upload: task join error: {}", error)),
+                        Err(_) => {
+                            upload_handle.abort();
+                            let _ = upload_handle.await;
+                            Err("Upload: binary upload timed out".to_string())
+                        }
+                    }
+                }
+            };
+            progress_cancel.cancel();
+            if let Some(handle) = progress_handle {
+                let _ = handle.await;
+            }
+            let upload_result = upload_result?;
 
             let uploaded_file = match upload_result {
                 Ok(f) => f,
@@ -348,10 +407,14 @@ impl TelegramUploader for TelegramProductionAdapter {
             } else {
                 folder_id
             };
-            let peer =
-                crate::commands::utils::resolve_peer(&tg_client, normalized_folder_id, &peer_cache)
-                    .await
-                    .map_err(|e| format!("Upload: peer resolution failed: {}", e))?;
+            let peer = tokio::select! {
+                _ = cancel_token.cancelled() => {
+                    return Err("Upload: cancelled".to_string());
+                }
+                result = crate::commands::utils::resolve_peer(&tg_client, normalized_folder_id, &peer_cache) => {
+                    result.map_err(|e| format!("Upload: peer resolution failed: {}", e))?
+                }
+            };
 
             // 5. Send with explicit persisted random_id — with timeout
             //    Images and other files are always sent as document/file, not photo
@@ -363,18 +426,21 @@ impl TelegramUploader for TelegramProductionAdapter {
                     .await
             };
 
-            let send_result = match tokio::time::timeout(
-                std::time::Duration::from_secs(send_timeout_secs),
-                send_future,
-            )
-            .await
-            {
-                Ok(result) => result,
-                Err(_elapsed) => {
-                    return Err(format!(
-                        "Upload: send_message_with_random_id timed out after {}s (random_id={})",
-                        send_timeout_secs, persisted_random_id
-                    ));
+            let send_result = tokio::select! {
+                _ = cancel_token.cancelled() => {
+                    return Err("Upload: cancelled".to_string());
+                }
+                result = tokio::time::timeout(
+                    std::time::Duration::from_secs(send_timeout_secs),
+                    send_future,
+                ) => match result {
+                    Ok(result) => result,
+                    Err(_elapsed) => {
+                        return Err(format!(
+                            "Upload: send_message_with_random_id timed out after {}s (random_id={})",
+                            send_timeout_secs, persisted_random_id
+                        ));
+                    }
                 }
             };
 
@@ -450,10 +516,9 @@ fn parse_flood_wait_seconds(err_str: &str) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::migration::db::{init_migration_db, open_migration_db_at_path};
+    use crate::migration::db::open_migration_db_at_path;
     use crate::migration::telegram_idempotency::get_deterministic_random_id;
     use grammers_tl_types as tl;
-    use std::fs;
     use std::path::PathBuf;
 
     /// Type-level proof: when grammers has `send_message_with_random_id`,

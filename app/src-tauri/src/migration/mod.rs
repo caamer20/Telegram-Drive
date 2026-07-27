@@ -1,6 +1,7 @@
 pub mod adapters;
 pub mod commands;
 pub mod db;
+pub mod events;
 
 pub mod microsoft;
 pub mod models;

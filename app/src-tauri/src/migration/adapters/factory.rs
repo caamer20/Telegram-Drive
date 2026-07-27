@@ -77,13 +77,15 @@ pub fn build_pipeline_services(
         http_client,
         ms_session.clone(),
         db.clone(),
+        cancel_token.clone(),
+        app_handle.clone(),
     ));
 
     let media_adapter = Arc::new(FFmpegMediaAdapter::new(
         ffprobe_path,
         ffmpeg_path,
         cancel_token.clone(),
-        app_handle,
+        app_handle.clone(),
     ));
 
     let telegram_adapter = Arc::new(TelegramProductionAdapter::new(
@@ -92,6 +94,7 @@ pub fn build_pipeline_services(
         cancel_token.clone(),
         destination_folder_id,
         db.clone(),
+        app_handle.clone(),
     ));
 
     let local_adapter = Arc::new(LocalProductionAdapter::new(backup_dir.clone()));
@@ -107,6 +110,7 @@ pub fn build_pipeline_services(
         ms_session.clone(),
         cancel_token.clone(),
         destination_folder_id,
+        app_handle,
     ));
 
     Ok((
