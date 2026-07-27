@@ -64,7 +64,10 @@ pub async fn cmd_list_archive_contents(
 
     match archive_type {
         ArchiveType::Zip => list_zip_contents(&client, &media, max_bytes, &filename).await,
+        #[cfg(not(target_os = "android"))]
         ArchiveType::Rar => list_rar_contents(&client, &media, max_bytes, &filename).await,
+        #[cfg(target_os = "android")]
+        ArchiveType::Rar => Err("RAR archives are not supported on Android".to_string()),
         ArchiveType::SevenZ => list_sevenz_contents(&client, &media, max_bytes, &filename).await,
     }
 }
@@ -85,7 +88,10 @@ pub async fn cmd_extract_archive_entry(
 
     match archive_type {
         ArchiveType::Zip => extract_zip_entry(&client, &media, max_bytes, entry_index).await,
+        #[cfg(not(target_os = "android"))]
         ArchiveType::Rar => extract_rar_entry(&client, &media, max_bytes, entry_index).await,
+        #[cfg(target_os = "android")]
+        ArchiveType::Rar => Err("RAR archives are not supported on Android".to_string()),
         ArchiveType::SevenZ => extract_sevenz_entry(&client, &media, max_bytes, entry_index).await,
     }
 }
@@ -283,6 +289,7 @@ async fn download_to_temp_file(
     Ok((archive_path, extract_dir))
 }
 
+#[cfg(not(target_os = "android"))]
 async fn list_rar_contents(
     client: &grammers_client::Client,
     media: &Media,
@@ -323,6 +330,7 @@ async fn list_rar_contents(
     Ok(entries)
 }
 
+#[cfg(not(target_os = "android"))]
 async fn extract_rar_entry(
     client: &grammers_client::Client,
     media: &Media,

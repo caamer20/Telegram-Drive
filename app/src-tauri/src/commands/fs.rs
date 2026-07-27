@@ -968,8 +968,13 @@ fn publish_verified_android_download(
         ],
     );
     match result {
-        Ok(value) if value.z().unwrap_or(false) => Ok(()),
-        Ok(_) => Err("Android MediaStore rejected the verified file".to_string()),
+        Ok(value) => {
+            if value.z().unwrap_or(false) {
+                Ok(())
+            } else {
+                Err("Android MediaStore rejected the verified file".to_string())
+            }
+        }
         Err(error) => {
             if env.exception_check().unwrap_or(false) {
                 let _ = env.exception_describe();
