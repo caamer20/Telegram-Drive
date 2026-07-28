@@ -34,10 +34,15 @@ struct CryptoStateInner {
 }
 
 struct SessionInfo {
+    /// Timestamp for planned session-expiry enforcement.
+    #[allow(dead_code)]
     created_at: Instant,
     wrapping_key: SecretKey,
 }
 
+/// Metadata for an active operation handle.
+/// Fields will be consumed by the planned per-operation policy engine.
+#[allow(dead_code)]
 struct OperationInfo {
     session_id: UnlockSessionId,
     created_at: Instant,

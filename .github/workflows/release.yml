@@ -157,6 +157,39 @@ jobs:
           projectPath: ./app
           args: ${{ matrix.args }}
 
+      - name: Read updater signature (Windows)
+        if: matrix.platform == 'windows-latest'
+        id: sig
+        shell: bash
+        run: |
+          SIG_PATH=$(find app/src-tauri/target/release/bundle/nsis -name "*.nsis.zip.sig" | head -1)
+          echo "signature=$(cat "$SIG_PATH")" >> "$GITHUB_OUTPUT"
+
+      - name: Generate latest.json
+        if: matrix.platform == 'windows-latest'
+        shell: bash
+        run: |
+          cat > latest.json << ENDJSON
+          {
+            "version": "${{ github.ref_name }}",
+            "notes": "Automated release ${{ github.ref_name }}",
+            "pub_date": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "platforms": {
+              "windows-x86_64": {
+                "signature": "${{ steps.sig.outputs.signature }}",
+                "url": "https://github.com/caamer20/Telegram-Drive/releases/download/${{ github.ref_name }}/Telegram-Drive_${{ github.ref_name }}_x64-setup.nsis.zip"
+              }
+            }
+          }
+          ENDJSON
+
+      - name: Upload latest.json to release
+        if: matrix.platform == 'windows-latest'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: latest.json
+          token: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Patch AppImage for cross-distro EGL compatibility
         if: matrix.platform == 'ubuntu-22.04'
         run: |

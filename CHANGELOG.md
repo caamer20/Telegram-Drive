@@ -1,3 +1,12 @@
+## [2.1.0] - 2026-07-28
+
+### Italian Language Support & Build Fixes
+
+- **Localization**
+  - Added complete Italian (`it`) language support across all application surfaces, settings, dialogs, and error messages.
+- **Build & Quality**
+  - Resolved build warnings and runtime layout/formatting issues.
+
 ## [2.0.0] - 2026-07-26
 
 ### Major Release — Internationalization & Quiet Utility Redesign

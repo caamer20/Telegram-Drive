@@ -18,7 +18,6 @@ pub enum TempPolicy {
 /// on lock, exit, or expiry. The file is stored in an app-private directory
 /// with a randomized name and owner-only permissions.
 pub struct PlaintextLease {
-    id: String,
     path: PathBuf,
     created_at: Instant,
     ttl: Duration,
@@ -84,7 +83,6 @@ impl LeaseManager {
         let path = self.base_dir.join(&id);
 
         let lease = PlaintextLease {
-            id: id.clone(),
             path: path.clone(),
             created_at: Instant::now(),
             ttl,

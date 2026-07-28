@@ -6,6 +6,7 @@ import es from './locales/es.json';
 import ru from './locales/ru.json';
 import zhCN from './locales/zh-CN.json';
 import fr from './locales/fr.json';
+import it from './locales/it.json';
 import ar from './locales/ar.json';
 import ptBR from './locales/pt-BR.json';
 import de from './locales/de.json';
@@ -24,6 +25,7 @@ i18n
       ru: { translation: ru },
       'zh-CN': { translation: zhCN },
       fr: { translation: fr },
+      it: { translation: it },
       ar: { translation: ar },
       'pt-BR': { translation: ptBR },
       de: { translation: de },

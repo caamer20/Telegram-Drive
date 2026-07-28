@@ -8,6 +8,7 @@ const ALLOWED_PLURAL_SUFFIXES = {
   en: ['_one', '_other'],
   es: ['_one', '_other'],
   fr: ['_one', '_other'],
+  it: ['_one', '_other'],
   pt_BR: ['_one', '_other'],
   de: ['_one', '_other'],
   hi: ['_one', '_other'],

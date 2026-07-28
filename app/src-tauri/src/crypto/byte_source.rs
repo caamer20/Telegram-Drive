@@ -1,4 +1,6 @@
 use crate::crypto::error::{CryptoError, CryptoResult};
+use std::future::Future;
+use std::pin::Pin;
 
 /// Represents the media source as either plaintext or encrypted ciphertext.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -31,6 +33,9 @@ pub enum EncryptionState {
     EncryptedVerifying,
 }
 
+/// Type alias for boxed async results used in trait object-safe methods.
+type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
+
 /// A logical byte source that abstracts over plaintext and encrypted files.
 ///
 /// All media access (previews, streaming, downloads, archives, transcode) should
@@ -42,14 +47,14 @@ pub trait LogicalMediaSource: Send + Sync {
     /// Read a range of plaintext bytes from the source.
     /// For encrypted sources, this maps the plaintext range to ciphertext records,
     /// fetches and authenticates them, and returns the plaintext slice.
-    async fn read_range(
+    fn read_range(
         &self,
         plaintext_start: u64,
         plaintext_end: u64,
-    ) -> CryptoResult<Vec<u8>>;
+    ) -> BoxFuture<'_, CryptoResult<Vec<u8>>>;
 
     /// Stream all plaintext bytes sequentially.
-    async fn stream_all(&self) -> CryptoResult<Vec<u8>>;
+    fn stream_all(&self) -> BoxFuture<'_, CryptoResult<Vec<u8>>>;
 
     /// Check if this source is currently accessible (e.g., vault unlocked).
     fn is_accessible(&self) -> bool;
@@ -83,21 +88,25 @@ impl LogicalMediaSource for PlaintextSource {
         &self.metadata
     }
 
-    async fn read_range(
+    fn read_range(
         &self,
         start: u64,
         end: u64,
-    ) -> CryptoResult<Vec<u8>> {
-        let start = start as usize;
-        let end = (end as usize).min(self.data.len() - 1);
-        if start > end || start >= self.data.len() {
-            return Err(CryptoError::header_invalid("Range out of bounds"));
-        }
-        Ok(self.data[start..=end].to_vec())
+    ) -> BoxFuture<'_, CryptoResult<Vec<u8>>> {
+        Box::pin(async move {
+            let start = start as usize;
+            let end = (end as usize).min(self.data.len() - 1);
+            if start > end || start >= self.data.len() {
+                return Err(CryptoError::header_invalid("Range out of bounds"));
+            }
+            Ok(self.data[start..=end].to_vec())
+        })
     }
 
-    async fn stream_all(&self) -> CryptoResult<Vec<u8>> {
-        Ok(self.data.clone())
+    fn stream_all(&self) -> BoxFuture<'_, CryptoResult<Vec<u8>>> {
+        Box::pin(async move {
+            Ok(self.data.clone())
+        })
     }
 
     fn is_accessible(&self) -> bool {

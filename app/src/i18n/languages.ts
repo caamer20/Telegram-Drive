@@ -1,4 +1,4 @@
-export type SupportedLanguage = 'en' | 'es' | 'ru' | 'zh-CN' | 'fr' | 'ar' | 'pt-BR' | 'de' | 'hi' | 'id' | 'tr' | 'ja' | 'ko';
+export type SupportedLanguage = 'en' | 'es' | 'ru' | 'zh-CN' | 'fr' | 'it' | 'ar' | 'pt-BR' | 'de' | 'hi' | 'id' | 'tr' | 'ja' | 'ko';
 
 export type LanguagePreference = 'system' | SupportedLanguage;
 
@@ -19,6 +19,7 @@ export const LANGUAGES: LanguageInfo[] = [
   { code: 'ru', nativeLabel: 'Русский', englishLabel: 'Russian', dir: 'ltr', numberLocale: 'ru-RU', dateLocale: 'ru-RU', aliases: ['ru'] },
   { code: 'zh-CN', nativeLabel: '简体中文', englishLabel: 'Chinese (Simplified)', dir: 'ltr', numberLocale: 'zh-CN', dateLocale: 'zh-CN', aliases: ['zh', 'zh-CN', 'zh-SG', 'zh-Hans'] },
   { code: 'fr', nativeLabel: 'Français', englishLabel: 'French', dir: 'ltr', numberLocale: 'fr-FR', dateLocale: 'fr-FR', aliases: ['fr'] },
+  { code: 'it', nativeLabel: 'Italiano', englishLabel: 'Italian', dir: 'ltr', numberLocale: 'it-IT', dateLocale: 'it-IT', aliases: ['it'] },
   { code: 'ar', nativeLabel: 'العربية', englishLabel: 'Arabic', dir: 'rtl', numberLocale: 'ar', dateLocale: 'ar', aliases: ['ar'] },
   { code: 'pt-BR', nativeLabel: 'Português (Brasil)', englishLabel: 'Portuguese (Brazil)', dir: 'ltr', numberLocale: 'pt-BR', dateLocale: 'pt-BR', aliases: ['pt', 'pt-BR'] },
   { code: 'de', nativeLabel: 'Deutsch', englishLabel: 'German', dir: 'ltr', numberLocale: 'de-DE', dateLocale: 'de-DE', aliases: ['de'] },

@@ -8,6 +8,7 @@ const MISSING_DATA = {
   ru: { delete: "Удалить", revoke: "Отозвать", update_available: "Доступно обновление", uploading: "Загрузка..." },
   'zh-CN': { delete: "删除", revoke: "撤销", update_available: "有可用更新", uploading: "正在上传..." },
   fr: { delete: "Supprimer", revoke: "Révoker", update_available: "Mise à jour disponible", uploading: "Envoi en cours..." },
+  it: { delete: "Elimina", revoke: "Revoca", update_available: "Aggiornamento disponibile", uploading: "Caricamento..." },
   ar: { delete: "حذف", revoke: "إلغاء", update_available: "تحديث متاح", uploading: "جاري الرفع..." },
   'pt-BR': { delete: "Excluir", revoke: "Revogar", update_available: "Atualização disponível", uploading: "Enviando..." },
   de: { delete: "Löschen", revoke: "Widerrufen", update_available: "Update verfügbar", uploading: "Wird hochgeladen..." },

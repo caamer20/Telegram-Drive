@@ -1,6 +1,6 @@
 [package]
 name = "app"
-version = "2.0.0"
+version = "2.1.0"
 description = "Turn your Telegram account into an unlimited, secure cloud storage drive. an Open-source desktop app built with Tauri, Rust, and React."
 authors = ["Cameron Amer"]
 edition = "2021"
@@ -62,18 +62,20 @@ hmac = "0.12"
 zeroize = { version = "1", features = ["derive"] }
 getrandom = "0.2"
 zip = { version = "2", default-features = false, features = ["deflate"] }
-unrar = "0.5"
 sevenz-rust2 = "0.7"
 path-clean = "1"
 walkdir = "2"
 sqlite = { version = "0.37.0", features = ["bundled"] }
 mp4parse = "0.17"
 urlencoding = "2"
-reqwest = { version = "0.12", features = ["stream", "rustls-tls", "socks"] }
+reqwest = { version = "0.12", default-features = false, features = ["stream", "rustls-tls", "socks"] }
 sysinfo = "0.30"
 tokio-rustls = "0.26"
 rustls = "0.23"
 webpki-roots = "0.26"
+
+[target.'cfg(not(target_os = "android"))'.dependencies]
+unrar = "0.5"
 
 [target.'cfg(target_os = "android")'.dependencies]
 jni = "0.21"

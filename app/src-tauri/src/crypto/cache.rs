@@ -9,12 +9,18 @@ use std::path::PathBuf;
 /// domain-separated cache key. Raw plaintext derivatives must never be stored
 /// in the same directories used for plaintext file caches.
 pub struct EncryptedDerivedCache {
+    /// Base directory for encrypted derivative storage.
+    /// Used by store()/load() once the full caching pipeline is implemented.
+    #[allow(dead_code)]
     base_dir: PathBuf,
     cache_key: Option<SecretKey>,
     /// Track active cache entries for cleanup on lock.
     active_entries: HashMap<String, CacheEntry>,
 }
 
+/// Metadata for a cached derivative file on disk.
+/// Fields will be consumed by the planned LRU eviction logic.
+#[allow(dead_code)]
 struct CacheEntry {
     path: PathBuf,
     size_bytes: u64,

@@ -49,6 +49,50 @@ const TRANSLATIONS = {
       close_ad: "Cerrar anuncio"
     }
   },
+  it: {
+    auth: {
+      desktop_required: "È richiesta l'app desktop",
+      desktop_required_desc: "Stai visualizzando il server di sviluppo interno in un browser. Questa applicazione non può funzionare qui perché richiede l'accesso al backend di sistema (Rust).",
+      open_window_prompt: "Apri la finestra di Telegram Drive dalla barra delle applicazioni o dal dock del sistema operativo per continuare.",
+      tagline: "Archiviazione sicura self-hosted",
+      too_many_requests: "Troppe richieste",
+      flood_wait_msg: "Telegram ha limitato temporaneamente le tue azioni.",
+      please_wait: "Attendi prima di riprovare.",
+      timer_reset_warning: "Non riavviare l'app. Il timer si reimposterà.",
+      api_credentials: "Credenziali API",
+      api_id: "ID API",
+      api_hash: "Hash API",
+      configure: "Configura",
+      how_to_get_credentials: "Come ottengo le credenziali API?",
+      dev_mode: "Modalità sviluppatore",
+      phone_number: "Numero di telefono",
+      qr_code: "Codice QR",
+      continue: "Continua",
+      back_to_config: "Torna alla configurazione",
+      scan_qr: "Scansiona con l'app Telegram",
+      qr_instructions: "Impostazioni > Dispositivi > Collega dispositivo desktop",
+      waiting_for_scan: "In attesa della scansione...",
+      refresh_qr: "Aggiorna codice QR",
+      telegram_code: "Codice Telegram",
+      change_phone: "Cambia numero di telefono",
+      two_factor_enabled: "Il tuo account ha l'autenticazione a due fattori attiva. Inserisci la password cloud per continuare.",
+      cloud_password: "Password cloud",
+      password_placeholder: "Inserisci la password",
+      back_to_code: "Torna all'inserimento del codice",
+      donate: "Dona",
+      getting_started: "Per iniziare",
+      close_help: "Chiudi guida",
+      privacy_note: "Le tue credenziali sono archiviate localmente sul dispositivo e non vengono mai inviate a server di terze parti. Tutti i dati passano direttamente tra te e Telegram."
+    },
+    ads: {
+      sponsored: "Sponsorizzato",
+      sponsor_message: "Un breve messaggio dal nostro sponsor",
+      sponsor_support_desc: "Visitare lo sponsor aiuta a sostenere lo sviluppo e mantiene Telegram Drive disponibile gratuitamente.",
+      continue_to_files: "Continua ai file",
+      browser_note: "Il contenuto sponsorizzato si apre nel browser. Vedrai questo passaggio una sola volta.",
+      close_ad: "Chiudi annuncio"
+    }
+  },
   ru: {
     auth: {
       desktop_required: "Требуется приложение для ПК",
@@ -95,7 +139,7 @@ const TRANSLATIONS = {
   }
 };
 
-const locales = ['es', 'ru', 'zh-CN', 'fr', 'ar', 'pt-BR', 'de', 'hi', 'id', 'tr', 'ja', 'ko'];
+const locales = ['es', 'ru', 'zh-CN', 'fr', 'it', 'ar', 'pt-BR', 'de', 'hi', 'id', 'tr', 'ja', 'ko'];
 
 for (const loc of locales) {
   const filePath = path.join(LOCALES_DIR, `${loc}.json`);
