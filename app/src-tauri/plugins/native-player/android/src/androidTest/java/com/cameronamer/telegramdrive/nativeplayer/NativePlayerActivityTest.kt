@@ -108,6 +108,7 @@ class NativePlayerActivityTest {
                 NativePlayerPublicError("server", "HTTP_503", "The local stream is temporarily unavailable."),
             )
             assertTrue(it.isErrorOverlayVisibleForTest())
+            assertTrue(it.errorPresentedForTest())
         }
         onView(withContentDescription("Retry playback")).perform(click())
         scenario.onActivity {
@@ -130,10 +131,73 @@ class NativePlayerActivityTest {
                 durationMs = 20,
                 exitReason = "error",
                 error = NativePlayerPublicError("network", "READ_TIMEOUT", "Safe message"),
+                errorPresented = true,
             ),
         )
         val keys = intent.extras!!.keySet().map(String::lowercase)
         assertFalse(keys.any { it.contains("token") || it.contains("authorization") || it.contains("url") || it.contains("path") })
-        assertEquals("network", NativePlayerResultCodec.fromIntent(intent).error?.category)
+        val decoded = NativePlayerResultCodec.fromIntent(intent)
+        assertEquals("network", decoded.error?.category)
+        assertTrue(decoded.errorPresented)
+    }
+
+    @Test
+    fun closeFromOverlayReturnsPresentedStructuredErrorExactlyOnce() {
+        val scenario = launch()
+        scenario.onActivity {
+            val error = NativePlayerPublicError("container", "CORRUPT_MEDIA", "The media is corrupt.")
+            it.showErrorForTest(error)
+            val result = it.closeErrorOverlayForTest()
+            it.closeErrorOverlayForTest()
+            assertEquals("error", result.exitReason)
+            assertEquals("CORRUPT_MEDIA", result.error?.code)
+            assertTrue(result.errorPresented)
+            assertEquals(1, it.resultSetCountForTest())
+        }
+        scenario.close()
+    }
+
+    @Test
+    fun pipDirectFinishErrorIsReturnedForReactWithoutNativePresentation() {
+        val scenario = launch()
+        scenario.onActivity {
+            val result = it.finishDirectErrorForTest(
+                NativePlayerPublicError("decoder-runtime", "DECODER_RUNTIME", "Playback stopped."),
+            )
+            assertEquals("error", result.exitReason)
+            assertEquals("DECODER_RUNTIME", result.error?.code)
+            assertFalse(result.errorPresented)
+            assertEquals(1, it.resultSetCountForTest())
+        }
+        scenario.close()
+    }
+
+    @Test
+    fun sessionLostBeforeUiIsReturnedAsUnpresented() {
+        val scenario = launch()
+        scenario.onActivity {
+            val result = it.finishDirectErrorForTest(
+                NativePlayerPublicError("server", "SESSION_LOST", "The private playback session was lost."),
+            )
+            assertEquals("SESSION_LOST", result.error?.code)
+            assertFalse(result.errorPresented)
+        }
+        scenario.close()
+    }
+
+    @Test
+    fun clearRestoreRemovesPendingIdentityAndIsIdempotent() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        PendingNativePlayerRestoreStore.save(
+            context,
+            Intent()
+                .putExtra(NativePlayerActivity.EXTRA_MESSAGE_ID, 44)
+                .putExtra(NativePlayerActivity.EXTRA_TITLE, "Movie"),
+            50,
+            true,
+        )
+        PendingNativePlayerRestoreStore.clear(context)
+        PendingNativePlayerRestoreStore.clear(context)
+        assertNull(PendingNativePlayerRestoreStore.take(context))
     }
 }

@@ -59,12 +59,14 @@ data class NativePlayerResultData(
     val completed: Boolean = false,
     val exitReason: String = "external",
     val error: NativePlayerPublicError? = null,
+    val errorPresented: Boolean = false,
 ) {
     fun toJsObject(): JSObject = JSObject().apply {
         put("positionMs", positionMs)
         put("durationMs", durationMs)
         put("completed", completed)
         put("exitReason", exitReason)
+        put("errorPresented", errorPresented)
         error?.let { publicError ->
             put("error", JSObject().apply {
                 put("category", publicError.category)
@@ -97,12 +99,14 @@ object NativePlayerResultCodec {
     private const val ERROR_CATEGORY = "nativePlayer.error.category"
     private const val ERROR_CODE = "nativePlayer.error.code"
     private const val ERROR_MESSAGE = "nativePlayer.error.message"
+    private const val ERROR_PRESENTED = "nativePlayer.errorPresented"
 
     fun toIntent(result: NativePlayerResultData): Intent = Intent().apply {
         putExtra(POSITION, result.positionMs)
         putExtra(DURATION, result.durationMs)
         putExtra(COMPLETED, result.completed)
         putExtra(EXIT_REASON, result.exitReason)
+        putExtra(ERROR_PRESENTED, result.errorPresented)
         result.error?.let {
             putExtra(ERROR_CATEGORY, it.category)
             putExtra(ERROR_CODE, it.code)
@@ -124,6 +128,7 @@ object NativePlayerResultCodec {
             completed = intent.getBooleanExtra(COMPLETED, false),
             exitReason = intent.getStringExtra(EXIT_REASON) ?: "external",
             error = error,
+            errorPresented = intent.getBooleanExtra(ERROR_PRESENTED, false),
         )
     }
 }

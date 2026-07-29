@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-clear-pending-native-player-restore"
+description = "Enables the clear_pending_native_player_restore command without any pre-configured scope."
+commands.allow = ["clear_pending_native_player_restore"]
+
+[[permission]]
+identifier = "deny-clear-pending-native-player-restore"
+description = "Denies the clear_pending_native_player_restore command without any pre-configured scope."
+commands.deny = ["clear_pending_native_player_restore"]

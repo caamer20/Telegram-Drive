@@ -1,6 +1,7 @@
 package com.cameronamer.telegramdrive.nativeplayer
 
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
@@ -41,6 +42,27 @@ class NativePlayerValidationTest {
         assertFalse(names.any { it.contains("token") || it.contains("url") })
         val eventFields = NativePlaybackSnapshot::class.java.declaredFields.map { it.name.lowercase() }
         assertFalse(eventFields.any { it.contains("token") || it.contains("authorization") || it.contains("url") })
+    }
+
+    @Test
+    fun resultJsContractIncludesErrorPresentationWithoutSecrets() {
+        val result = NativePlayerResultData(
+            positionMs = 10,
+            durationMs = 20,
+            completed = false,
+            exitReason = "error",
+            error = NativePlayerPublicError("network", "READ_TIMEOUT", "Safe message"),
+            errorPresented = true,
+        )
+        assertEquals(10L, result.positionMs)
+        assertEquals(20L, result.durationMs)
+        assertEquals("error", result.exitReason)
+        assertTrue(result.errorPresented)
+        val fieldNames = NativePlayerResultData::class.java.declaredFields
+            .map { it.name.lowercase() }
+        for (forbidden in listOf("token", "authorization", "streamurl", "path", "stack")) {
+            assertFalse(fieldNames.any { it.contains(forbidden) })
+        }
     }
 
     @Test

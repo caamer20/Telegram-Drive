@@ -8,6 +8,7 @@ Allows the Telegram identity-based native Android player API
 - `allow-close-native-player`
 - `allow-get-native-playback-state`
 - `allow-take-pending-native-player-restore`
+- `allow-clear-pending-native-player-restore`
 
 ## Permission Table
 
@@ -17,6 +18,32 @@ Allows the Telegram identity-based native Android player API
 <th>Description</th>
 </tr>
 
+
+<tr>
+<td>
+
+`native-player:allow-clear-pending-native-player-restore`
+
+</td>
+<td>
+
+Enables the clear_pending_native_player_restore command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`native-player:deny-clear-pending-native-player-restore`
+
+</td>
+<td>
+
+Denies the clear_pending_native_player_restore command without any pre-configured scope.
+
+</td>
+</tr>
 
 <tr>
 <td>

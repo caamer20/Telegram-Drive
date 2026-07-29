@@ -315,6 +315,8 @@ trait MediaDownloadSource: 'static {
     fn next_chunk(&mut self) -> LocalBoxFuture<'_, Result<Option<Vec<u8>>, MediaDownloadError>>;
 }
 
+const MAX_CONSECUTIVE_EMPTY_UPSTREAM_CHUNKS: usize = 4;
+
 impl MediaDownloadSource for grammers_client::client::files::DownloadIter {
     fn next_chunk(&mut self) -> LocalBoxFuture<'_, Result<Option<Vec<u8>>, MediaDownloadError>> {
         Box::pin(async move {
@@ -334,10 +336,22 @@ fn download_body_stream<D: MediaDownloadSource>(
     async_stream::stream! {
         let mut skipped = 0usize;
         let mut total_yielded = 0u64;
+        let mut consecutive_empty_chunks = 0usize;
 
         while total_yielded < content_length {
             match source.next_chunk().await {
                 Ok(Some(data)) => {
+                    if data.is_empty() {
+                        consecutive_empty_chunks += 1;
+                        if consecutive_empty_chunks >= MAX_CONSECUTIVE_EMPTY_UPSTREAM_CHUNKS {
+                            yield Err(actix_web::error::ErrorBadGateway(
+                                "upstream media repeatedly returned empty data",
+                            ));
+                            break;
+                        }
+                        continue;
+                    }
+                    consecutive_empty_chunks = 0;
                     let data = slice_after_leading_skip(&data, &mut skipped, bytes_to_skip);
                     if data.is_empty() {
                         continue;
@@ -1127,6 +1141,54 @@ mod tests {
         assert!(stream.next().await.unwrap().is_err());
         assert!(stream.next().await.is_none());
         assert_eq!(polls.load(Ordering::SeqCst), 2);
+    }
+
+    #[actix_rt::test]
+    async fn single_empty_chunk_followed_by_data_succeeds_without_yielding_empty_data() {
+        let (source, polls, _) =
+            FakeDownloadSource::new(vec![Ok(Vec::new()), Ok(vec![1, 2, 3, 4])]);
+        let chunks = download_body_stream(source, 0, 4, "test")
+            .try_collect::<Vec<_>>()
+            .await
+            .unwrap();
+        assert_eq!(chunks, vec![web::Bytes::from_static(&[1, 2, 3, 4])]);
+        assert_eq!(polls.load(Ordering::SeqCst), 2);
+    }
+
+    #[actix_rt::test]
+    async fn repeated_empty_chunks_fail_safely_and_stop_polling() {
+        let mut input = vec![Ok(Vec::new()); MAX_CONSECUTIVE_EMPTY_UPSTREAM_CHUNKS];
+        input.push(Ok(vec![9]));
+        let (source, polls, _) = FakeDownloadSource::new(input);
+        let stream = download_body_stream(source, 0, 1, "test");
+        futures::pin_mut!(stream);
+        let error = stream.next().await.unwrap().unwrap_err().to_string();
+        assert!(error.contains("repeatedly returned empty data"));
+        assert!(stream.next().await.is_none());
+        assert_eq!(
+            polls.load(Ordering::SeqCst),
+            MAX_CONSECUTIVE_EMPTY_UPSTREAM_CHUNKS,
+        );
+    }
+
+    #[actix_rt::test]
+    async fn non_empty_chunk_resets_empty_chunk_counter() {
+        let (source, polls, _) = FakeDownloadSource::new(vec![
+            Ok(Vec::new()),
+            Ok(Vec::new()),
+            Ok(Vec::new()),
+            Ok(vec![1]),
+            Ok(Vec::new()),
+            Ok(Vec::new()),
+            Ok(Vec::new()),
+            Ok(vec![2]),
+        ]);
+        let chunks = download_body_stream(source, 0, 2, "test")
+            .try_collect::<Vec<_>>()
+            .await
+            .unwrap();
+        assert_eq!(chunks.concat(), vec![1, 2]);
+        assert_eq!(polls.load(Ordering::SeqCst), 8);
     }
 
     #[actix_rt::test]

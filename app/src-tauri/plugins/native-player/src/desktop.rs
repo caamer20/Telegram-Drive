@@ -21,19 +21,23 @@ pub fn init<R: Runtime, C: DeserializeOwned>(
 pub struct NativePlayer<R: Runtime>(#[allow(dead_code)] AppHandle<R>);
 
 impl<R: Runtime> NativePlayer<R> {
-    pub fn open(&self, _source: NativePlayerSource) -> Result<NativePlayerResult> {
+    pub async fn open(&self, _source: NativePlayerSource) -> Result<NativePlayerResult> {
         Err(crate::Error::UnsupportedPlatform)
     }
 
-    pub fn close(&self) -> Result<()> {
+    pub async fn close(&self) -> Result<()> {
         Err(crate::Error::UnsupportedPlatform)
     }
 
-    pub fn state(&self) -> Result<NativePlaybackState> {
+    pub async fn state(&self) -> Result<NativePlaybackState> {
         Ok(NativePlaybackState::default())
     }
 
-    pub fn take_pending_restore(&self) -> Result<Option<NativePlayerSource>> {
+    pub async fn take_pending_restore(&self) -> Result<Option<NativePlayerSource>> {
         Ok(None)
+    }
+
+    pub async fn clear_pending_restore(&self) -> Result<()> {
+        Ok(())
     }
 }

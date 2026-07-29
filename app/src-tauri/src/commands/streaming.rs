@@ -181,4 +181,36 @@ mod tests {
         assert!(!config.mark_failed(generation, "late failure"));
         assert!(config.trusted_session().is_err());
     }
+
+    #[test]
+    fn shutdown_status_is_idempotent_and_terminal() {
+        let config = StreamConfig::new("secret".into());
+        let generation = config.generation();
+        assert!(config.mark_stopped(generation));
+        assert!(!config.mark_stopped(generation));
+        assert!(!config.mark_failed(generation, "late failure"));
+        assert!(!config.mark_ready(generation, SocketAddrV4::new(Ipv4Addr::LOCALHOST, 49152),));
+        assert_eq!(
+            config.state.lock().unwrap().status,
+            StreamServerStatus::Stopped,
+        );
+    }
+
+    #[test]
+    fn stale_generation_cannot_update_starting_or_stopped_status() {
+        let config = StreamConfig::new("secret".into());
+        let generation = config.generation();
+        assert!(!config.mark_failed(generation + 1, "stale failure"));
+        assert!(!config.mark_stopped(generation + 1));
+        assert_eq!(
+            config.state.lock().unwrap().status,
+            StreamServerStatus::Starting,
+        );
+        assert!(config.mark_stopped(generation));
+        assert!(!config.mark_failed(generation + 1, "late stale failure"));
+        assert_eq!(
+            config.state.lock().unwrap().status,
+            StreamServerStatus::Stopped,
+        );
+    }
 }

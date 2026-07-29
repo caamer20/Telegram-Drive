@@ -5,4 +5,5 @@ permissions = [
   "allow-close-native-player",
   "allow-get-native-playback-state",
   "allow-take-pending-native-player-restore",
+  "allow-clear-pending-native-player-restore",
 ]

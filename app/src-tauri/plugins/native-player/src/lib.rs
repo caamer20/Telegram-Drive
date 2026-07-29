@@ -14,6 +14,8 @@ mod mobile;
 mod commands;
 mod error;
 mod models;
+#[cfg(any(mobile, test))]
+mod open;
 
 pub use error::{Error, Result};
 
@@ -47,6 +49,7 @@ where
             commands::close_native_player,
             commands::get_native_playback_state,
             commands::take_pending_native_player_restore,
+            commands::clear_pending_native_player_restore,
         ])
         .setup(move |app, api| {
             #[cfg(mobile)]

@@ -4,6 +4,7 @@ set -eu
 generated_dir="${1:-gen/android}"
 gradle_file="$generated_dir/app/build.gradle.kts"
 manifest_file="$generated_dir/app/src/main/AndroidManifest.xml"
+ndk_version="${ANDROID_NDK_VERSION:-27.2.12479018}"
 
 if [ ! -f "$gradle_file" ]; then
   echo "generated Android Gradle file not found: $gradle_file" >&2
@@ -23,6 +24,15 @@ sed -i.bak \
   "$gradle_file"
 rm -f "$gradle_file.bak"
 
+if ! grep -Fq 'ndkVersion = ' "$gradle_file"; then
+  sed -i.bak \
+    -e "/^android {/a\\
+    ndkVersion = \"$ndk_version\"
+" \
+    "$gradle_file"
+  rm -f "$gradle_file.bak"
+fi
+
 sed -i.bak \
   -e '/AndroidTV support/d' \
   -e '/android\.software\.leanback/d' \
@@ -32,6 +42,10 @@ rm -f "$manifest_file.bak"
 
 if ! grep -Fq 'manifestPlaceholders["usesCleartextTraffic"] = "false"' "$gradle_file"; then
   echo "Tauri cleartext manifest placeholder was not found" >&2
+  exit 1
+fi
+if ! grep -Fq "ndkVersion = \"$ndk_version\"" "$gradle_file"; then
+  echo "Pinned Android NDK version was not applied" >&2
   exit 1
 fi
 if grep -Fq 'LEANBACK_LAUNCHER' "$manifest_file"; then

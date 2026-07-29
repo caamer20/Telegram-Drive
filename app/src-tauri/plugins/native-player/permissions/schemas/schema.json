@@ -295,6 +295,18 @@
       "type": "string",
       "oneOf": [
         {
+          "description": "Enables the clear_pending_native_player_restore command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-clear-pending-native-player-restore",
+          "markdownDescription": "Enables the clear_pending_native_player_restore command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the clear_pending_native_player_restore command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-clear-pending-native-player-restore",
+          "markdownDescription": "Denies the clear_pending_native_player_restore command without any pre-configured scope."
+        },
+        {
           "description": "Enables the close_native_player command without any pre-configured scope.",
           "type": "string",
           "const": "allow-close-native-player",
@@ -343,10 +355,10 @@
           "markdownDescription": "Denies the take_pending_native_player_restore command without any pre-configured scope."
         },
         {
-          "description": "Allows the Telegram identity-based native Android player API\n#### This default permission set includes:\n\n- `allow-open-native-player`\n- `allow-close-native-player`\n- `allow-get-native-playback-state`\n- `allow-take-pending-native-player-restore`",
+          "description": "Allows the Telegram identity-based native Android player API\n#### This default permission set includes:\n\n- `allow-open-native-player`\n- `allow-close-native-player`\n- `allow-get-native-playback-state`\n- `allow-take-pending-native-player-restore`\n- `allow-clear-pending-native-player-restore`",
           "type": "string",
           "const": "default",
-          "markdownDescription": "Allows the Telegram identity-based native Android player API\n#### This default permission set includes:\n\n- `allow-open-native-player`\n- `allow-close-native-player`\n- `allow-get-native-playback-state`\n- `allow-take-pending-native-player-restore`"
+          "markdownDescription": "Allows the Telegram identity-based native Android player API\n#### This default permission set includes:\n\n- `allow-open-native-player`\n- `allow-close-native-player`\n- `allow-get-native-playback-state`\n- `allow-take-pending-native-player-restore`\n- `allow-clear-pending-native-player-restore`"
         }
       ]
     }

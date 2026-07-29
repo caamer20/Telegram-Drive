@@ -115,6 +115,7 @@ pub struct NativePlayerResult {
     pub completed: bool,
     pub exit_reason: NativePlayerExitReason,
     pub error: Option<NativePlayerError>,
+    pub error_presented: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -188,7 +189,9 @@ impl ResolvedStreamSource {
             .and_then(|value| value.parse::<u16>().ok())
             .filter(|port| *port != 0)
             .ok_or_else(|| {
-                crate::Error::StreamServer("trusted resolver returned a non-loopback address".into())
+                crate::Error::StreamServer(
+                    "trusted resolver returned a non-loopback address".into(),
+                )
             })?;
         let _ = port;
         if self.token.is_empty() || self.token.len() > 512 {
@@ -270,7 +273,11 @@ mod tests {
     #[test]
     fn validates_identity_arguments_and_rejects_uri_injection() {
         valid_source().validate().unwrap();
-        for value in ["file:///tmp/movie.mp4", "content://media/1", "https://example.test/x"] {
+        for value in [
+            "file:///tmp/movie.mp4",
+            "content://media/1",
+            "https://example.test/x",
+        ] {
             let mut source = valid_source();
             source.file_name = Some(value.into());
             assert!(source.validate().is_err());
@@ -284,10 +291,7 @@ mod tests {
     fn internal_request_keeps_token_out_of_uri() {
         let request = NativePlayerRequest::new(
             valid_source(),
-            ResolvedStreamSource::direct(
-                "http://127.0.0.1:49152".into(),
-                "top-secret".into(),
-            ),
+            ResolvedStreamSource::direct("http://127.0.0.1:49152".into(), "top-secret".into()),
         );
         assert_eq!(request.stream_url, "http://127.0.0.1:49152/stream/home/7");
         assert!(!request.stream_url.contains("top-secret"));
@@ -301,8 +305,10 @@ mod tests {
             completed: false,
             exit_reason: NativePlayerExitReason::Back,
             error: None,
+            error_presented: false,
         };
         let serialized = serde_json::to_string(&result).unwrap();
+        assert!(serialized.contains("\"errorPresented\":false"));
         assert!(!serialized.to_ascii_lowercase().contains("token"));
         assert!(!serialized.to_ascii_lowercase().contains("url"));
     }

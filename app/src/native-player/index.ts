@@ -33,6 +33,7 @@ export interface NativePlayerResult {
   completed: boolean;
   exitReason: 'back' | 'ended' | 'error' | 'external';
   error?: NativePlayerError;
+  errorPresented: boolean;
 }
 
 export interface NativePlaybackState {
@@ -44,6 +45,9 @@ export interface NativePlaybackState {
 
 export const ANDROID_NATIVE_PLAYER_ENABLED =
   import.meta.env.VITE_ANDROID_NATIVE_PLAYER === 'true';
+export const NATIVE_PLAYER_BUILD_MARKER = ANDROID_NATIVE_PLAYER_ENABLED
+  ? 'telegram-drive:native-player-enabled'
+  : 'telegram-drive:webview-fallback';
 
 export const NATIVE_PLAYER_STARTUP_ATTEMPTS = 3;
 export const NATIVE_PLAYER_STARTUP_RETRY_MS = 300;
@@ -73,6 +77,18 @@ export function takePendingNativePlayerRestore(): Promise<NativePlayerSource | n
   return invoke<NativePlayerSource | null>(
     'plugin:native-player|take_pending_native_player_restore',
   );
+}
+
+export function clearPendingNativePlayerRestore(): Promise<void> {
+  return invoke('plugin:native-player|clear_pending_native_player_restore');
+}
+
+export async function cleanupNativePlayerForLogout(
+  close: () => Promise<void> = closeNativePlayer,
+  clearRestore: () => Promise<void> = clearPendingNativePlayerRestore,
+): Promise<void> {
+  await close().catch(() => undefined);
+  await clearRestore().catch(() => undefined);
 }
 
 function isStreamServerStarting(error: unknown): boolean {
@@ -122,9 +138,8 @@ export function nativePlayerInvocationMessage(error: unknown): string {
   return 'Native playback could not start. Please try again.';
 }
 
-/** Fatal errors are already presented by the native overlay before Close returns to React. */
 export function shouldShowReturnedNativeError(result: NativePlayerResult): boolean {
-  return Boolean(result.error && result.exitReason !== 'error');
+  return Boolean(result.error && !result.errorPresented);
 }
 
 export class NativePlayerLaunchGuard {

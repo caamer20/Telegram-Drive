@@ -76,4 +76,10 @@ class NativePlayerPlugin(private val activity: Activity) : Plugin(activity) {
         val restore = PendingNativePlayerRestoreStore.take(activity)
         if (restore == null) invoke.resolve() else invoke.resolve(restore.toJsObject())
     }
+
+    @Command
+    fun clearPendingRestore(invoke: Invoke) {
+        PendingNativePlayerRestoreStore.clear(activity)
+        invoke.resolve()
+    }
 }

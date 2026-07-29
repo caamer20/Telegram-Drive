@@ -1,5 +1,5 @@
 use serde::de::DeserializeOwned;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use tauri::{
     plugin::{PluginApi, PluginHandle},
@@ -7,8 +7,7 @@ use tauri::{
 };
 
 use crate::{
-    NativePlaybackState, NativePlayerRequest, NativePlayerResult, NativePlayerSource,
-    ResolvedStreamSource, Result,
+    NativePlaybackState, NativePlayerResult, NativePlayerSource, ResolvedStreamSource, Result,
 };
 
 const PLUGIN_IDENTIFIER: &str = "com.cameronamer.telegramdrive.nativeplayer";
@@ -45,39 +44,46 @@ pub struct NativePlayer<R: Runtime> {
 }
 
 impl<R: Runtime> NativePlayer<R> {
-    pub fn open(&self, source: NativePlayerSource) -> Result<NativePlayerResult> {
-        source.validate()?;
-        self.is_open
-            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .map_err(|_| crate::Error::AlreadyOpen)?;
-
-        let result = (|| {
-            let resolved = (self.resolver)(&self.app, &source)?;
-            resolved.validate_loopback()?;
-            let request = NativePlayerRequest::new(source, resolved);
-            self.handle
-                .run_mobile_plugin("openNativePlayer", request)
-                .map_err(Into::into)
-        })();
-        self.is_open.store(false, Ordering::Release);
-        result
+    pub async fn open(&self, source: NativePlayerSource) -> Result<NativePlayerResult> {
+        crate::open::run_guarded_open(
+            &self.is_open,
+            source,
+            |source| (self.resolver)(&self.app, source),
+            |request| async move {
+                self.handle
+                    .run_mobile_plugin_async("openNativePlayer", request)
+                    .await
+                    .map_err(Into::into)
+            },
+        )
+        .await
     }
 
-    pub fn close(&self) -> Result<()> {
+    pub async fn close(&self) -> Result<()> {
         self.handle
-            .run_mobile_plugin::<()>("closeNativePlayer", ())
+            .run_mobile_plugin_async::<()>("closeNativePlayer", ())
+            .await
             .map_err(Into::into)
     }
 
-    pub fn state(&self) -> Result<NativePlaybackState> {
+    pub async fn state(&self) -> Result<NativePlaybackState> {
         self.handle
-            .run_mobile_plugin("getNativePlaybackState", ())
+            .run_mobile_plugin_async("getNativePlaybackState", ())
+            .await
             .map_err(Into::into)
     }
 
-    pub fn take_pending_restore(&self) -> Result<Option<NativePlayerSource>> {
+    pub async fn take_pending_restore(&self) -> Result<Option<NativePlayerSource>> {
         self.handle
-            .run_mobile_plugin("takePendingRestore", ())
+            .run_mobile_plugin_async("takePendingRestore", ())
+            .await
+            .map_err(Into::into)
+    }
+
+    pub async fn clear_pending_restore(&self) -> Result<()> {
+        self.handle
+            .run_mobile_plugin_async::<()>("clearPendingRestore", ())
+            .await
             .map_err(Into::into)
     }
 }

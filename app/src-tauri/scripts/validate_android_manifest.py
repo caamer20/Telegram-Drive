@@ -15,13 +15,17 @@ def require(condition: bool, message: str) -> None:
 
 
 def main() -> None:
-    if len(sys.argv) != 3:
-        raise SystemExit("usage: validate_android_manifest.py <generated-android-dir> <network-config>")
+    if len(sys.argv) != 4:
+        raise SystemExit(
+            "usage: validate_android_manifest.py <generated-android-dir> <network-config> <variant>"
+        )
     generated = Path(sys.argv[1])
     network_config = Path(sys.argv[2])
-    candidates = sorted(generated.glob("app/build/intermediates/merged_manifests/*/process*Manifest/AndroidManifest.xml"))
-    require(bool(candidates), "no final merged AndroidManifest.xml was generated")
-    manifest = candidates[-1]
+    variant = sys.argv[3]
+    variant_root = generated / "app" / "build" / "intermediates" / "merged_manifests" / variant
+    candidates = list(variant_root.glob("process*Manifest/AndroidManifest.xml"))
+    require(len(candidates) == 1, f"expected one final merged manifest for {variant}, found {len(candidates)}")
+    manifest = candidates[0]
     root = ET.parse(manifest).getroot()
 
     permissions = {item.get(ANDROID + "name") for item in root.findall("uses-permission")}

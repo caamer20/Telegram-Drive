@@ -110,17 +110,13 @@ impl ActixServerControl {
     fn install_worker(&self, generation: u64, worker: std::thread::JoinHandle<()>) {
         let mut worker = Some(worker);
         if let Ok(mut state) = self.0.lock() {
-            if state.generation == generation {
+            if state.generation == generation && state.shutdown.is_some() {
                 state.worker = worker.take();
             }
         }
-        if let Some(stale) = worker {
-            let _ = std::thread::Builder::new()
-                .name("stale-stream-server-join".into())
-                .spawn(move || {
-                    let _ = stale.join();
-                });
-        }
+        // Dropping a JoinHandle detaches it. A stale worker is already stopping
+        // or has completed, and process exit must never wait on an unbounded join.
+        drop(worker);
     }
 
     fn mark_finished(&self, generation: u64) {
@@ -128,6 +124,7 @@ impl ActixServerControl {
             if state.generation == generation {
                 state.handle = None;
                 state.shutdown = None;
+                state.worker = None;
             }
         }
     }
@@ -144,14 +141,89 @@ impl ActixServerControl {
         if let Some(shutdown) = shutdown {
             let _ = shutdown.send(());
         }
-        if let Some(worker) = worker {
-            let _ = std::thread::Builder::new()
-                .name("stream-server-shutdown-join".into())
-                .spawn(move || {
-                    let _ = worker.join();
-                });
-        }
+        // The Actix runtime performs a bounded graceful stop and force-stop
+        // fallback. Detach the OS thread here so shutdown never blocks the UI;
+        // immediate OS process termination remains best-effort.
+        drop(worker);
         requested
+    }
+}
+
+#[cfg(test)]
+mod actix_server_control_tests {
+    use super::*;
+
+    fn control() -> (ActixServerControl, tokio::sync::oneshot::Receiver<()>) {
+        let (shutdown, receiver) = tokio::sync::oneshot::channel();
+        (ActixServerControl::new(7, shutdown), receiver)
+    }
+
+    fn server_handle() -> (actix_web::dev::Server, actix_web::dev::ServerHandle) {
+        let server = actix_web::HttpServer::new(actix_web::App::new)
+            .bind(("127.0.0.1", 0))
+            .unwrap()
+            .run();
+        let handle = server.handle();
+        (server, handle)
+    }
+
+    #[test]
+    fn shutdown_is_accepted_once_and_clears_installed_state() {
+        let (control, mut receiver) = control();
+        let (server, handle) = server_handle();
+        assert!(control.install_handle(7, handle));
+        control.install_worker(7, std::thread::spawn(|| {}));
+
+        assert!(control.shutdown());
+        assert!(receiver.try_recv().is_ok());
+        assert!(!control.shutdown());
+        let state = control.0.lock().unwrap();
+        assert!(state.handle.is_none());
+        assert!(state.shutdown.is_none());
+        assert!(state.worker.is_none());
+        drop(state);
+        drop(server);
+    }
+
+    #[test]
+    fn shutdown_before_handle_installation_rejects_late_resources() {
+        let (control, _) = control();
+        assert!(control.shutdown());
+        let (server, handle) = server_handle();
+        assert!(!control.install_handle(7, handle));
+        control.install_worker(7, std::thread::spawn(|| {}));
+        let state = control.0.lock().unwrap();
+        assert!(state.handle.is_none());
+        assert!(state.worker.is_none());
+        drop(state);
+        drop(server);
+    }
+
+    #[test]
+    fn stale_generation_cannot_install_or_finish_current_server() {
+        let (control, _) = control();
+        let (server, handle) = server_handle();
+        assert!(!control.install_handle(6, handle));
+        control.mark_finished(6);
+        assert!(control.shutdown());
+        drop(server);
+    }
+
+    #[test]
+    fn worker_completion_is_consumed_once_and_late_shutdown_is_safe() {
+        let (control, _) = control();
+        let worker = std::thread::spawn(|| {});
+        while !worker.is_finished() {
+            std::thread::yield_now();
+        }
+        control.install_worker(7, worker);
+        control.mark_finished(7);
+        let state = control.0.lock().unwrap();
+        assert!(state.handle.is_none());
+        assert!(state.shutdown.is_none());
+        assert!(state.worker.is_none());
+        drop(state);
+        assert!(!control.shutdown());
     }
 }
 

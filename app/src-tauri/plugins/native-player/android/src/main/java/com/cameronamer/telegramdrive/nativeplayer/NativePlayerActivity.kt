@@ -56,6 +56,9 @@ class NativePlayerActivity : AppCompatActivity(), Player.Listener {
     private var completed = false
     private var exitReason = "back"
     private var playbackError: NativePlayerPublicError? = null
+    private var errorPresented = false
+    private var lastResultForTest: NativePlayerResultData? = null
+    private var resultSetCountForTest = 0
     private var retryCount = 0
     private var resumeOnForeground = false
     private var restoredPositionMs = 0L
@@ -149,6 +152,7 @@ class NativePlayerActivity : AppCompatActivity(), Player.Listener {
         val args = session?.args ?: return
         releasePlayer(rememberPosition = false)
         playbackError = null
+        errorPresented = false
         val root = rootView
         if (root != null) errorOverlay?.let(root::removeView)
         errorOverlay = null
@@ -267,18 +271,19 @@ class NativePlayerActivity : AppCompatActivity(), Player.Listener {
         if (finishing.get() || destroyed.get()) return
         lastSafePositionMs = safePosition().takeIf { it > 0 } ?: lastSafePositionMs
         playbackError = error
+        errorPresented = false
         exitReason = "error"
         player?.pause()
         updateSnapshot(emitEvent = true)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && isInPictureInPictureMode) {
-            finishWithResult(error)
+            finishWithResult(error, presentedInNativeUi = false)
             return
         }
-        showErrorOverlay(error)
+        errorPresented = showErrorOverlay(error)
     }
 
-    private fun showErrorOverlay(error: NativePlayerPublicError) {
-        val root = rootView ?: return
+    private fun showErrorOverlay(error: NativePlayerPublicError): Boolean {
+        val root = rootView ?: return false
         errorOverlay?.let(root::removeView)
         val state = NativePlaybackErrorPolicy.overlay(error, retryCount)
         val panel = LinearLayout(this).apply {
@@ -327,6 +332,7 @@ class NativePlayerActivity : AppCompatActivity(), Player.Listener {
             ViewGroup.LayoutParams.MATCH_PARENT,
         ))
         errorOverlay?.requestFocus()
+        return errorOverlay?.parent === root && errorOverlay?.visibility == View.VISIBLE
     }
 
     internal fun retryPlayback() {
@@ -427,6 +433,18 @@ class NativePlayerActivity : AppCompatActivity(), Player.Listener {
 
     internal fun showErrorForTest(error: NativePlayerPublicError) = showFatalError(error)
     internal fun isErrorOverlayVisibleForTest(): Boolean = errorOverlay?.visibility == View.VISIBLE
+    internal fun errorPresentedForTest(): Boolean = errorPresented
+    internal fun finishDirectErrorForTest(error: NativePlayerPublicError): NativePlayerResultData {
+        playbackError = error
+        exitReason = "error"
+        finishWithResult(error, presentedInNativeUi = false)
+        return lastResultForTest ?: NativePlayerResultData(error = error)
+    }
+    internal fun closeErrorOverlayForTest(): NativePlayerResultData {
+        finishWithResult()
+        return lastResultForTest ?: NativePlayerResultData(error = playbackError)
+    }
+    internal fun resultSetCountForTest(): Int = resultSetCountForTest
     internal fun retryCountForTest(): Int = retryCount
     internal fun hasPlayerForTest(): Boolean = player != null
 
@@ -474,6 +492,7 @@ class NativePlayerActivity : AppCompatActivity(), Player.Listener {
     private fun finishWithResult(
         error: NativePlayerPublicError? = playbackError,
         clearRestore: Boolean = true,
+        presentedInNativeUi: Boolean = errorPresented,
     ) {
         if (!finishing.compareAndSet(false, true)) return
         if (clearRestore) PendingNativePlayerRestoreStore.clear(this)
@@ -483,7 +502,10 @@ class NativePlayerActivity : AppCompatActivity(), Player.Listener {
             completed = completed,
             exitReason = if (error != null) "error" else exitReason,
             error = error,
+            errorPresented = error != null && presentedInNativeUi,
         )
+        lastResultForTest = result
+        resultSetCountForTest += 1
         setResult(Activity.RESULT_OK, NativePlayerResultCodec.toIntent(result))
         finish()
     }

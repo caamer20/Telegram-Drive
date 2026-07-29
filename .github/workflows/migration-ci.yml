@@ -47,6 +47,9 @@ jobs:
 
   android-native-player:
     runs-on: ubuntu-22.04
+    env:
+      ANDROID_NDK_VERSION: 27.2.12479018
+      VITE_ANDROID_NATIVE_PLAYER: "true"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -61,7 +64,29 @@ jobs:
           cache: gradle
       - uses: android-actions/setup-android@v3
       - name: Install Android SDK and NDK
-        run: sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;27.2.12479018"
+        run: sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;${ANDROID_NDK_VERSION}"
+      - name: Select and verify pinned Android NDK
+        run: |
+          sdk_source="$ANDROID_HOME"
+          pinned_sdk="$RUNNER_TEMP/android-sdk-pinned"
+          mkdir -p "$pinned_sdk/ndk"
+          for component in build-tools cmdline-tools emulator licenses patcher platforms platform-tools tools; do
+            if [ -e "$sdk_source/$component" ]; then
+              ln -s "$sdk_source/$component" "$pinned_sdk/$component"
+            fi
+          done
+          ln -s "$sdk_source/ndk/$ANDROID_NDK_VERSION" "$pinned_sdk/ndk/$ANDROID_NDK_VERSION"
+          ndk_path="$pinned_sdk/ndk/$ANDROID_NDK_VERSION"
+          test -f "$ndk_path/source.properties"
+          echo "ANDROID_HOME=$pinned_sdk" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$pinned_sdk" >> "$GITHUB_ENV"
+          echo "NDK_HOME=$ndk_path" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$ndk_path" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=$ndk_path" >> "$GITHUB_ENV"
+          actual_version=$(sed -n 's/^Pkg.Revision = //p' "$ndk_path/source.properties")
+          echo "Pinned Android NDK path: $ndk_path"
+          echo "Pinned Android NDK version: $actual_version"
+          test "$actual_version" = "$ANDROID_NDK_VERSION"
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
@@ -72,10 +97,36 @@ jobs:
         working-directory: app
         env:
           CI: true
-          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.2.12479018
         run: npx tauri android init --skip-targets-install
       - name: Apply loopback-only Android security settings
         run: sh app/src-tauri/scripts/prepare_android_project.sh app/src-tauri/gen/android
+      - name: Generate Tauri Rust and Android integration
+        working-directory: app
+        env:
+          CI: true
+        run: |
+          set -o pipefail
+          npx tauri android build --debug --target aarch64 --apk true --aab false --ci 2>&1 | tee "$RUNNER_TEMP/tauri-android-build.log"
+          grep -F "Using installed NDK: $NDK_HOME" "$RUNNER_TEMP/tauri-android-build.log"
+      - name: Verify generated integration, NDK, module, and variants
+        working-directory: app/src-tauri/gen/android
+        run: |
+          test -f tauri.settings.gradle
+          test "$NDK_HOME" = "$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION"
+          test "$ANDROID_NDK_HOME" = "$NDK_HOME"
+          test "$ANDROID_NDK_ROOT" = "$NDK_HOME"
+          grep -F "ndkVersion = \"$ANDROID_NDK_VERSION\"" app/build.gradle.kts
+          grep -F "include ':tauri-plugin-native-player'" tauri.settings.gradle
+          ./gradlew projects
+          ./gradlew :app:tasks --all | grep -F 'compileUniversalDebugKotlin'
+          ./gradlew :tauri-plugin-native-player:tasks --all | grep -F 'testDebugUnitTest'
+          ./gradlew :tauri-plugin-native-player:tasks --all | grep -F 'compileDebugAndroidTestKotlin'
+          ./gradlew :app:tasks --all | grep -F 'lintUniversalDebug'
+          ./gradlew :tauri-plugin-native-player:tasks --all | grep -F 'lintDebug'
+      - name: Verify native-player-enabled frontend bundle
+        run: |
+          echo "Android rollout mode: VITE_ANDROID_NATIVE_PLAYER=$VITE_ANDROID_NATIVE_PLAYER"
+          grep -R -F 'telegram-drive:native-player-enabled' app/dist/assets
       - name: Compile Kotlin and run native-player unit tests
         working-directory: app/src-tauri/gen/android
         run: >-
@@ -85,27 +136,33 @@ jobs:
       - name: Android lint
         working-directory: app/src-tauri/gen/android
         run: ./gradlew :tauri-plugin-native-player:lintDebug :app:lintUniversalDebug
-      - name: Build debug APK through Tauri
+      - name: Build final native-player debug APK
         working-directory: app
         env:
           CI: true
-          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.2.12479018
-        run: npx tauri android build --debug --target aarch64 --apk true --aab false --ci
+        run: |
+          set -o pipefail
+          npx tauri android build --debug --target aarch64 --apk true --aab false --ci 2>&1 | tee "$RUNNER_TEMP/tauri-android-final-debug.log"
+          grep -F "Using installed NDK: $NDK_HOME" "$RUNNER_TEMP/tauri-android-final-debug.log"
       - name: Validate merged manifest and loopback security
         run: >-
           python3 app/src-tauri/scripts/validate_android_manifest.py
           app/src-tauri/gen/android
           app/src-tauri/plugins/native-player/android/src/main/res/xml/native_player_network_security_config.xml
-      - name: Compile minified unsigned release
+          universalDebug
+      - name: Build minified unsigned release APK
         working-directory: app
         env:
           CI: true
-          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.2.12479018
-        run: npx tauri android build --target aarch64 --apk true --aab false --ci
+        run: |
+          set -o pipefail
+          grep -F 'isMinifyEnabled = true' src-tauri/gen/android/app/build.gradle.kts
+          npx tauri android build --target aarch64 --apk true --aab false --ci 2>&1 | tee "$RUNNER_TEMP/tauri-android-release.log"
+          grep -F "Using installed NDK: $NDK_HOME" "$RUNNER_TEMP/tauri-android-release.log"
       - name: Create reproducible debug APK checksum
         run: |
-          APK=$(find app/src-tauri/gen/android/app/build/outputs/apk -name '*universal*debug*.apk' -type f | head -1)
-          test -n "$APK"
+          APK=app/src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk
+          test -f "$APK"
           sha256sum "$APK" > telegram-drive-native-player-debug.apk.sha256
           cp "$APK" telegram-drive-native-player-debug.apk
       - uses: actions/upload-artifact@v4

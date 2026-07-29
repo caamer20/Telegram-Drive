@@ -30,9 +30,11 @@ import { LANGUAGES } from '../../i18n/languages';
 import { useTranslation } from 'react-i18next';
 import {
   loadNativeResumePosition,
+  cleanupNativePlayerForLogout,
   nativePlayerErrorMessage,
   nativePlayerInvocationMessage,
   NativePlayerLaunchGuard,
+  NATIVE_PLAYER_BUILD_MARKER,
   openNativePlayerWithStartupRetry,
   saveNativeResumePosition,
   shouldShowReturnedNativeError,
@@ -48,6 +50,10 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
   const { isAndroid } = usePlatform();
   const { theme } = useTheme();
   const { settings, updateSetting } = useSettings();
+
+  useEffect(() => {
+    console.info('[NativePlayer] rollout mode:', NATIVE_PLAYER_BUILD_MARKER);
+  }, []);
 
   // ── Android deep-link listener (https://t.me/ links) ──────────────────
   useEffect(() => {
@@ -127,8 +133,8 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
     settings.proxyPort, settings.proxyUsername, settings.proxyPassword,
   ]);
 
-  const logoutHandler = useMemo(() => () => {
-    if (isAndroid) void takePendingNativePlayerRestore().catch(() => undefined);
+  const logoutHandler = useMemo(() => async () => {
+    if (isAndroid) await cleanupNativePlayerForLogout();
     onLogout?.();
   }, [isAndroid, onLogout]);
 

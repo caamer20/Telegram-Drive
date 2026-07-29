@@ -1,9 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  ANDROID_NATIVE_PLAYER_ENABLED,
+  cleanupNativePlayerForLogout,
   loadNativeResumePosition,
   nativePlayerErrorMessage,
   nativePlayerInvocationMessage,
   NativePlayerLaunchGuard,
+  NATIVE_PLAYER_BUILD_MARKER,
   NativePlayerResult,
   NativePlayerSource,
   openNativePlayerWithStartupRetry,
@@ -26,6 +29,7 @@ const result = (overrides: Partial<NativePlayerResult> = {}): NativePlayerResult
   durationMs: 10,
   completed: false,
   exitReason: 'back',
+  errorPresented: false,
   ...overrides,
 });
 
@@ -33,6 +37,8 @@ describe('native player orchestration', () => {
   beforeEach(() => localStorage.clear());
 
   it('routes only explicitly enabled Android video to native', () => {
+    expect(ANDROID_NATIVE_PLAYER_ENABLED).toBe(false);
+    expect(NATIVE_PLAYER_BUILD_MARKER).toBe('telegram-drive:webview-fallback');
     expect(shouldUseNativePlayer(true, 'movie.mp4', true)).toBe(true);
     expect(shouldUseNativePlayer(true, 'movie.mkv', false)).toBe(false);
     expect(shouldUseNativePlayer(false, 'movie.mp4', true)).toBe(false);
@@ -86,7 +92,41 @@ describe('native player orchestration', () => {
     expect(shouldShowReturnedNativeError(result({
       exitReason: 'error',
       error: { category: 'network', code: 'READ_TIMEOUT', message: 'safe' },
+      errorPresented: true,
     }))).toBe(false);
+    expect(shouldShowReturnedNativeError(result({
+      exitReason: 'error',
+      error: { category: 'network', code: 'READ_TIMEOUT', message: 'safe' },
+      errorPresented: false,
+    }))).toBe(true);
+  });
+
+  it('closes playback and clears restore before logout teardown', async () => {
+    const calls: string[] = [];
+    const close = vi.fn(async () => { calls.push('close'); });
+    const clear = vi.fn(async () => { calls.push('clear'); });
+    await cleanupNativePlayerForLogout(close, clear);
+    expect(calls).toEqual(['close', 'clear']);
+    expect(clear).toHaveBeenCalledTimes(1);
+
+    const failingClose = vi.fn(async () => { throw new Error('close failed'); });
+    await expect(cleanupNativePlayerForLogout(failingClose, clear)).resolves.toBeUndefined();
+    expect(clear).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps the public result contract camelCase and secret-free', () => {
+    const publicResult = result({
+      exitReason: 'error',
+      error: { category: 'server', code: 'SESSION_LOST', message: 'Safe message' },
+      errorPresented: false,
+    });
+    expect(Object.keys(publicResult)).toEqual([
+      'positionMs', 'durationMs', 'completed', 'exitReason', 'errorPresented', 'error',
+    ]);
+    const serialized = JSON.stringify(publicResult).toLowerCase();
+    for (const forbidden of ['streamurl', 'token', 'authorization', 'filesystem', 'telegram credential', 'stack']) {
+      expect(serialized).not.toContain(forbidden);
+    }
   });
 
   it('never places URL, token, headers, or paths in plugin input or recovery identity', () => {
