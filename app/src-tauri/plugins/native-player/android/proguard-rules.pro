@@ -4,3 +4,4 @@
     @app.tauri.annotation.Command <methods>;
     @app.tauri.annotation.ActivityCallback <methods>;
 }
+-keep @app.tauri.annotation.InvokeArg class * { *; }

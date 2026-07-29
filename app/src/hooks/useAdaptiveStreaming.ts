@@ -9,6 +9,7 @@ import {
 } from '../types';
 import { useStreamingSettings } from './useStreamingSettings';
 import { getCachedMoov, setCachedMoov, extractCacheKey } from './moovCache';
+import { redactSensitiveValue } from '../security/redaction';
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -275,7 +276,7 @@ export function useAdaptiveStreaming(
             if (e.name === 'QuotaExceededError') {
                 sb.addEventListener('updateend', () => drainAppendQueue(trackId), { once: true });
             } else {
-                console.warn(`[AdaptiveStreaming] appendBuffer error for track ${trackId}:`, e);
+                console.warn(`[AdaptiveStreaming] appendBuffer error for track ${trackId}:`, redactSensitiveValue(e));
             }
         }
     }, []);
@@ -317,7 +318,7 @@ export function useAdaptiveStreaming(
             sb.addEventListener('error', () => console.warn(`[AdaptiveStreaming] SourceBuffer error for track ${trackId}`));
             return sb;
         } catch (e) {
-            console.error(`[AdaptiveStreaming] Failed to create SourceBuffer for track ${trackId}:`, e);
+            console.error(`[AdaptiveStreaming] Failed to create SourceBuffer for track ${trackId}:`, redactSensitiveValue(e));
             return null;
         }
     }, [drainAppendQueue]);
@@ -431,7 +432,7 @@ export function useAdaptiveStreaming(
                 }
             } catch (err: any) {
                 if (err?.name === 'AbortError') return;
-                console.error('[AdaptiveStreaming] Download error:', err);
+                console.error('[AdaptiveStreaming] Download error:', redactSensitiveValue(err));
                 if (playerPhaseRef.current !== 'error') {
                     playerPhaseRef.current = 'error';
                     setState(s => ({ ...s, phase: 'error', error: String(err) }));
@@ -479,7 +480,7 @@ export function useAdaptiveStreaming(
             discoveryNextOffsetRef.current = nextOffset || data.byteLength;
         } catch (err: any) {
             if (err?.name !== 'AbortError') {
-                console.warn('[AdaptiveStreaming] Moov discovery error:', err);
+                console.warn('[AdaptiveStreaming] Moov discovery error:', redactSensitiveValue(err));
             }
         }
     }, [streamUrl]);
@@ -517,7 +518,7 @@ export function useAdaptiveStreaming(
             discoveryNextOffsetRef.current = MOOV_RETRY_BYTES;
         } catch (err: any) {
             if (err?.name !== 'AbortError') {
-                console.warn('[AdaptiveStreaming] Moov retry error:', err);
+                console.warn('[AdaptiveStreaming] Moov retry error:', redactSensitiveValue(err));
             }
         }
     }, [streamUrl]);
@@ -551,7 +552,7 @@ export function useAdaptiveStreaming(
             moovEndOffsetRef.current = 0;
         } catch (err: any) {
             if (err?.name !== 'AbortError') {
-                console.warn('[AdaptiveStreaming] Moov tail discovery error:', err);
+                console.warn('[AdaptiveStreaming] Moov tail discovery error:', redactSensitiveValue(err));
             }
         }
     }, [streamUrl]);
@@ -588,7 +589,7 @@ export function useAdaptiveStreaming(
                         queue.unshift(buffer);
                         currentSb.addEventListener('updateend', () => drainAppendQueue(id), { once: true });
                     } else {
-                        console.warn(`[AdaptiveStreaming] appendBuffer failed for track ${id}:`, e);
+                        console.warn(`[AdaptiveStreaming] appendBuffer failed for track ${id}:`, redactSensitiveValue(e));
                     }
                 }
             }
@@ -623,7 +624,7 @@ export function useAdaptiveStreaming(
                     hasInitializedAny = true;
                 }
             } catch (e) {
-                console.warn(`[AdaptiveStreaming] 📐 Failed to generate init segment for track ${track.id}:`, e);
+                console.warn(`[AdaptiveStreaming] 📐 Failed to generate init segment for track ${track.id}:`, redactSensitiveValue(e));
             }
         }
 
@@ -658,7 +659,7 @@ export function useAdaptiveStreaming(
         try {
             (mp4boxfile as any).initializeSegmentation();
         } catch (e) {
-            console.error('[AdaptiveStreaming] 📐 Final initializeSegmentation crashed:', e);
+            console.error('[AdaptiveStreaming] 📐 Final initializeSegmentation crashed:', redactSensitiveValue(e));
             segmentationFailedRef.current = true;
             try { mp4boxfile.stop(); } catch {}
             clearSourceBuffer();

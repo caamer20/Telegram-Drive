@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { isVideoFile } from '../utils';
+import { redactSensitiveText } from '../security/redaction';
 
 export interface NativePlayerSource {
   folderId: number | null;
@@ -35,14 +36,17 @@ export interface NativePlayerResult {
 }
 
 export interface NativePlaybackState {
-  state: 'idle' | 'buffering' | 'ready' | 'ended' | 'error';
+  state: 'idle' | 'buffering' | 'ready' | 'playing' | 'paused' | 'ended' | 'error';
   isPlaying: boolean;
   positionMs: number;
   durationMs: number;
 }
 
 export const ANDROID_NATIVE_PLAYER_ENABLED =
-  import.meta.env.VITE_ANDROID_NATIVE_PLAYER !== 'false';
+  import.meta.env.VITE_ANDROID_NATIVE_PLAYER === 'true';
+
+export const NATIVE_PLAYER_STARTUP_ATTEMPTS = 3;
+export const NATIVE_PLAYER_STARTUP_RETRY_MS = 300;
 
 export function shouldUseNativePlayer(
   isAndroid: boolean,
@@ -69,6 +73,58 @@ export function takePendingNativePlayerRestore(): Promise<NativePlayerSource | n
   return invoke<NativePlayerSource | null>(
     'plugin:native-player|take_pending_native_player_restore',
   );
+}
+
+function isStreamServerStarting(error: unknown): boolean {
+  const safe = redactSensitiveText(String(error)).toLowerCase();
+  return safe.includes('streaming server is still starting') ||
+    safe.includes('stream server is still starting');
+}
+
+export async function openNativePlayerWithStartupRetry(
+  source: NativePlayerSource,
+  launch: (source: NativePlayerSource) => Promise<NativePlayerResult> = openNativePlayer,
+  sleep: (delayMs: number) => Promise<void> = delay => new Promise(resolve => setTimeout(resolve, delay)),
+  attempts = NATIVE_PLAYER_STARTUP_ATTEMPTS,
+): Promise<NativePlayerResult> {
+  const boundedAttempts = Math.max(1, Math.min(attempts, NATIVE_PLAYER_STARTUP_ATTEMPTS));
+  for (let attempt = 1; attempt <= boundedAttempts; attempt += 1) {
+    try {
+      return await launch(source);
+    } catch (error) {
+      if (!isStreamServerStarting(error) || attempt === boundedAttempts) throw error;
+      await sleep(NATIVE_PLAYER_STARTUP_RETRY_MS * attempt);
+    }
+  }
+  throw new Error('Native player startup retry exhausted');
+}
+
+export function nativePlayerErrorMessage(error: NativePlayerError): string {
+  if (error.code === 'HTTP_401' || error.code === 'HTTP_403' || error.code === 'SESSION_EXPIRED') {
+    return 'The private playback session expired. Reopen the file to create a new session.';
+  }
+  switch (error.category) {
+    case 'network': return 'Playback was interrupted by the local stream. You can try again.';
+    case 'server': return 'The local streaming server could not provide this media.';
+    case 'container': return 'Android could not open this media container.';
+    case 'video-codec': return 'This device cannot play the selected video format.';
+    case 'audio-codec': return 'This device cannot play the selected audio format.';
+    case 'decoder-init': return 'Android could not start a decoder for this media.';
+    case 'decoder-runtime': return 'The Android decoder stopped during playback.';
+    default: return 'Native playback failed. Please reopen the file and try again.';
+  }
+}
+
+export function nativePlayerInvocationMessage(error: unknown): string {
+  const safe = redactSensitiveText(String(error)).toLowerCase();
+  if (safe.includes('still starting')) return 'The local player is still starting. Please try again in a moment.';
+  if (safe.includes('already open')) return 'Native playback is already opening.';
+  return 'Native playback could not start. Please try again.';
+}
+
+/** Fatal errors are already presented by the native overlay before Close returns to React. */
+export function shouldShowReturnedNativeError(result: NativePlayerResult): boolean {
+  return Boolean(result.error && result.exitReason !== 'error');
 }
 
 export class NativePlayerLaunchGuard {

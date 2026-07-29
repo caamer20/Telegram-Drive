@@ -123,6 +123,8 @@ pub enum NativePlaybackStatus {
     Idle,
     Buffering,
     Ready,
+    Playing,
+    Paused,
     Ended,
     Error,
 }
@@ -161,6 +163,10 @@ pub struct ResolvedStreamSource {
 }
 
 impl ResolvedStreamSource {
+    /// Creates a trusted direct source without blocking startup on a metadata
+    /// scan. These optional fields describe metadata known before playback;
+    /// Media3's extracted Format, device decoder report, and actual playback
+    /// outcome remain separate and progressively more authoritative signals.
     pub fn direct(base_url: String, token: String) -> Self {
         Self {
             base_url,

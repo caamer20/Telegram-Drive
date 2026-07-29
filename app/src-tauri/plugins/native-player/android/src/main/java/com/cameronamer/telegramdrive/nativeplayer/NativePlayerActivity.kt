@@ -3,13 +3,20 @@ package com.cameronamer.telegramdrive.nativeplayer
 import android.app.Activity
 import android.app.PictureInPictureParams
 import android.content.res.Configuration
+import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import android.util.Rational
+import android.view.Gravity
+import android.view.View
 import android.view.ViewGroup
+import android.widget.Button
 import android.widget.FrameLayout
+import android.widget.LinearLayout
+import android.widget.TextView
 import androidx.activity.OnBackPressedCallback
 import androidx.annotation.RequiresApi
 import androidx.appcompat.app.AppCompatActivity
@@ -37,26 +44,35 @@ import java.util.concurrent.atomic.AtomicBoolean
 class NativePlayerActivity : AppCompatActivity(), Player.Listener {
     private var sessionId: String? = null
     private var session: NativePlayerSession? = null
+    private var rootView: FrameLayout? = null
     private var playerView: PlayerView? = null
+    private var errorOverlay: View? = null
     private var player: ExoPlayer? = null
     private var mediaSession: MediaSession? = null
     private var trackSelector: DefaultTrackSelector? = null
-    private var hasPlayableVideo = false
     private var trackFacts = TrackSupportFacts()
+    private var capabilityResult: VideoCapabilityResult? = null
+    private var metadataCapabilityResult: VideoCapabilityResult? = null
     private var completed = false
     private var exitReason = "back"
     private var playbackError: NativePlayerPublicError? = null
+    private var retryCount = 0
     private var resumeOnForeground = false
     private var restoredPositionMs = 0L
     private var restoredPlayWhenReady: Boolean? = null
+    private var restoredTrackSelection: Bundle? = null
+    private var lastSafePositionMs = 0L
     private val finishing = AtomicBoolean(false)
+    private val destroyed = AtomicBoolean(false)
     private val mainHandler = Handler(Looper.getMainLooper())
+    private var tickerScheduled = false
     @Volatile private var latestSnapshot = NativePlaybackSnapshot()
 
     private val snapshotTicker = object : Runnable {
         override fun run() {
+            if (destroyed.get()) return
             updateSnapshot(emitEvent = false)
-            if (!isFinishing && !isDestroyed) mainHandler.postDelayed(this, 1_000)
+            mainHandler.postDelayed(this, SNAPSHOT_INTERVAL_MS)
         }
     }
 
@@ -79,6 +95,7 @@ class NativePlayerActivity : AppCompatActivity(), Player.Listener {
                     "SESSION_LOST",
                     "The private playback session was lost. Return to Telegram Drive and try again.",
                 ),
+                clearRestore = false,
             )
             return
         }
@@ -88,29 +105,18 @@ class NativePlayerActivity : AppCompatActivity(), Player.Listener {
         restoredPlayWhenReady = if (savedInstanceState?.containsKey(STATE_PLAY_WHEN_READY) == true) {
             savedInstanceState.getBoolean(STATE_PLAY_WHEN_READY)
         } else null
+        restoredTrackSelection = savedInstanceState?.getBundle(STATE_TRACK_SELECTION)
+        lastSafePositionMs = restoredPositionMs
 
         configureFullscreen()
-        playerView = PlayerView(this).apply {
-            useController = true
-            controllerAutoShow = true
-            controllerHideOnTouch = true
-            layoutParams = FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT,
-            )
-        }
-        setContentView(FrameLayout(this).apply {
-            setBackgroundColor(android.graphics.Color.BLACK)
-            addView(playerView)
-        })
-
+        createContentView()
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() = finishWithResult()
         })
 
         NativePlayerActivityRegistry.register(this)
         initializePlayer()
-        mainHandler.post(snapshotTicker)
+        scheduleTickerOnce()
     }
 
     private fun configureFullscreen() {
@@ -121,21 +127,47 @@ class NativePlayerActivity : AppCompatActivity(), Player.Listener {
         }
     }
 
+    private fun createContentView() {
+        playerView = PlayerView(this).apply {
+            useController = true
+            controllerAutoShow = true
+            controllerHideOnTouch = true
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+            )
+        }
+        rootView = FrameLayout(this).apply {
+            setBackgroundColor(Color.BLACK)
+            addView(playerView)
+        }
+        setContentView(rootView)
+    }
+
     private fun initializePlayer() {
+        if (destroyed.get() || finishing.get()) return
         val args = session?.args ?: return
-        // Advisory only. Playback is always attempted even when device-reported
-        // limits look insufficient because MediaCodec reports can be incomplete.
-        CodecCapabilityPreflight.inspect(
-            VideoCapabilityMetadata(
-                args.codec,
-                args.width,
-                args.height,
-                args.frameRate,
-                args.bitrate,
-                args.bitDepth,
-                args.hdr,
-            ),
-        )
+        releasePlayer(rememberPosition = false)
+        playbackError = null
+        val root = rootView
+        if (root != null) errorOverlay?.let(root::removeView)
+        errorOverlay = null
+
+        if (args.codec != null || args.width != null || args.height != null || args.frameRate != null) {
+            metadataCapabilityResult = CodecCapabilityPreflight.inspect(
+                VideoCapabilityMetadata(
+                    sampleMimeType = args.codec?.takeIf { it.startsWith("video/") },
+                    codecs = args.codec,
+                    width = args.width,
+                    height = args.height,
+                    frameRate = args.frameRate,
+                    averageBitrate = args.bitrate,
+                    bitDepth = args.bitDepth,
+                    hdrType = if (args.hdr == true) HdrType.UNKNOWN_HDR else HdrType.UNKNOWN,
+                ),
+            )
+            capabilityResult = metadataCapabilityResult
+        }
 
         val httpFactory = DefaultHttpDataSource.Factory()
             .setConnectTimeoutMs(15_000)
@@ -143,9 +175,17 @@ class NativePlayerActivity : AppCompatActivity(), Player.Listener {
             .setAllowCrossProtocolRedirects(false)
             .setDefaultRequestProperties(mapOf("Authorization" to "Bearer ${args.authorizationToken}"))
         val renderersFactory = DefaultRenderersFactory(this).setEnableDecoderFallback(true)
-        trackSelector = DefaultTrackSelector(this)
+        val selector = DefaultTrackSelector(this)
+        restoredTrackSelection?.let { bundle ->
+            try {
+                selector.parameters = DefaultTrackSelector.Parameters.fromBundle(bundle)
+            } catch (_: RuntimeException) {
+                restoredTrackSelection = null
+            }
+        }
+        trackSelector = selector
         val exoPlayer = ExoPlayer.Builder(this, renderersFactory)
-            .setTrackSelector(trackSelector!!)
+            .setTrackSelector(selector)
             .setMediaSourceFactory(DefaultMediaSourceFactory(this).setDataSourceFactory(httpFactory))
             .build()
         player = exoPlayer
@@ -159,7 +199,8 @@ class NativePlayerActivity : AppCompatActivity(), Player.Listener {
             true,
         )
         val itemBuilder = MediaItem.Builder().setUri(args.streamUrl).setMediaId(cacheKey(args))
-        sanitizeMimeHint(args.mimeType)?.let(itemBuilder::setMimeType)
+        val mimeHint = NativePlayerMimePolicy.sanitizeHint(args.mimeType)
+        if (NativePlayerMimePolicy.shouldApplyToMediaItem(mimeHint)) itemBuilder.setMimeType(mimeHint)
         exoPlayer.setMediaItem(itemBuilder.build(), restoredPositionMs.coerceAtLeast(0))
         exoPlayer.playWhenReady = restoredPlayWhenReady ?: args.autoplay
         mediaSession = MediaSession.Builder(this, exoPlayer).build()
@@ -169,14 +210,6 @@ class NativePlayerActivity : AppCompatActivity(), Player.Listener {
 
     private fun cacheKey(args: OpenNativePlayerArgs): String =
         "telegram:${args.folderId ?: "home"}:${args.messageId}"
-
-    private fun sanitizeMimeHint(value: String?): String? {
-        val mime = value?.substringBefore(';')?.trim()?.lowercase() ?: return null
-        return mime.takeIf {
-            (it.startsWith("video/") || it.startsWith("audio/") || it == "application/vnd.apple.mpegurl") &&
-                !it.contains("://")
-        }
-    }
 
     override fun onPlaybackStateChanged(playbackState: Int) {
         if (playbackState == Player.STATE_ENDED) {
@@ -191,39 +224,130 @@ class NativePlayerActivity : AppCompatActivity(), Player.Listener {
     }
 
     override fun onTracksChanged(tracks: Tracks) {
-        var hasVideo = false
-        var hasAudio = false
-        var unsupportedVideo = false
-        var unsupportedAudio = false
-        tracks.groups.forEach { group ->
-            val supported = (0 until group.length).any(group::isTrackSupported)
-            when (group.type) {
-                C.TRACK_TYPE_VIDEO -> {
-                    hasVideo = true
-                    if (!supported) unsupportedVideo = true else hasPlayableVideo = true
-                }
-                C.TRACK_TYPE_AUDIO -> {
-                    hasAudio = true
-                    if (!supported) unsupportedAudio = true
-                }
-            }
+        val groupFacts = tracks.groups.map { group ->
+            TrackGroupFacts(
+                group.type,
+                (0 until group.length).map(group::isTrackSupported),
+                (0 until group.length).map(group::isTrackSelected),
+            )
         }
-        trackFacts = TrackSupportFacts(hasVideo, hasAudio, unsupportedVideo, unsupportedAudio)
+        trackFacts = TrackSupportAnalyzer.analyze(groupFacts)
+        val authoritativeFormat = tracks.groups
+            .asSequence()
+            .filter { it.type == C.TRACK_TYPE_VIDEO }
+            .flatMap { group ->
+                (0 until group.length).asSequence().map { index -> Triple(group, index, group.isTrackSelected(index)) }
+            }
+            .sortedByDescending { it.third }
+            .firstOrNull { (group, index) -> group.isTrackSupported(index) }
+            ?.let { (group, index) -> group.getTrackFormat(index) }
+        if (authoritativeFormat != null) {
+            capabilityResult = CodecCapabilityPreflight.inspect(VideoCapabilityMetadata.fromFormat(authoritativeFormat))
+            val report = capabilityResult!!
+            Log.i(
+                TAG,
+                "Video capability ${report.status}/${report.reasonCode}; codec=${report.codecFamily}; " +
+                    "profile=${report.hevcProfile}; hdr=${report.hdrType}; decoders=${report.decoderCount}",
+            )
+        }
+        if (trackFacts.primaryPlayback == PrimaryTrackPlayback.NO_PLAYABLE_PRIMARY_TRACKS && playbackError == null) {
+            showFatalError(NativePlayerErrorMapper.noPlayableTracks(trackFacts, capabilityResult))
+        }
     }
 
     override fun onVideoSizeChanged(videoSize: VideoSize) {
-        if (videoSize.width > 0 && videoSize.height > 0) updatePictureInPicture(videoSize.width, videoSize.height)
+        updatePictureInPicture(videoSize.width, videoSize.height)
     }
 
     override fun onPlayerError(error: PlaybackException) {
-        playbackError = NativePlayerErrorMapper.map(error, trackFacts)
+        showFatalError(NativePlayerErrorMapper.map(error, trackFacts, capabilityResult))
+    }
+
+    private fun showFatalError(error: NativePlayerPublicError) {
+        if (finishing.get() || destroyed.get()) return
+        lastSafePositionMs = safePosition().takeIf { it > 0 } ?: lastSafePositionMs
+        playbackError = error
         exitReason = "error"
+        player?.pause()
         updateSnapshot(emitEvent = true)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && isInPictureInPictureMode) {
+            finishWithResult(error)
+            return
+        }
+        showErrorOverlay(error)
+    }
+
+    private fun showErrorOverlay(error: NativePlayerPublicError) {
+        val root = rootView ?: return
+        errorOverlay?.let(root::removeView)
+        val state = NativePlaybackErrorPolicy.overlay(error, retryCount)
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setPadding(dp(32), dp(24), dp(32), dp(24))
+            setBackgroundColor(Color.rgb(24, 24, 24))
+            addView(TextView(context).apply {
+                text = state.title
+                textSize = 22f
+                setTextColor(Color.WHITE)
+                gravity = Gravity.CENTER
+            })
+            addView(TextView(context).apply {
+                text = state.message
+                textSize = 16f
+                setTextColor(Color.LTGRAY)
+                gravity = Gravity.CENTER
+                setPadding(0, dp(12), 0, dp(20))
+            })
+            if (state.canRetry) {
+                addView(Button(context).apply {
+                    text = "Retry"
+                    contentDescription = "Retry playback"
+                    setOnClickListener { retryPlayback() }
+                })
+            }
+            addView(Button(context).apply {
+                text = "Close"
+                contentDescription = "Close native player"
+                setOnClickListener { finishWithResult(error) }
+            })
+        }
+        errorOverlay = FrameLayout(this).apply {
+            setBackgroundColor(Color.argb(230, 0, 0, 0))
+            isClickable = true
+            isFocusable = true
+            addView(panel, FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.CENTER,
+            ))
+        }
+        root.addView(errorOverlay, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.MATCH_PARENT,
+        ))
+        errorOverlay?.requestFocus()
+    }
+
+    internal fun retryPlayback() {
+        val error = playbackError ?: return
+        if (!NativePlaybackErrorPolicy.isRetryEligible(error, retryCount)) return
+        if (NativePlayerSessionStore.get(sessionId) !== session) {
+            showFatalError(
+                NativePlayerPublicError("authentication", "SESSION_EXPIRED", "The private playback session has expired."),
+            )
+            return
+        }
+        retryCount += 1
+        restoredPositionMs = lastSafePositionMs.coerceAtLeast(0)
+        restoredPlayWhenReady = true
+        completed = false
+        initializePlayer()
     }
 
     override fun onStart() {
         super.onStart()
-        if (resumeOnForeground && !isInPictureInPictureMode) {
+        if (resumeOnForeground && !isInPictureInPictureMode && playbackError == null) {
             player?.play()
             resumeOnForeground = false
         }
@@ -231,7 +355,7 @@ class NativePlayerActivity : AppCompatActivity(), Player.Listener {
 
     override fun onStop() {
         if (!isInPictureInPictureMode) {
-            resumeOnForeground = player?.isPlaying == true
+            resumeOnForeground = player?.isPlaying == true && playbackError == null
             player?.pause()
         }
         super.onStop()
@@ -239,13 +363,16 @@ class NativePlayerActivity : AppCompatActivity(), Player.Listener {
 
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
-            playbackError == null && hasPlayableVideo && player?.isPlaying == true
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && PictureInPicturePolicy.isEligible(
+                trackFacts.hasPlayableVideoTrack,
+                player?.isPlaying == true,
+                playbackError != null,
+            )
         ) {
             try {
                 enterPictureInPictureMode(currentPictureInPictureParams())
             } catch (_: IllegalArgumentException) {
-                // Device-specific PiP ratio/feature rejection is non-fatal.
+                // Device-specific PiP rejection is non-fatal.
             }
         }
     }
@@ -253,70 +380,103 @@ class NativePlayerActivity : AppCompatActivity(), Player.Listener {
     override fun onPictureInPictureModeChanged(inPictureInPictureMode: Boolean, newConfig: Configuration) {
         super.onPictureInPictureModeChanged(inPictureInPictureMode, newConfig)
         playerView?.useController = !inPictureInPictureMode
-        if (!inPictureInPictureMode) playerView?.showController()
+        if (!inPictureInPictureMode) {
+            playerView?.showController()
+            errorOverlay?.visibility = View.VISIBLE
+        }
     }
 
     private fun updatePictureInPicture(width: Int, height: Int) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        val ratio = PictureInPicturePolicy.sanitizeAspectRatio(width, height) ?: return
         try {
             setPictureInPictureParams(
-                PictureInPictureParams.Builder().setAspectRatio(Rational(width, height)).build(),
+                PictureInPictureParams.Builder()
+                    .setAspectRatio(Rational(ratio.numerator, ratio.denominator))
+                    .build(),
             )
         } catch (_: IllegalArgumentException) {
-            // Invalid extreme aspect ratios are ignored.
+            // Some devices apply stricter PiP limits; playback continues normally.
         }
     }
 
     @RequiresApi(Build.VERSION_CODES.O)
     private fun currentPictureInPictureParams(): PictureInPictureParams {
         val size = player?.videoSize
-        return if (size != null && size.width > 0 && size.height > 0) {
-            PictureInPictureParams.Builder().setAspectRatio(Rational(size.width, size.height)).build()
-        } else {
-            PictureInPictureParams.Builder().build()
-        }
+        val ratio = size?.let { PictureInPicturePolicy.sanitizeAspectRatio(it.width, it.height) }
+        return PictureInPictureParams.Builder().apply {
+            ratio?.let { setAspectRatio(Rational(it.numerator, it.denominator)) }
+        }.build()
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
         outState.putString(STATE_SESSION_ID, sessionId)
         outState.putLong(STATE_POSITION_MS, safePosition())
         outState.putBoolean(STATE_PLAY_WHEN_READY, player?.playWhenReady ?: false)
+        player?.trackSelectionParameters?.toBundle()?.let { outState.putBundle(STATE_TRACK_SELECTION, it) }
         super.onSaveInstanceState(outState)
     }
 
     fun finishFromExternal() {
+        if (destroyed.get()) return
         exitReason = "external"
         finishWithResult()
     }
 
     fun playbackSnapshot(): NativePlaybackSnapshot = latestSnapshot
 
+    internal fun showErrorForTest(error: NativePlayerPublicError) = showFatalError(error)
+    internal fun isErrorOverlayVisibleForTest(): Boolean = errorOverlay?.visibility == View.VISIBLE
+    internal fun retryCountForTest(): Int = retryCount
+    internal fun hasPlayerForTest(): Boolean = player != null
+
+    private fun scheduleTickerOnce() {
+        if (tickerScheduled) return
+        tickerScheduled = true
+        mainHandler.post(snapshotTicker)
+    }
+
     private fun updateSnapshot(emitEvent: Boolean) {
         val exoPlayer = player
+        val position = safePosition()
+        if (playbackError == null && position > 0) lastSafePositionMs = position
         val state = when {
             playbackError != null -> "error"
             exoPlayer == null -> "idle"
             exoPlayer.playbackState == Player.STATE_BUFFERING -> "buffering"
-            exoPlayer.playbackState == Player.STATE_READY -> "ready"
             exoPlayer.playbackState == Player.STATE_ENDED -> "ended"
+            exoPlayer.isPlaying -> "playing"
+            exoPlayer.playbackState == Player.STATE_READY && !exoPlayer.playWhenReady -> "paused"
+            exoPlayer.playbackState == Player.STATE_READY -> "ready"
             else -> "idle"
         }
-        val snapshot = NativePlaybackSnapshot(
+        val snapshot = NativePlaybackSnapshot(state, exoPlayer?.isPlaying == true, position, safeDuration())
+        val transitioned = NativeEventTransitionPolicy.shouldEmit(
+            latestSnapshot.state,
+            latestSnapshot.isPlaying,
             state,
-            exoPlayer?.isPlaying == true,
-            safePosition(),
-            safeDuration(),
+            snapshot.isPlaying,
         )
-        val transitioned = state != latestSnapshot.state || snapshot.isPlaying != latestSnapshot.isPlaying
         latestSnapshot = snapshot
         if (emitEvent && transitioned) session?.stateListener?.invoke(snapshot)
     }
 
-    private fun safePosition(): Long = player?.currentPosition?.takeIf { it != C.TIME_UNSET }?.coerceAtLeast(0) ?: 0
-    private fun safeDuration(): Long = player?.duration?.takeIf { it != C.TIME_UNSET }?.coerceAtLeast(0) ?: 0
+    private fun safePosition(): Long = player?.currentPosition
+        ?.takeIf { it != C.TIME_UNSET }
+        ?.coerceAtLeast(0)
+        ?: lastSafePositionMs.coerceAtLeast(0)
 
-    private fun finishWithResult(error: NativePlayerPublicError? = playbackError) {
+    private fun safeDuration(): Long = player?.duration
+        ?.takeIf { it != C.TIME_UNSET }
+        ?.coerceAtLeast(0)
+        ?: 0
+
+    private fun finishWithResult(
+        error: NativePlayerPublicError? = playbackError,
+        clearRestore: Boolean = true,
+    ) {
         if (!finishing.compareAndSet(false, true)) return
+        if (clearRestore) PendingNativePlayerRestoreStore.clear(this)
         val result = NativePlayerResultData(
             positionMs = safePosition(),
             durationMs = safeDuration(),
@@ -328,22 +488,41 @@ class NativePlayerActivity : AppCompatActivity(), Player.Listener {
         finish()
     }
 
-    override fun onDestroy() {
-        mainHandler.removeCallbacksAndMessages(null)
-        NativePlayerActivityRegistry.clear(this)
+    private fun releasePlayer(rememberPosition: Boolean = true) {
+        val exoPlayer = player
+        if (rememberPosition && exoPlayer != null) {
+            val position = exoPlayer.currentPosition
+            if (position != C.TIME_UNSET && position >= 0) lastSafePositionMs = position
+        }
         playerView?.player = null
-        playerView = null
         mediaSession?.release()
         mediaSession = null
-        player?.removeListener(this)
-        player?.release()
+        exoPlayer?.removeListener(this)
+        exoPlayer?.release()
         player = null
         trackSelector = null
-        session = null
+    }
+
+    override fun onDestroy() {
+        if (destroyed.compareAndSet(false, true)) {
+            tickerScheduled = false
+            mainHandler.removeCallbacksAndMessages(null)
+            NativePlayerActivityRegistry.clear(this)
+            releasePlayer()
+            errorOverlay = null
+            rootView = null
+            playerView = null
+            if (!isChangingConfigurations) NativePlayerSessionStore.remove(sessionId)
+            session = null
+        }
         super.onDestroy()
     }
 
+    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
+
     companion object {
+        private const val TAG = "NativePlayer"
+        private const val SNAPSHOT_INTERVAL_MS = 1_000L
         const val EXTRA_SESSION_ID = "com.cameronamer.telegramdrive.nativeplayer.SESSION_ID"
         const val EXTRA_FOLDER_ID = "com.cameronamer.telegramdrive.nativeplayer.FOLDER_ID"
         const val EXTRA_MESSAGE_ID = "com.cameronamer.telegramdrive.nativeplayer.MESSAGE_ID"
@@ -354,5 +533,6 @@ class NativePlayerActivity : AppCompatActivity(), Player.Listener {
         private const val STATE_SESSION_ID = "nativePlayer.sessionId"
         private const val STATE_POSITION_MS = "nativePlayer.positionMs"
         private const val STATE_PLAY_WHEN_READY = "nativePlayer.playWhenReady"
+        private const val STATE_TRACK_SELECTION = "nativePlayer.trackSelection"
     }
 }

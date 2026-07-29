@@ -30,12 +30,15 @@ import { LANGUAGES } from '../../i18n/languages';
 import { useTranslation } from 'react-i18next';
 import {
   loadNativeResumePosition,
+  nativePlayerErrorMessage,
+  nativePlayerInvocationMessage,
   NativePlayerLaunchGuard,
+  openNativePlayerWithStartupRetry,
   saveNativeResumePosition,
+  shouldShowReturnedNativeError,
   shouldUseNativePlayer,
   takePendingNativePlayerRestore,
 } from '../../native-player';
-import { redactSensitiveText } from '../../security/redaction';
 
 export default function MobileDashboard({ onLogout }: { onLogout?: () => void }) {
   const { t } = useTranslation();
@@ -124,7 +127,10 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
     settings.proxyPort, settings.proxyUsername, settings.proxyPassword,
   ]);
 
-  const logoutHandler = useMemo(() => onLogout || (() => {}), [onLogout]);
+  const logoutHandler = useMemo(() => () => {
+    if (isAndroid) void takePendingNativePlayerRestore().catch(() => undefined);
+    onLogout?.();
+  }, [isAndroid, onLogout]);
 
   const {
     store, folders, activeFolderId, setActiveFolderId, isSyncing, isConnected,
@@ -147,23 +153,28 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
   const transferIdCounter = useRef(0);
 
   useEffect(() => {
-    if (!isAndroid) return;
+    if (!isAndroid || !isConnected) return;
     let cancelled = false;
     void takePendingNativePlayerRestore()
       .then(async source => {
         if (cancelled || !source) return;
-        const result = await nativePlayerGuard.current.open(source);
+        const result = await nativePlayerGuard.current.open(
+          source,
+          candidate => openNativePlayerWithStartupRetry(candidate),
+        );
         if (!result || cancelled) return;
         saveNativeResumePosition(source.folderId, source.messageId, result);
-        if (result.error) toast.error(result.error.message);
+        if (result.error && shouldShowReturnedNativeError(result)) {
+          toast.error(nativePlayerErrorMessage(result.error));
+        }
       })
       .catch(error => {
         if (!cancelled) {
-          toast.error(`Could not restore native playback: ${redactSensitiveText(String(error))}`);
+          toast.error(`Could not restore native playback: ${nativePlayerInvocationMessage(error)}`);
         }
       });
     return () => { cancelled = true; };
-  }, [isAndroid]);
+  }, [isAndroid, isConnected]);
 
   // ── Connection diagnostics state ──────────────────────────────────────
   const [checkingLatency, setCheckingLatency] = useState(false);
@@ -375,20 +386,26 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
   const handlePreview = useCallback(async (file: TelegramFile) => {
     if (shouldUseNativePlayer(isAndroid, file.name) && isVideoFile(file.name)) {
       try {
-        const result = await nativePlayerGuard.current.open({
+        const source = {
           folderId: activeFolderId,
           messageId: file.id,
           title: file.name.slice(0, 256),
           fileName: file.name.slice(0, 512),
           startPositionMs: loadNativeResumePosition(activeFolderId, file.id),
           autoplay: true,
-        });
+        };
+        const result = await nativePlayerGuard.current.open(
+          source,
+          candidate => openNativePlayerWithStartupRetry(candidate),
+        );
         if (result) {
           saveNativeResumePosition(activeFolderId, file.id, result);
-          if (result.error) toast.error(result.error.message);
+          if (result.error && shouldShowReturnedNativeError(result)) {
+            toast.error(nativePlayerErrorMessage(result.error));
+          }
         }
       } catch (error) {
-        toast.error(`Native playback failed: ${redactSensitiveText(String(error))}`);
+        toast.error(`Native playback failed: ${nativePlayerInvocationMessage(error)}`);
       }
       return;
     }

@@ -3,6 +3,7 @@ package com.cameronamer.telegramdrive.nativeplayer
 import java.lang.ref.WeakReference
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 
 data class NativePlayerSession(
     val id: String,
@@ -48,10 +49,18 @@ internal class WeakInstanceRegistry<T : Any> {
 
 object NativePlayerActivityRegistry {
     private val registry = WeakInstanceRegistry<NativePlayerActivity>()
+    private val closeRequested = AtomicBoolean(false)
 
-    fun register(activity: NativePlayerActivity) = registry.register(activity)
+    fun register(activity: NativePlayerActivity) {
+        registry.register(activity)
+        if (closeRequested.getAndSet(false)) activity.finishFromExternal()
+    }
     fun clear(activity: NativePlayerActivity? = null) = registry.clear(activity)
-    fun close() = registry.get()?.finishFromExternal()
+    fun close() {
+        val activity = registry.get()
+        if (activity == null) closeRequested.set(true) else activity.finishFromExternal()
+    }
+    fun clearPendingClose() = closeRequested.set(false)
     fun snapshot(): NativePlaybackSnapshot = registry.get()?.playbackSnapshot()
         ?: NativePlaybackSnapshot()
 }

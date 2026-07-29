@@ -3,6 +3,7 @@
     <uses-permission android:name="android.permission.INTERNET" />
 
     <application android:networkSecurityConfig="@xml/native_player_network_security_config">
+        <!-- Rotation is handled in-place; state is still saved for explicit recreation/process death. -->
         <activity
             android:name=".NativePlayerActivity"
             android:configChanges="orientation|keyboardHidden|screenSize|smallestScreenSize|screenLayout|uiMode"

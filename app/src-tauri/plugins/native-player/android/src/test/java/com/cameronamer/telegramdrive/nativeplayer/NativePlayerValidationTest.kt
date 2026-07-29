@@ -39,6 +39,8 @@ class NativePlayerValidationTest {
     fun publicModelsHaveNoTokenOrUrlProperties() {
         val names = NativePlayerResultData::class.java.declaredFields.map { it.name.lowercase() }
         assertFalse(names.any { it.contains("token") || it.contains("url") })
+        val eventFields = NativePlaybackSnapshot::class.java.declaredFields.map { it.name.lowercase() }
+        assertFalse(eventFields.any { it.contains("token") || it.contains("authorization") || it.contains("url") })
     }
 
     @Test

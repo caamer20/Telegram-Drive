@@ -55,6 +55,8 @@ rand = "0.9"
 sha2 = "0.10"
 bcrypt = "0.16"
 constant_time_eq = "0.3"
+regex = "1"
+url = "2"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 sevenz-rust2 = "0.7"
 path-clean = "1"

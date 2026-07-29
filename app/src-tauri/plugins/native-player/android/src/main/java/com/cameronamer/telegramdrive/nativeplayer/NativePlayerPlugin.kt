@@ -25,6 +25,7 @@ class NativePlayerPlugin(private val activity: Activity) : Plugin(activity) {
             val args = invoke.parseArgs(OpenNativePlayerArgs::class.java)
             args.validate()
             PendingNativePlayerRestoreStore.clear(activity)
+            NativePlayerActivityRegistry.clearPendingClose()
             val session = NativePlayerSessionStore.create(args)
             pendingSessionId = session.id
             session.stateListener = { snapshot ->
@@ -40,11 +41,11 @@ class NativePlayerPlugin(private val activity: Activity) : Plugin(activity) {
                 putExtra(NativePlayerActivity.EXTRA_AUTOPLAY, args.autoplay)
             }
             startActivityForResult(invoke, intent, "nativePlayerResult")
-        } catch (error: Exception) {
+        } catch (_: Exception) {
             opening.set(false)
             pendingSessionId?.let(NativePlayerSessionStore::remove)
             pendingSessionId = null
-            invoke.reject(error.message ?: "invalid native player request")
+            invoke.reject("invalid native player request")
         }
     }
 
@@ -53,6 +54,7 @@ class NativePlayerPlugin(private val activity: Activity) : Plugin(activity) {
         val sessionId = pendingSessionId
         pendingSessionId = null
         opening.set(false)
+        NativePlayerActivityRegistry.clearPendingClose()
         NativePlayerSessionStore.remove(sessionId)
         val response = NativePlayerResultCodec.fromIntent(result.data)
         invoke.resolve(response.toJsObject())
