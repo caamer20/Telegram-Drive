@@ -1,0 +1,9 @@
+[default]
+description = "Allows the Telegram identity-based native Android player API"
+permissions = [
+  "allow-open-native-player",
+  "allow-close-native-player",
+  "allow-get-native-playback-state",
+  "allow-take-pending-native-player-restore",
+  "allow-clear-pending-native-player-restore",
+]

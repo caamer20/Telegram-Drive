@@ -94,14 +94,6 @@ pub async fn cmd_update_api_settings(
         return Err("Port must be 1024 or higher".to_string());
     }
 
-    // Prevent collision with streaming server
-    if port == crate::STREAM_PORT {
-        return Err(format!(
-            "Port {} is used by the media streaming server",
-            port
-        ));
-    }
-
     let mut settings = load_settings(&app);
     let port_changed = settings.port != port;
     let enabled_changed = settings.enabled != enabled;

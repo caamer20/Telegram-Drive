@@ -18,7 +18,7 @@ import { useTelegramConnection } from '../../hooks/useTelegramConnection';
 import { useFileUpload } from '../../hooks/useFileUpload';
 import { useFileDownload } from '../../hooks/useFileDownload';
 import { useFileOperations } from '../../hooks/useFileOperations';
-import { formatBytes, isMediaFile, isPdfFile, isImageFile, nativeShareOrCopy, copyToClipboard } from '../../utils';
+import { formatBytes, isMediaFile, isVideoFile, isPdfFile, isImageFile, nativeShareOrCopy, copyToClipboard } from '../../utils';
 import { MediaPlayer } from '../desktop/dashboard/MediaPlayer';
 import { PdfViewer } from '../desktop/dashboard/PdfViewer';
 import { PreviewModal } from '../desktop/dashboard/PreviewModal';
@@ -28,6 +28,19 @@ import { useSettings } from '../../context/SettingsContext';
 import { version as appVersion } from '../../../package.json';
 import { LANGUAGES } from '../../i18n/languages';
 import { useTranslation } from 'react-i18next';
+import {
+  loadNativeResumePosition,
+  cleanupNativePlayerForLogout,
+  nativePlayerErrorMessage,
+  nativePlayerInvocationMessage,
+  NativePlayerLaunchGuard,
+  NATIVE_PLAYER_BUILD_MARKER,
+  openNativePlayerWithStartupRetry,
+  saveNativeResumePosition,
+  shouldShowReturnedNativeError,
+  shouldUseNativePlayer,
+  takePendingNativePlayerRestore,
+} from '../../native-player';
 
 export default function MobileDashboard({ onLogout }: { onLogout?: () => void }) {
   const { t } = useTranslation();
@@ -37,6 +50,10 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
   const { isAndroid } = usePlatform();
   const { theme } = useTheme();
   const { settings, updateSetting } = useSettings();
+
+  useEffect(() => {
+    console.info('[NativePlayer] rollout mode:', NATIVE_PLAYER_BUILD_MARKER);
+  }, []);
 
   // ── Android deep-link listener (https://t.me/ links) ──────────────────
   useEffect(() => {
@@ -116,7 +133,10 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
     settings.proxyPort, settings.proxyUsername, settings.proxyPassword,
   ]);
 
-  const logoutHandler = useMemo(() => onLogout || (() => {}), [onLogout]);
+  const logoutHandler = useMemo(() => async () => {
+    if (isAndroid) await cleanupNativePlayerForLogout();
+    onLogout?.();
+  }, [isAndroid, onLogout]);
 
   const {
     store, folders, activeFolderId, setActiveFolderId, isSyncing, isConnected,
@@ -128,6 +148,7 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
   const { queueDownload, queueBulkDownload } = useFileDownload(store);
 
   const [playingFile, setPlayingFile] = useState<TelegramFile | null>(null);
+  const nativePlayerGuard = useRef(new NativePlayerLaunchGuard());
   const [pdfFile, setPdfFile] = useState<TelegramFile | null>(null);
   const [previewFile, setPreviewFile] = useState<TelegramFile | null>(null);
   const [shareFile, setShareFile] = useState<TelegramFile | null>(null);
@@ -136,6 +157,30 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
   const [bulkShareCopied, setBulkShareCopied] = useState<Set<string>>(new Set());
   const [uploadingCacheFiles, setUploadingCacheFiles] = useState<Set<string>>(new Set());
   const transferIdCounter = useRef(0);
+
+  useEffect(() => {
+    if (!isAndroid || !isConnected) return;
+    let cancelled = false;
+    void takePendingNativePlayerRestore()
+      .then(async source => {
+        if (cancelled || !source) return;
+        const result = await nativePlayerGuard.current.open(
+          source,
+          candidate => openNativePlayerWithStartupRetry(candidate),
+        );
+        if (!result || cancelled) return;
+        saveNativeResumePosition(source.folderId, source.messageId, result);
+        if (result.error && shouldShowReturnedNativeError(result)) {
+          toast.error(nativePlayerErrorMessage(result.error));
+        }
+      })
+      .catch(error => {
+        if (!cancelled) {
+          toast.error(`Could not restore native playback: ${nativePlayerInvocationMessage(error)}`);
+        }
+      });
+    return () => { cancelled = true; };
+  }, [isAndroid, isConnected]);
 
   // ── Connection diagnostics state ──────────────────────────────────────
   const [checkingLatency, setCheckingLatency] = useState(false);
@@ -344,7 +389,32 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
     handleDeleteOp(file.id);
   }, [handleDeleteOp]);
 
-  const handlePreview = useCallback((file: TelegramFile) => {
+  const handlePreview = useCallback(async (file: TelegramFile) => {
+    if (shouldUseNativePlayer(isAndroid, file.name) && isVideoFile(file.name)) {
+      try {
+        const source = {
+          folderId: activeFolderId,
+          messageId: file.id,
+          title: file.name.slice(0, 256),
+          fileName: file.name.slice(0, 512),
+          startPositionMs: loadNativeResumePosition(activeFolderId, file.id),
+          autoplay: true,
+        };
+        const result = await nativePlayerGuard.current.open(
+          source,
+          candidate => openNativePlayerWithStartupRetry(candidate),
+        );
+        if (result) {
+          saveNativeResumePosition(activeFolderId, file.id, result);
+          if (result.error && shouldShowReturnedNativeError(result)) {
+            toast.error(nativePlayerErrorMessage(result.error));
+          }
+        }
+      } catch (error) {
+        toast.error(`Native playback failed: ${nativePlayerInvocationMessage(error)}`);
+      }
+      return;
+    }
     if (isMediaFile(file.name)) {
       setPlayingFile(file);
     } else if (isPdfFile(file.name)) {
@@ -354,7 +424,7 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
     } else {
       toast.info(`Preview not supported for ${file.name}`);
     }
-  }, []);
+  }, [activeFolderId, isAndroid]);
 
   const handleRenameFile = useCallback((file: TelegramFile) => {
     const currentName = fileRenames.get(file.id) || file.name;

@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-get-native-playback-state"
+description = "Enables the get_native_playback_state command without any pre-configured scope."
+commands.allow = ["get_native_playback_state"]
+
+[[permission]]
+identifier = "deny-get-native-playback-state"
+description = "Denies the get_native_playback_state command without any pre-configured scope."
+commands.deny = ["get_native_playback_state"]

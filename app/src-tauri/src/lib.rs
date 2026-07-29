@@ -66,11 +66,6 @@ pub mod share_routes;
 pub mod transcode;
 pub mod upload_service;
 
-/// Single source of truth for the Actix streaming server port.
-/// Referenced in lib.rs (server startup) and exposed to the frontend
-/// via cmd_get_stream_info so no component ever hardcodes the port.
-pub const STREAM_PORT: u16 = 14201;
-
 /// Generate a random 32-character hex token for streaming server auth
 fn generate_stream_token() -> String {
     let mut rng = rand::rng();
@@ -78,9 +73,159 @@ fn generate_stream_token() -> String {
     bytes.iter().map(|b| format!("{:02x}", b)).collect()
 }
 
-/// Holds the Actix-web server stop handle so we can shut it down
-/// from the RunEvent::Exit handler for graceful Ctrl+C termination.
-pub struct ActixServerHandle(pub Arc<std::sync::Mutex<Option<actix_web::dev::ServerHandle>>>);
+struct StreamingServerWorker {
+    generation: u64,
+    handle: Option<actix_web::dev::ServerHandle>,
+    shutdown: Option<tokio::sync::oneshot::Sender<()>>,
+    worker: Option<std::thread::JoinHandle<()>>,
+}
+
+/// Owns every lifecycle primitive for the dedicated Actix streaming thread.
+/// Shutdown is signalled without blocking the Android UI thread; the bounded
+/// graceful wait runs inside the server's existing Actix runtime.
+#[derive(Clone)]
+pub struct ActixServerControl(Arc<std::sync::Mutex<StreamingServerWorker>>);
+
+impl ActixServerControl {
+    fn new(generation: u64, shutdown: tokio::sync::oneshot::Sender<()>) -> Self {
+        Self(Arc::new(std::sync::Mutex::new(StreamingServerWorker {
+            generation,
+            handle: None,
+            shutdown: Some(shutdown),
+            worker: None,
+        })))
+    }
+
+    fn install_handle(&self, generation: u64, handle: actix_web::dev::ServerHandle) -> bool {
+        let Ok(mut state) = self.0.lock() else {
+            return false;
+        };
+        if state.generation != generation || state.shutdown.is_none() {
+            return false;
+        }
+        state.handle = Some(handle);
+        true
+    }
+
+    fn install_worker(&self, generation: u64, worker: std::thread::JoinHandle<()>) {
+        let mut worker = Some(worker);
+        if let Ok(mut state) = self.0.lock() {
+            if state.generation == generation && state.shutdown.is_some() {
+                state.worker = worker.take();
+            }
+        }
+        // Dropping a JoinHandle detaches it. A stale worker is already stopping
+        // or has completed, and process exit must never wait on an unbounded join.
+        drop(worker);
+    }
+
+    fn mark_finished(&self, generation: u64) {
+        if let Ok(mut state) = self.0.lock() {
+            if state.generation == generation {
+                state.handle = None;
+                state.shutdown = None;
+                state.worker = None;
+            }
+        }
+    }
+
+    fn shutdown(&self) -> bool {
+        let (shutdown, worker) = match self.0.lock() {
+            Ok(mut state) => {
+                state.handle = None;
+                (state.shutdown.take(), state.worker.take())
+            }
+            Err(_) => return false,
+        };
+        let requested = shutdown.is_some();
+        if let Some(shutdown) = shutdown {
+            let _ = shutdown.send(());
+        }
+        // The Actix runtime performs a bounded graceful stop and force-stop
+        // fallback. Detach the OS thread here so shutdown never blocks the UI;
+        // immediate OS process termination remains best-effort.
+        drop(worker);
+        requested
+    }
+}
+
+#[cfg(test)]
+mod actix_server_control_tests {
+    use super::*;
+
+    fn control() -> (ActixServerControl, tokio::sync::oneshot::Receiver<()>) {
+        let (shutdown, receiver) = tokio::sync::oneshot::channel();
+        (ActixServerControl::new(7, shutdown), receiver)
+    }
+
+    fn server_handle() -> (actix_web::dev::Server, actix_web::dev::ServerHandle) {
+        let server = actix_web::HttpServer::new(actix_web::App::new)
+            .bind(("127.0.0.1", 0))
+            .unwrap()
+            .run();
+        let handle = server.handle();
+        (server, handle)
+    }
+
+    #[test]
+    fn shutdown_is_accepted_once_and_clears_installed_state() {
+        let (control, mut receiver) = control();
+        let (server, handle) = server_handle();
+        assert!(control.install_handle(7, handle));
+        control.install_worker(7, std::thread::spawn(|| {}));
+
+        assert!(control.shutdown());
+        assert!(receiver.try_recv().is_ok());
+        assert!(!control.shutdown());
+        let state = control.0.lock().unwrap();
+        assert!(state.handle.is_none());
+        assert!(state.shutdown.is_none());
+        assert!(state.worker.is_none());
+        drop(state);
+        drop(server);
+    }
+
+    #[test]
+    fn shutdown_before_handle_installation_rejects_late_resources() {
+        let (control, _) = control();
+        assert!(control.shutdown());
+        let (server, handle) = server_handle();
+        assert!(!control.install_handle(7, handle));
+        control.install_worker(7, std::thread::spawn(|| {}));
+        let state = control.0.lock().unwrap();
+        assert!(state.handle.is_none());
+        assert!(state.worker.is_none());
+        drop(state);
+        drop(server);
+    }
+
+    #[test]
+    fn stale_generation_cannot_install_or_finish_current_server() {
+        let (control, _) = control();
+        let (server, handle) = server_handle();
+        assert!(!control.install_handle(6, handle));
+        control.mark_finished(6);
+        assert!(control.shutdown());
+        drop(server);
+    }
+
+    #[test]
+    fn worker_completion_is_consumed_once_and_late_shutdown_is_safe() {
+        let (control, _) = control();
+        let worker = std::thread::spawn(|| {});
+        while !worker.is_finished() {
+            std::thread::yield_now();
+        }
+        control.install_worker(7, worker);
+        control.mark_finished(7);
+        let state = control.0.lock().unwrap();
+        assert!(state.handle.is_none());
+        assert!(state.shutdown.is_none());
+        assert!(state.worker.is_none());
+        drop(state);
+        assert!(!control.shutdown());
+    }
+}
 
 /// Tracks whether the API server is currently running (for the frontend status dot)
 pub struct ApiServerRunning(pub Arc<std::sync::atomic::AtomicBool>);
@@ -97,7 +242,14 @@ pub fn restart_api_server(app: &tauri::AppHandle) {
     let old_handle = api_handle_arc.lock().ok().and_then(|mut g| g.take());
     if let Some(handle) = old_handle {
         log::info!("Stopping existing API server...");
-        drop(handle.stop(true));
+        tauri::async_runtime::spawn(async move {
+            if tokio::time::timeout(std::time::Duration::from_secs(5), handle.stop(true))
+                .await
+                .is_err()
+            {
+                log::warn!("API server graceful shutdown exceeded five seconds");
+            }
+        });
         // Give it a moment to release the port
         std::thread::sleep(std::time::Duration::from_millis(200));
     }
@@ -207,6 +359,7 @@ pub fn restart_api_server(_app: &tauri::AppHandle) {
 }
 
 #[tauri::command]
+#[cfg_attr(target_os = "android", allow(unused_variables))]
 fn cmd_open_file_externally(path: String, app_handle: tauri::AppHandle) -> Result<(), String> {
     #[cfg(target_os = "android")]
     {
@@ -464,11 +617,13 @@ fn cmd_get_system_diagnostics(app: tauri::AppHandle) -> Result<String, String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let stream_token = generate_stream_token();
+    let stream_config = StreamConfig::new(stream_token.clone());
+    let stream_config_for_setup = stream_config.clone();
 
-    // Shared handle for stopping the Actix streaming server during shutdown
-    let server_handle: Arc<std::sync::Mutex<Option<actix_web::dev::ServerHandle>>> =
-        Arc::new(std::sync::Mutex::new(None));
-    let server_handle_for_setup = server_handle.clone();
+    let stream_generation = stream_config.generation();
+    let (stream_shutdown, stream_shutdown_receiver) = tokio::sync::oneshot::channel();
+    let server_control = ActixServerControl::new(stream_generation, stream_shutdown);
+    let server_control_for_setup = server_control.clone();
 
     let builder = tauri::Builder::default()
         .plugin(
@@ -491,7 +646,17 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_deep_link::init())
-        .plugin(tauri_plugin_clipboard_manager::init());
+        .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_native_player::init(|app, _source| {
+            let session = app
+                .state::<StreamConfig>()
+                .trusted_session()
+                .map_err(tauri_plugin_native_player::Error::StreamServer)?;
+            Ok(tauri_plugin_native_player::ResolvedStreamSource::direct(
+                session.base_url,
+                session.token,
+            ))
+        }));
 
     // The updater plugin is not supported on Android and can cause crashes
     // (APKs are managed by the Play Store; the plugin attempts restricted FS ops).
@@ -591,8 +756,8 @@ pub fn run() {
                 cancelled_transfers: Arc::new(tokio::sync::RwLock::new(HashSet::new())),
             });
             app.manage(Arc::new(bandwidth::BandwidthManager::new(app.handle())));
-            app.manage(StreamConfig { token: stream_token.clone(), port: STREAM_PORT });
-            app.manage(ActixServerHandle(server_handle_for_setup.clone()));
+            app.manage(stream_config_for_setup.clone());
+            app.manage(server_control_for_setup.clone());
             app.manage(ApiServerHandle(Arc::new(std::sync::Mutex::new(None))));
             app.manage(ApiServerRunning(Arc::new(std::sync::atomic::AtomicBool::new(false))));
 
@@ -658,38 +823,85 @@ pub fn run() {
                 restored_ms_session,
             ));
 
-            // Start Streaming Server on dedicated thread (Actix needs its own runtime)
-            // Disabled on Android: actix_rt::System creates a second Tokio runtime that
-            // conflicts with Tauri's runtime and crashes the process on launch.
-            #[cfg(not(target_os = "android"))]
-            {
-                let state = Arc::new(app.state::<TelegramState>().inner().clone());
-                let token_for_server = stream_token.clone();
-                let handle_for_thread = server_handle_for_setup.clone();
-                let db_pool_for_server = db_pool.clone();
-                let transcode_for_server = transcode_arc.clone();
-                std::thread::spawn(move || {
+            // Actix owns one dedicated System on one named OS thread on every
+            // platform. It never constructs or blocks a runtime inside Tauri's
+            // Tokio executor, which avoids the former nested-runtime crash on Android.
+            let state = Arc::new(app.state::<TelegramState>().inner().clone());
+            let token_for_server = stream_token.clone();
+            let control_for_thread = server_control_for_setup.clone();
+            let status_for_thread = stream_config_for_setup.clone();
+            let db_pool_for_server = db_pool.clone();
+            let transcode_for_server = transcode_arc.clone();
+            let worker = std::thread::Builder::new()
+                .name("telegram-stream-server".to_string())
+                .spawn(move || {
                     #[cfg(target_os = "windows")]
                     init_com_on_worker_thread();
-                    let sys = actix_rt::System::new();
-                    sys.block_on(async move {
-                        match server::start_server(state, STREAM_PORT, token_for_server, db_pool_for_server, transcode_for_server).await {
-                            Ok(server) => {
-                                if let Ok(mut handle) = handle_for_thread.lock() {
-                                    *handle = Some(server.handle());
+                    let system = actix_rt::System::new();
+                    system.block_on(async move {
+                        match server::start_server(
+                            state,
+                            token_for_server,
+                            db_pool_for_server,
+                            transcode_for_server,
+                        ) {
+                            Ok(started) => {
+                                let handle = started.server.handle();
+                                if !control_for_thread.install_handle(stream_generation, handle.clone()) {
+                                    handle.stop(false).await;
+                                    control_for_thread.mark_finished(stream_generation);
+                                    return;
                                 }
-                                // Now await the server — blocks until stopped
-                                server.await.ok();
+                                status_for_thread.mark_ready(stream_generation, started.address);
+                                log::info!(
+                                    "Streaming server ready on http://{}",
+                                    started.address
+                                );
+                                let mut running_server = Box::pin(started.server);
+                                tokio::select! {
+                                    result = &mut running_server => {
+                                        if let Err(error) = result {
+                                            let message = server::redact_sensitive(&error.to_string());
+                                            status_for_thread.mark_failed(stream_generation, message.clone());
+                                            log::error!("Streaming server stopped with an error: {}", message);
+                                        } else {
+                                            status_for_thread.mark_stopped(stream_generation);
+                                        }
+                                    }
+                                    _ = stream_shutdown_receiver => {
+                                        let graceful = actix_rt::time::timeout(
+                                            std::time::Duration::from_secs(5),
+                                            handle.stop(true),
+                                        ).await;
+                                        if graceful.is_err() {
+                                            log::warn!("Streaming server graceful shutdown exceeded five seconds; forcing stop");
+                                            handle.stop(false).await;
+                                        }
+                                        let _ = actix_rt::time::timeout(
+                                            std::time::Duration::from_secs(1),
+                                            &mut running_server,
+                                        ).await;
+                                        status_for_thread.mark_stopped(stream_generation);
+                                    }
+                                }
+                                control_for_thread.mark_finished(stream_generation);
                             }
-                            Err(e) => log::error!("Streaming server failed: {}", e),
+                            Err(error) => {
+                                let message = server::redact_sensitive(&error.to_string());
+                                status_for_thread.mark_failed(stream_generation, message.clone());
+                                log::error!("Streaming server failed to start: {}", message);
+                                control_for_thread.mark_finished(stream_generation);
+                            }
                         }
                     });
-                });
-            }
-            #[cfg(target_os = "android")]
-            {
-                log::info!("Streaming server disabled on Android (Actix runtime conflict avoidance).");
-            }
+                })
+                .map_err(|error| {
+                    let message = server::redact_sensitive(&error.to_string());
+                    stream_config_for_setup.mark_failed(stream_generation, message.clone());
+                    log::error!("Failed to create streaming server thread: {}", message);
+                    error
+                })?;
+            server_control_for_setup.install_worker(stream_generation, worker);
 
             // Start API server if enabled in settings
             restart_api_server(app.handle());
@@ -856,11 +1068,9 @@ pub fn run() {
             }
 
             // 2. Stop the Actix streaming server (graceful)
-            let server_arc = app_handle.state::<ActixServerHandle>().0.clone();
-            let server_handle = server_arc.lock().ok().and_then(|mut g| g.take());
-            if let Some(handle) = server_handle {
+            let server_control = app_handle.state::<ActixServerControl>();
+            if server_control.shutdown() {
                 log::info!("Stopping Actix streaming server...");
-                drop(handle.stop(true));
             }
 
             // 3. Stop the API server (graceful)
@@ -868,7 +1078,11 @@ pub fn run() {
             let api_handle = api_arc.lock().ok().and_then(|mut g| g.take());
             if let Some(handle) = api_handle {
                 log::info!("Stopping API server...");
-                drop(handle.stop(true));
+                tauri::async_runtime::spawn(async move {
+                    let _ =
+                        tokio::time::timeout(std::time::Duration::from_secs(5), handle.stop(true))
+                            .await;
+                });
             }
 
             // 4. Stop local SOCKS5 proxy bridge (if running)

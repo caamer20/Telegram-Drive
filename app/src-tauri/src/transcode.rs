@@ -24,6 +24,7 @@ use tokio::sync::Mutex;
 use crate::commands::TelegramState;
 use crate::mp4_utils;
 use grammers_client::types::Media;
+#[cfg(not(target_os = "android"))]
 use tauri::Manager;
 
 // ── Constants ───────────────────────────────────────────────────────────
@@ -424,6 +425,13 @@ impl TranscodeManager {
 // ── FFmpeg Detection ────────────────────────────────────────────────────
 
 /// Detect FFmpeg availability. Tries sidecar first, then PATH.
+#[cfg(target_os = "android")]
+pub async fn detect_ffmpeg(_app_handle: &tauri::AppHandle) -> Option<PathBuf> {
+    log::info!("Transcode: FFmpeg is not bundled for Android; native direct play only");
+    None
+}
+
+#[cfg(not(target_os = "android"))]
 pub async fn detect_ffmpeg(app_handle: &tauri::AppHandle) -> Option<PathBuf> {
     // 1. Try sidecar binary in the app's resource directory
     if let Ok(resource_dir) = app_handle.path().resource_dir() {
@@ -469,6 +477,7 @@ pub async fn detect_ffmpeg(app_handle: &tauri::AppHandle) -> Option<PathBuf> {
     }
 }
 
+#[cfg(not(target_os = "android"))]
 async fn test_ffmpeg(path: &Path) -> Result<bool, String> {
     let output = tokio::process::Command::new(path)
         .arg("-version")
@@ -915,13 +924,17 @@ pub async fn execute_transcode_pipeline(
 // ── Tauri Commands ──────────────────────────────────────────────────────
 
 #[tauri::command]
+#[cfg_attr(target_os = "android", allow(unused_variables))]
 pub async fn cmd_get_transcode_capabilities(
-    manager: tauri::State<'_, TranscodeManager>,
+    manager: tauri::State<'_, Arc<TranscodeManager>>,
     app_handle: tauri::AppHandle,
 ) -> Result<TranscodeCapabilities, String> {
     // Lazy detection: if FFmpeg hasn't been detected yet, try now.
     // This fixes the race where the background detection hasn't completed
     // by the time the UI first asks for capabilities.
+    #[cfg(target_os = "android")]
+    let ffmpeg_available = false;
+    #[cfg(not(target_os = "android"))]
     let ffmpeg_available = {
         let path_guard = manager.ffmpeg_path.lock().await;
         if path_guard.is_some() {
@@ -964,8 +977,11 @@ pub async fn cmd_prepare_transcoded_stream(
     folder_id: Option<i64>,
     quality: String,
     state: tauri::State<'_, TelegramState>,
-    manager: tauri::State<'_, TranscodeManager>,
+    manager: tauri::State<'_, Arc<TranscodeManager>>,
 ) -> Result<TranscodePrepareResult, String> {
+    if cfg!(target_os = "android") {
+        return Err("Video transcoding is unavailable on Android; use native direct play".into());
+    }
     let folder_id = folder_id.unwrap_or(0);
     let key = TranscodeKey {
         folder_id,
@@ -1182,7 +1198,7 @@ async fn get_duration_from_media(
 #[tauri::command]
 pub async fn cmd_get_transcode_status(
     job_id: String,
-    manager: tauri::State<'_, TranscodeManager>,
+    manager: tauri::State<'_, Arc<TranscodeManager>>,
 ) -> Result<TranscodeStatusResult, String> {
     let jobs = manager.jobs.lock().await;
     let job_arc = jobs
@@ -1220,7 +1236,7 @@ pub async fn cmd_get_transcode_status(
 #[tauri::command]
 pub async fn cmd_cancel_transcode(
     job_id: String,
-    manager: tauri::State<'_, TranscodeManager>,
+    manager: tauri::State<'_, Arc<TranscodeManager>>,
 ) -> Result<(), String> {
     let jobs = manager.jobs.lock().await;
     let job_arc = jobs
@@ -1246,7 +1262,7 @@ pub struct TranscodeCacheInfo {
 }
 #[tauri::command]
 pub async fn cmd_get_transcode_cache_info(
-    manager: tauri::State<'_, TranscodeManager>,
+    manager: tauri::State<'_, Arc<TranscodeManager>>,
 ) -> Result<TranscodeCacheInfo, String> {
     let current = manager.total_cache_size();
     let max = manager.get_max_cache_bytes().await;
@@ -1260,7 +1276,7 @@ pub async fn cmd_get_transcode_cache_info(
 #[tauri::command]
 pub async fn cmd_set_transcode_cache_limit(
     max_gb: u32,
-    manager: tauri::State<'_, TranscodeManager>,
+    manager: tauri::State<'_, Arc<TranscodeManager>>,
 ) -> Result<(), String> {
     let gb = std::cmp::max(1, std::cmp::min(50, max_gb));
     let max_bytes = (gb as u64) * 1024 * 1024 * 1024;
@@ -1285,7 +1301,7 @@ pub struct CachedVariantInfo {
 pub async fn cmd_get_cached_variants(
     message_id: i32,
     folder_id: Option<i64>,
-    manager: tauri::State<'_, TranscodeManager>,
+    manager: tauri::State<'_, Arc<TranscodeManager>>,
 ) -> Result<Vec<CachedVariantInfo>, String> {
     let folder_id = folder_id.unwrap_or(0);
     let file_key = format!("{}_{}", folder_id, message_id);
@@ -1323,7 +1339,7 @@ pub struct DetailedCacheInfo {
 
 #[tauri::command]
 pub async fn cmd_get_detailed_transcode_cache(
-    manager: tauri::State<'_, TranscodeManager>,
+    manager: tauri::State<'_, Arc<TranscodeManager>>,
 ) -> Result<DetailedCacheInfo, String> {
     let mut entries: Vec<CacheEntry> = Vec::new();
     let hls_root = manager.cache_root.join(HLS_DIR);
@@ -1409,7 +1425,7 @@ pub async fn cmd_get_detailed_transcode_cache(
 pub async fn cmd_clear_transcode_cache(
     file_key: Option<String>,
     quality: Option<String>,
-    manager: tauri::State<'_, TranscodeManager>,
+    manager: tauri::State<'_, Arc<TranscodeManager>>,
 ) -> Result<String, String> {
     match (file_key, quality) {
         // Clear everything
@@ -1494,7 +1510,7 @@ pub async fn cmd_clear_transcode_cache(
 pub async fn cmd_get_master_playlist_info(
     message_id: i32,
     folder_id: Option<i64>,
-    manager: tauri::State<'_, TranscodeManager>,
+    manager: tauri::State<'_, Arc<TranscodeManager>>,
 ) -> Result<MasterPlaylistInfo, String> {
     let folder_id = folder_id.unwrap_or(0);
     let file_key = format!("{}_{}", folder_id, message_id);

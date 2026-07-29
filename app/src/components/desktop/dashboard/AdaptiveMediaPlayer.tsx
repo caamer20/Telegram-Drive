@@ -7,6 +7,7 @@ import Hls from 'hls.js';
 import { TelegramFile, StreamingQuality, TranscodePrepareResult, TranscodeJobPhase, TranscodeCapabilities, QUALITY_LABELS, HLS_QUALITIES } from '../../../types';
 import { useAdaptiveStreaming } from '../../../hooks/useAdaptiveStreaming';
 import { QualitySelector } from '../../shared/QualitySelector';
+import { redactSensitiveText, redactSensitiveValue } from '../../../security/redaction';
 
 interface AdaptiveMediaPlayerProps {
     file: TelegramFile;
@@ -160,8 +161,9 @@ export function AdaptiveMediaPlayer({
                     fmp4RemuxingRef.current = false;
                     return;
                 }
-                logRef.current?.('fMP4 remux failed:', String(e));
-                setFmp4RemuxError(String(e));
+                const safeError = redactSensitiveText(String(e));
+                logRef.current?.('fMP4 remux failed:', safeError);
+                setFmp4RemuxError(safeError);
                 setFmp4Remuxing(false);
                 fmp4RemuxingRef.current = false;
                 // The hook will fall back to native video since we
@@ -224,7 +226,7 @@ export function AdaptiveMediaPlayer({
 
     // ── Logging helpers ─────────────────────────────────────────────
     const log = useCallback((msg: string, ...args: unknown[]) => {
-        console.log(`[AdaptivePlayer] ${msg}`, ...args);
+        console.log(`[AdaptivePlayer] ${msg}`, ...args.map(arg => redactSensitiveValue(arg)));
     }, []);
     // Wire late-bound refs for the progressive handler
     logRef.current = log;
@@ -512,9 +514,10 @@ export function AdaptiveMediaPlayer({
                 pollTranscodeStatus(result.job_id, quality);
             }
         } catch (e: any) {
-            log('startTranscode error', String(e));
+            const safeError = redactSensitiveText(String(e));
+            log('startTranscode error', safeError);
             setHlsPhase('failed');
-            setHlsError(String(e));
+            setHlsError(safeError);
             setHlsVariantStates(prev => ({ ...prev, [quality]: 'failed' }));
         }
     }, [file.id, activeFolderId, mseVideoRef, pollTranscodeStatus, abortMse, log]);
@@ -658,7 +661,7 @@ export function AdaptiveMediaPlayer({
                 console.log('[AdaptivePlayer] HLS metadata', {
                     width: v.videoWidth,
                     height: v.videoHeight,
-                    src: v.currentSrc,
+                    hasSource: Boolean(v.currentSrc),
                 });
                 // Capture source resolution for the badge
                 if (v.videoWidth > 0 && v.videoHeight > 0) {
@@ -704,9 +707,10 @@ export function AdaptiveMediaPlayer({
 
             hls.on(Hls.Events.ERROR, (_event, data) => {
                 if (data.fatal) {
-                    log('HLS fatal error', data.type, data.details);
-                    console.error('[HLS] Fatal error:', data.type, data.details);
-                    setHlsError(`HLS playback error: ${data.details}`);
+                    const safeDetails = redactSensitiveText(String(data.details));
+                    log('HLS fatal error', data.type, safeDetails);
+                    console.error('[HLS] Fatal error:', data.type, safeDetails);
+                    setHlsError(`HLS playback error: ${safeDetails}`);
                     setHlsPhase('failed');
                     hls.destroy();
                     hlsRef.current = null;

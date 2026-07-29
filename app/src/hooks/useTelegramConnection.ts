@@ -7,7 +7,7 @@ import { useConfirm } from '../context/ConfirmContext';
 import { TelegramFolder, FolderInviteInfo, FolderGroup } from '../types';
 import { useNetworkStatus } from './useNetworkStatus';
 
-export function useTelegramConnection(onLogoutParent: () => void) {
+export function useTelegramConnection(onLogoutParent: () => void | Promise<void>) {
     const queryClient = useQueryClient();
     const { confirm } = useConfirm();
 
@@ -116,11 +116,10 @@ export function useTelegramConnection(onLogoutParent: () => void) {
                 await store.delete('folders');
                 await store.save();
             }
-            onLogoutParent();
         } catch {
             toast.error("Error signing out");
-            onLogoutParent();
         }
+        await onLogoutParent();
     };
 
     const handleSyncFolders = async (silentParam?: boolean | unknown) => {

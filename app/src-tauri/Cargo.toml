@@ -38,6 +38,7 @@ log = "0.4"
 env_logger = "0.11"
 tauri-plugin-log = "2"
 tauri-plugin-updater = "2"
+tauri-plugin-native-player = { path = "plugins/native-player" }
 
 actix-web = "4"
 actix-cors = "0.7"
@@ -54,15 +55,16 @@ rand = "0.9"
 sha2 = "0.10"
 bcrypt = "0.16"
 constant_time_eq = "0.3"
+regex = "1"
+url = "2"
 zip = { version = "2", default-features = false, features = ["deflate"] }
-unrar = "0.5"
 sevenz-rust2 = "0.7"
 path-clean = "1"
 walkdir = "2"
 sqlite = { version = "0.37.0", features = ["bundled"] }
 mp4parse = "0.17"
 urlencoding = "2"
-reqwest = { version = "0.12", features = ["stream", "rustls-tls", "socks", "json"] }
+reqwest = { version = "0.12", default-features = false, features = ["stream", "rustls-tls", "socks", "json"] }
 sysinfo = "0.30"
 tokio-rustls = "0.26"
 rustls = "0.23"
@@ -72,6 +74,9 @@ tokio-util = "0.7.19"
 [target.'cfg(target_os = "android")'.dependencies]
 jni = "0.21"
 ndk-context = "0.1.1"
+
+[target.'cfg(not(target_os = "android"))'.dependencies]
+unrar = "0.5"
 
 [package.metadata.tauri.bundle.windows]
 # Embed the WebView2 bootstrapper so the app works on Windows systems
@@ -84,4 +89,3 @@ wiremock = "0.6"
 [features]
 default = []
 grammers_explicit_random_id = []
-
