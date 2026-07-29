@@ -1,3 +1,4 @@
+use crate::commands::streaming::StreamConfig;
 use crate::db::DbConnection;
 use rand::Rng;
 use serde::Serialize;
@@ -35,6 +36,7 @@ pub async fn cmd_create_share(
     password: Option<String>,
     expiry_hours: Option<i64>,
     db_pool: State<'_, DbConnection>,
+    stream_config: State<'_, StreamConfig>,
 ) -> Result<ShareInfo, String> {
     let token = generate_share_token();
     let created_at = chrono::Utc::now().timestamp();
@@ -75,7 +77,7 @@ pub async fn cmd_create_share(
 
     stmt.next().map_err(|e| e.to_string())?;
 
-    let link = format!("http://127.0.0.1:{}/d/{}", crate::STREAM_PORT, token);
+    let link = format!("{}/d/{}", stream_config.trusted_session()?.base_url, token);
 
     Ok(ShareInfo {
         id: token,
@@ -89,7 +91,11 @@ pub async fn cmd_create_share(
 }
 
 #[tauri::command]
-pub async fn cmd_list_shares(db_pool: State<'_, DbConnection>) -> Result<Vec<ShareInfo>, String> {
+pub async fn cmd_list_shares(
+    db_pool: State<'_, DbConnection>,
+    stream_config: State<'_, StreamConfig>,
+) -> Result<Vec<ShareInfo>, String> {
+    let base_url = stream_config.trusted_session()?.base_url;
     let conn = db_pool.lock().map_err(|e| e.to_string())?;
     let mut stmt = conn
         .prepare(
@@ -116,7 +122,7 @@ pub async fn cmd_list_shares(db_pool: State<'_, DbConnection>) -> Result<Vec<Sha
         let created_at = stmt
             .read::<i64, _>("created_at")
             .map_err(|e| e.to_string())?;
-        let link = format!("http://127.0.0.1:{}/d/{}", crate::STREAM_PORT, id);
+        let link = format!("{}/d/{}", base_url, id);
 
         shares.push(ShareInfo {
             id,

@@ -7,6 +7,7 @@ import Hls from 'hls.js';
 import { TelegramFile, StreamingQuality, TranscodePrepareResult, TranscodeJobPhase, TranscodeCapabilities, QUALITY_LABELS, HLS_QUALITIES } from '../../../types';
 import { useAdaptiveStreaming } from '../../../hooks/useAdaptiveStreaming';
 import { QualitySelector } from '../../shared/QualitySelector';
+import { redactSensitiveValue } from '../../../security/redaction';
 
 interface AdaptiveMediaPlayerProps {
     file: TelegramFile;
@@ -224,7 +225,7 @@ export function AdaptiveMediaPlayer({
 
     // ── Logging helpers ─────────────────────────────────────────────
     const log = useCallback((msg: string, ...args: unknown[]) => {
-        console.log(`[AdaptivePlayer] ${msg}`, ...args);
+        console.log(`[AdaptivePlayer] ${msg}`, ...args.map(arg => redactSensitiveValue(arg)));
     }, []);
     // Wire late-bound refs for the progressive handler
     logRef.current = log;

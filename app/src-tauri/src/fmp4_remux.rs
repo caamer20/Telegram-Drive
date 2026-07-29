@@ -217,6 +217,9 @@ pub async fn cmd_prepare_fmp4_stream(
     manager: tauri::State<'_, Arc<TranscodeManager>>,
     remux_state: tauri::State<'_, Fmp4RemuxState>,
 ) -> Result<Fmp4StreamInfo, String> {
+    if cfg!(target_os = "android") {
+        return Err("fMP4 remux is unavailable on Android; use native direct play".into());
+    }
     let folder_id = folder_id.unwrap_or(0);
     let file_key = format!("{}_{}", folder_id, message_id);
     let url = format!("/fmp4/{}/output.mp4", file_key);
@@ -423,6 +426,9 @@ pub async fn cmd_get_fmp4_status(
     manager: tauri::State<'_, Arc<TranscodeManager>>,
     remux_state: tauri::State<'_, Fmp4RemuxState>,
 ) -> Result<Fmp4StatusResult, String> {
+    if cfg!(target_os = "android") {
+        return Err("fMP4 remux is unavailable on Android; use native direct play".into());
+    }
     // Check if output file already exists (ready)
     let output_path = manager
         .cache_root

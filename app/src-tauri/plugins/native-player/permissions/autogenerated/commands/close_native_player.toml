@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-close-native-player"
+description = "Enables the close_native_player command without any pre-configured scope."
+commands.allow = ["close_native_player"]
+
+[[permission]]
+identifier = "deny-close-native-player"
+description = "Denies the close_native_player command without any pre-configured scope."
+commands.deny = ["close_native_player"]

@@ -5,8 +5,11 @@ use actix_cors::Cors;
 use actix_web::{get, web, App, HttpResponse, HttpServer, Responder};
 use grammers_client::types::Media;
 
-use std::net::TcpListener;
+use std::net::{Ipv4Addr, SocketAddrV4, TcpListener};
 use std::sync::Arc;
+
+pub const TELEGRAM_CHUNK_SIZE: i32 = 65_536;
+pub const TELEGRAM_CDN_ALIGNMENT: u64 = 512 * 1024;
 
 /// Ad banner HTML matching the working cameronamer.com/ad-banner.html structure.
 /// Served from the streaming server so the iframe gets a real http://127.0.0.1 origin.
@@ -58,27 +61,205 @@ struct StreamQuery {
     token: Option<String>,
 }
 
-pub fn parse_range_header(header_val: &str, total_size: u64) -> Option<(u64, u64)> {
-    if !header_val.starts_with("bytes=") {
-        return None;
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ByteRange {
+    pub start: u64,
+    pub end: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RangeError {
+    Invalid,
+    Multiple,
+    Unsatisfiable,
+}
+
+pub fn parse_range_header(header_val: &str, total_size: u64) -> Result<ByteRange, RangeError> {
+    if total_size == 0 {
+        return Err(RangeError::Unsatisfiable);
     }
-    let s = &header_val["bytes=".len()..];
-    let parts: Vec<&str> = s.split('-').collect();
-    if parts.is_empty() {
-        return None;
+    let value = header_val
+        .strip_prefix("bytes=")
+        .ok_or(RangeError::Invalid)?
+        .trim();
+    if value.contains(',') {
+        return Err(RangeError::Multiple);
     }
-    let start = parts[0].trim().parse::<u64>().ok()?;
-    let end = if parts.len() > 1 && !parts[1].trim().is_empty() {
-        let parsed_end = parts[1].trim().parse::<u64>().ok()?;
-        std::cmp::min(parsed_end, total_size - 1)
-    } else {
+    let (start_text, end_text) = value.split_once('-').ok_or(RangeError::Invalid)?;
+    if end_text.contains('-') {
+        return Err(RangeError::Invalid);
+    }
+
+    if start_text.trim().is_empty() {
+        let suffix = end_text
+            .trim()
+            .parse::<u64>()
+            .map_err(|_| RangeError::Invalid)?;
+        if suffix == 0 {
+            return Err(RangeError::Unsatisfiable);
+        }
+        let length = suffix.min(total_size);
+        return Ok(ByteRange {
+            start: total_size - length,
+            end: total_size - 1,
+        });
+    }
+
+    let start = start_text
+        .trim()
+        .parse::<u64>()
+        .map_err(|_| RangeError::Invalid)?;
+    if start >= total_size {
+        return Err(RangeError::Unsatisfiable);
+    }
+    let end = if end_text.trim().is_empty() {
         total_size - 1
-    };
-    if start <= end {
-        Some((start, end))
     } else {
-        None
+        end_text
+            .trim()
+            .parse::<u64>()
+            .map_err(|_| RangeError::Invalid)?
+            .min(total_size - 1)
+    };
+    if start > end {
+        return Err(RangeError::Unsatisfiable);
     }
+    Ok(ByteRange { start, end })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct MediaResponsePlan {
+    status: actix_web::http::StatusCode,
+    range: Option<ByteRange>,
+    content_length: u64,
+}
+
+fn response_plan(
+    range_header: Option<&str>,
+    total_size: u64,
+) -> Result<MediaResponsePlan, RangeError> {
+    match range_header {
+        Some(value) => {
+            let range = parse_range_header(value, total_size)?;
+            Ok(MediaResponsePlan {
+                status: actix_web::http::StatusCode::PARTIAL_CONTENT,
+                range: Some(range),
+                content_length: range.end - range.start + 1,
+            })
+        }
+        None => Ok(MediaResponsePlan {
+            status: actix_web::http::StatusCode::OK,
+            range: None,
+            content_length: total_size,
+        }),
+    }
+}
+
+fn range_not_satisfiable_response(total_size: u64) -> HttpResponse {
+    HttpResponse::RangeNotSatisfiable()
+        .insert_header(("Content-Range", format!("bytes */{}", total_size)))
+        .insert_header(("Accept-Ranges", "bytes"))
+        .finish()
+}
+
+fn media_response_builder(
+    plan: MediaResponsePlan,
+    total_size: u64,
+    mime: &str,
+) -> actix_web::HttpResponseBuilder {
+    let mut response = HttpResponse::build(plan.status);
+    if let Some(range) = plan.range {
+        response.insert_header((
+            "Content-Range",
+            format!("bytes {}-{}/{}", range.start, range.end, total_size),
+        ));
+    }
+    response.insert_header(("Content-Length", plan.content_length.to_string()));
+    response.insert_header(("Content-Type", mime.to_owned()));
+    response.insert_header(("Accept-Ranges", "bytes"));
+    response
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DownloadAlignment {
+    pub aligned_start: u64,
+    pub chunk_index: i32,
+    pub leading_bytes: usize,
+}
+
+pub fn calculate_download_alignment(start: u64) -> DownloadAlignment {
+    let aligned_start = (start / TELEGRAM_CDN_ALIGNMENT) * TELEGRAM_CDN_ALIGNMENT;
+    DownloadAlignment {
+        aligned_start,
+        chunk_index: (aligned_start / TELEGRAM_CHUNK_SIZE as u64) as i32,
+        leading_bytes: (start - aligned_start) as usize,
+    }
+}
+
+fn slice_after_leading_skip<'a>(
+    data: &'a [u8],
+    skipped: &mut usize,
+    bytes_to_skip: usize,
+) -> &'a [u8] {
+    if *skipped >= bytes_to_skip {
+        return data;
+    }
+    let take = (bytes_to_skip - *skipped).min(data.len());
+    *skipped += take;
+    &data[take..]
+}
+
+fn token_matches(candidate: &str, expected: &str) -> bool {
+    candidate.len() == expected.len()
+        && constant_time_eq::constant_time_eq(candidate.as_bytes(), expected.as_bytes())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AuthenticationResult {
+    Authorized,
+    Missing,
+    Invalid,
+}
+
+fn authenticate_stream_request(
+    req: &actix_web::HttpRequest,
+    query_token: Option<&str>,
+    expected: &str,
+) -> AuthenticationResult {
+    let bearer = req
+        .headers()
+        .get(actix_web::http::header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "));
+    if let Some(candidate) = bearer {
+        return if token_matches(candidate, expected) {
+            AuthenticationResult::Authorized
+        } else {
+            AuthenticationResult::Invalid
+        };
+    }
+    match query_token {
+        Some(candidate) if token_matches(candidate, expected) => AuthenticationResult::Authorized,
+        Some(_) => AuthenticationResult::Invalid,
+        None => AuthenticationResult::Missing,
+    }
+}
+
+pub fn redact_sensitive(input: &str) -> String {
+    let mut output = input.to_string();
+    for marker in ["token=", "Bearer "] {
+        let mut search_from = 0;
+        while let Some(relative) = output[search_from..].find(marker) {
+            let value_start = search_from + relative + marker.len();
+            let value_end = output[value_start..]
+                .find(|c: char| c == '&' || c.is_whitespace() || c == '\"' || c == '\'')
+                .map(|offset| value_start + offset)
+                .unwrap_or(output.len());
+            output.replace_range(value_start..value_end, "[REDACTED]");
+            search_from = value_start + "[REDACTED]".len();
+        }
+    }
+    output
 }
 
 /// Extra headers to inject into streaming responses (e.g. Cache-Control, Content-Disposition).
@@ -103,28 +284,40 @@ pub fn build_media_response(
         _ => 0,
     };
 
-    // Parse Range header
-    let mut start_byte = 0u64;
-    let mut end_byte = if size > 0 { size - 1 } else { 0 };
-    let mut is_range = false;
-
-    if size > 0 {
-        if let Some(range_header) = req.headers().get(actix_web::http::header::RANGE) {
-            if let Ok(range_str) = range_header.to_str() {
-                if let Some((start, end)) = parse_range_header(range_str, size) {
-                    start_byte = start;
-                    end_byte = end;
-                    is_range = true;
-                }
+    let range_header = match req.headers().get(actix_web::http::header::RANGE) {
+        Some(value) => match value.to_str() {
+            Ok(value) => Some(value),
+            Err(_) => {
+                return range_not_satisfiable_response(size);
             }
+        },
+        None => None,
+    };
+    let plan = match response_plan(range_header, size) {
+        Ok(plan) => plan,
+        Err(_) => {
+            return range_not_satisfiable_response(size);
         }
+    };
+    let start_byte = plan.range.map_or(0, |range| range.start);
+    let content_length = plan.content_length;
+
+    let mut resp = media_response_builder(plan, size, mime);
+
+    if let Some(fname) = filename {
+        resp.insert_header((
+            "Content-Disposition",
+            format!("attachment; filename=\"{}\"", fname),
+        ));
+    }
+    for (key, val) in &extras.extra_headers {
+        resp.insert_header((*key, val.clone()));
     }
 
-    let content_length = if is_range {
-        end_byte - start_byte + 1
-    } else {
-        size
-    };
+    // HEAD must return the exact GET metadata without constructing a Telegram iterator.
+    if req.method() == actix_web::http::Method::HEAD {
+        return resp.finish();
+    }
 
     // Chunk alignment for Telegram's upload.getFile offset requirement.
     //
@@ -145,42 +338,31 @@ pub fn build_media_response(
     let mut bytes_to_skip: usize = 0;
 
     if start_byte > 0 {
-        /// MTProto chunk size (must be divisible by grammers' MIN_CHUNK_SIZE).
-        /// 65536 is safe — it is the default and widely tested.
-        const CHUNK_SIZE: i32 = 65536;
-        /// Telegram CDN alignment boundary. 512 KB is the largest observed
-        /// CDN chunk size; aligning to this boundary prevents ANY rounding.
-        const CDN_ALIGNMENT: u64 = 524288; // 512 KB
-
-        // 1) Round the requested start down to a CDN-safe boundary.
-        let cdn_aligned_start = (start_byte / CDN_ALIGNMENT) * CDN_ALIGNMENT;
-
-        // 2) Compute how many 64 KB chunks to skip to reach that boundary.
-        let chunk_index = (cdn_aligned_start / CHUNK_SIZE as u64) as i32;
+        let alignment = calculate_download_alignment(start_byte);
 
         // Always set chunk size for predictable download behaviour.
-        download_iter = download_iter.chunk_size(CHUNK_SIZE);
-        if chunk_index > 0 {
-            download_iter = download_iter.skip_chunks(chunk_index);
+        download_iter = download_iter.chunk_size(TELEGRAM_CHUNK_SIZE);
+        if alignment.chunk_index > 0 {
+            download_iter = download_iter.skip_chunks(alignment.chunk_index);
         }
 
         // 3) Leading bytes between the CDN-aligned offset and the client's
         //    actual requested start must be discarded.
-        bytes_to_skip = (start_byte - cdn_aligned_start) as usize;
+        bytes_to_skip = alignment.leading_bytes;
 
         // Safety: cdn_aligned_start ≤ start_byte by construction.
         debug_assert!(
-            cdn_aligned_start <= start_byte,
+            alignment.aligned_start <= start_byte,
             "CDN alignment invariant violated: aligned {} > requested {}",
-            cdn_aligned_start,
+            alignment.aligned_start,
             start_byte
         );
 
         log::debug!(
             "Range alignment: requested={}, cdn_aligned={}, chunk_index={}, bytes_to_skip={}",
             start_byte,
-            cdn_aligned_start,
-            chunk_index,
+            alignment.aligned_start,
+            alignment.chunk_index,
             bytes_to_skip,
         );
     }
@@ -193,29 +375,21 @@ pub fn build_media_response(
         while let Some(chunk) = download_iter.next().await.transpose() {
             match chunk {
                 Ok(data) => {
-                    let mut data_slice = data;
-
-                    if skipped < bytes_to_skip {
-                        let to_skip = bytes_to_skip - skipped;
-                        if data_slice.len() <= to_skip {
-                            skipped += data_slice.len();
-                            continue;
-                        } else {
-                            data_slice = data_slice[to_skip..].to_vec();
-                            skipped = bytes_to_skip;
-                        }
+                    let data_slice = slice_after_leading_skip(&data, &mut skipped, bytes_to_skip);
+                    if data_slice.is_empty() {
+                        continue;
                     }
 
                     if total_yielded + data_slice.len() as u64 > content_length {
                         let allowed = (content_length - total_yielded) as usize;
                         if allowed > 0 {
-                            yield Ok::<_, actix_web::Error>(web::Bytes::from(data_slice[..allowed].to_vec()));
+                            yield Ok::<_, actix_web::Error>(web::Bytes::copy_from_slice(&data_slice[..allowed]));
                             total_yielded += allowed as u64;
                         }
                         break;
                     } else {
                         let len = data_slice.len() as u64;
-                        yield Ok::<_, actix_web::Error>(web::Bytes::from(data_slice));
+                        yield Ok::<_, actix_web::Error>(web::Bytes::copy_from_slice(data_slice));
                         total_yielded += len;
                         if total_yielded >= content_length {
                             break;
@@ -231,34 +405,6 @@ pub fn build_media_response(
         log::debug!("{} stream completed (yielded: {})", label, total_yielded);
     };
 
-    let mut resp = if is_range {
-        let mut r = HttpResponse::PartialContent();
-        r.insert_header((
-            "Content-Range",
-            format!("bytes {}-{}/{}", start_byte, end_byte, size),
-        ));
-        r.insert_header(("Content-Length", content_length.to_string()));
-        r
-    } else {
-        let mut r = HttpResponse::Ok();
-        r.insert_header(("Content-Length", size.to_string()));
-        r
-    };
-
-    resp.insert_header(("Content-Type", mime.to_owned()));
-    resp.insert_header(("Accept-Ranges", "bytes"));
-
-    if let Some(fname) = filename {
-        resp.insert_header((
-            "Content-Disposition",
-            format!("attachment; filename=\"{}\"", fname),
-        ));
-    }
-
-    for (key, val) in &extras.extra_headers {
-        resp.insert_header((*key, val.clone()));
-    }
-
     resp.streaming(stream)
 }
 
@@ -272,7 +418,11 @@ async fn ad_banner() -> impl Responder {
         .body(AD_BANNER_HTML)
 }
 
-#[get("/stream/{folder_id}/{message_id}")]
+#[get("/health")]
+async fn health() -> impl Responder {
+    HttpResponse::Ok().json(serde_json::json!({ "status": "ready" }))
+}
+
 async fn stream_media(
     req: actix_web::HttpRequest,
     path: web::Path<(String, i32)>,
@@ -282,20 +432,23 @@ async fn stream_media(
 ) -> impl Responder {
     let (folder_id_str, message_id) = path.into_inner();
 
-    // Validate session token
-    match &query.token {
-        Some(t) if t == &token_data.token => {
-            log::debug!(
-                "Stream request: Token validated successfully for msg {}",
+    match authenticate_stream_request(&req, query.token.as_deref(), &token_data.token) {
+        AuthenticationResult::Authorized => {}
+        AuthenticationResult::Missing => {
+            log::warn!(
+                "Stream request rejected: missing credentials for msg {}",
                 message_id
             );
+            return HttpResponse::Unauthorized()
+                .insert_header(("WWW-Authenticate", "Bearer"))
+                .body("Missing stream credentials");
         }
-        _ => {
-            log::error!(
-                "Stream request failed: Invalid or missing stream token for msg {}",
+        AuthenticationResult::Invalid => {
+            log::warn!(
+                "Stream request rejected: invalid credentials for msg {}",
                 message_id
             );
-            return HttpResponse::Forbidden().body("Invalid or missing stream token");
+            return HttpResponse::Forbidden().body("Invalid stream credentials");
         }
     }
 
@@ -411,46 +564,34 @@ fn mime_type_from_media(media: &Media) -> String {
     }
 }
 
-pub async fn start_server(
+pub struct StartedStreamingServer {
+    pub address: SocketAddrV4,
+    pub server: actix_web::dev::Server,
+}
+
+pub fn start_server(
     state: Arc<TelegramState>,
-    port: u16,
     token: String,
     db_pool: crate::db::DbConnection,
     transcode_manager: Arc<TranscodeManager>,
-) -> std::io::Result<actix_web::dev::Server> {
+) -> std::io::Result<StartedStreamingServer> {
     let state_data = web::Data::new(state);
     let token_data = web::Data::new(StreamTokenData { token });
     let db_data = web::Data::new(db_pool);
     let transcode_data = web::Data::new(transcode_manager);
 
-    log::info!("Starting Streaming Server on port {}", port);
-
-    // Bind the listener to 127.0.0.1 explicitly.
-    // The streaming server is only accessed from the local frontend — binding
-    // to 0.0.0.0 is unnecessary and can trigger firewall prompts on Windows.
-    // 127.0.0.1 is the most universally reliable loopback address across all
-    // platforms (Windows, macOS, Linux) and pairs correctly with the "localhost"
-    // hostname used by the client (localhost → 127.0.0.1 is the standard mapping).
-    let ipv4_addr = format!("127.0.0.1:{}", port);
-    let listener = match TcpListener::bind(&ipv4_addr) {
-        Ok(l) => {
-            log::info!("Streaming Server listening on {} (IPv4)", ipv4_addr);
-            l
-        }
-        Err(e) => {
-            log::warn!(
-                "IPv4 loopback bind failed ({}), falling back to IPv6 loopback",
-                e
-            );
-            let ipv6_addr = format!("[::1]:{}", port);
-            let l = TcpListener::bind(&ipv6_addr)?;
-            log::info!(
-                "Streaming Server listening on {} (IPv6 loopback)",
-                ipv6_addr
-            );
-            l
+    // Port zero delegates collision-free selection to the OS. There is no IPv6
+    // or external-interface fallback: the stream contains private Telegram data.
+    let listener = TcpListener::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0))?;
+    let address = match listener.local_addr()? {
+        std::net::SocketAddr::V4(address) => address,
+        std::net::SocketAddr::V6(_) => {
+            return Err(std::io::Error::other(
+                "stream listener was not IPv4 loopback",
+            ));
         }
     };
+    log::info!("Streaming server bound to http://{}", address);
 
     let server = HttpServer::new(move || {
         let cors = Cors::default()
@@ -475,15 +616,192 @@ pub async fn start_server(
             .app_data(db_data.clone())
             .app_data(transcode_data.clone())
             .service(ad_banner)
-            .service(stream_media)
+            .service(health)
+            .service(
+                web::resource("/stream/{folder_id}/{message_id}")
+                    .route(web::get().to(stream_media))
+                    .route(web::head().to(stream_media)),
+            )
             .configure(crate::share_routes::configure_share_routes)
             .configure(crate::transcode::configure_hls_routes)
             .configure(crate::fmp4_remux::configure_fmp4_routes)
     })
+    // A single worker keeps one controlled runtime on the dedicated server
+    // thread and avoids oversubscribing mobile devices.
+    .workers(1)
+    .disable_signals()
     .listen(listener)?
     .run();
 
-    log::info!("Streaming Server started successfully on port {}", port);
+    Ok(StartedStreamingServer { address, server })
+}
 
-    Ok(server)
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use actix_web::http::{header, Method, StatusCode};
+    use actix_web::test::TestRequest;
+
+    #[test]
+    fn parses_closed_open_and_suffix_ranges() {
+        assert_eq!(
+            parse_range_header("bytes=10-19", 100),
+            Ok(ByteRange { start: 10, end: 19 })
+        );
+        assert_eq!(
+            parse_range_header("bytes=10-", 100),
+            Ok(ByteRange { start: 10, end: 99 })
+        );
+        assert_eq!(
+            parse_range_header("bytes=-10", 100),
+            Ok(ByteRange { start: 90, end: 99 })
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_out_of_bounds_and_multiple_ranges() {
+        assert_eq!(
+            parse_range_header("items=0-2", 100),
+            Err(RangeError::Invalid)
+        );
+        assert_eq!(
+            parse_range_header("bytes=100-", 100),
+            Err(RangeError::Unsatisfiable)
+        );
+        assert_eq!(
+            parse_range_header("bytes=0-1,4-5", 100),
+            Err(RangeError::Multiple)
+        );
+    }
+
+    #[test]
+    fn response_plans_have_exact_lengths_and_statuses() {
+        let full = response_plan(None, 1_000).unwrap();
+        assert_eq!(full.status, StatusCode::OK);
+        assert_eq!(full.content_length, 1_000);
+        let partial = response_plan(Some("bytes=512-767"), 1_000).unwrap();
+        assert_eq!(partial.status, StatusCode::PARTIAL_CONTENT);
+        assert_eq!(partial.content_length, 256);
+        assert_eq!(
+            partial.range.unwrap(),
+            ByteRange {
+                start: 512,
+                end: 767
+            }
+        );
+    }
+
+    #[test]
+    fn range_not_satisfiable_metadata_uses_total_size() {
+        let size = 42;
+        assert_eq!(
+            parse_range_header("bytes=42-", size),
+            Err(RangeError::Unsatisfiable)
+        );
+        let response = range_not_satisfiable_response(size);
+        assert_eq!(response.status(), StatusCode::RANGE_NOT_SATISFIABLE);
+        assert_eq!(
+            response.headers().get(header::CONTENT_RANGE).unwrap(),
+            "bytes */42"
+        );
+        assert_eq!(
+            response.headers().get(header::ACCEPT_RANGES).unwrap(),
+            "bytes"
+        );
+    }
+
+    #[test]
+    fn full_and_partial_responses_have_exact_http_headers() {
+        let full = media_response_builder(response_plan(None, 1_000).unwrap(), 1_000, "video/mp4")
+            .finish();
+        assert_eq!(full.status(), StatusCode::OK);
+        assert_eq!(full.headers().get(header::CONTENT_LENGTH).unwrap(), "1000");
+        assert_eq!(
+            full.headers().get(header::CONTENT_TYPE).unwrap(),
+            "video/mp4"
+        );
+        assert_eq!(full.headers().get(header::ACCEPT_RANGES).unwrap(), "bytes");
+        assert!(!full.headers().contains_key(header::CONTENT_RANGE));
+
+        let partial = media_response_builder(
+            response_plan(Some("bytes=512-767"), 1_000).unwrap(),
+            1_000,
+            "video/x-matroska",
+        )
+        .finish();
+        assert_eq!(partial.status(), StatusCode::PARTIAL_CONTENT);
+        assert_eq!(
+            partial.headers().get(header::CONTENT_LENGTH).unwrap(),
+            "256"
+        );
+        assert_eq!(
+            partial.headers().get(header::CONTENT_RANGE).unwrap(),
+            "bytes 512-767/1000"
+        );
+        assert_eq!(
+            partial.headers().get(header::CONTENT_TYPE).unwrap(),
+            "video/x-matroska"
+        );
+    }
+
+    #[test]
+    fn computes_512_kib_alignment_and_leading_skip() {
+        let start = TELEGRAM_CDN_ALIGNMENT + 123_456;
+        let alignment = calculate_download_alignment(start);
+        assert_eq!(alignment.aligned_start, TELEGRAM_CDN_ALIGNMENT);
+        assert_eq!(alignment.chunk_index, 8);
+        assert_eq!(alignment.leading_bytes, 123_456);
+
+        let mut skipped = 0;
+        assert!(slice_after_leading_skip(&[1, 2], &mut skipped, 3).is_empty());
+        assert_eq!(
+            slice_after_leading_skip(&[3, 4, 5], &mut skipped, 3),
+            &[4, 5]
+        );
+    }
+
+    #[test]
+    fn authenticates_bearer_and_legacy_query_without_logging_tokens() {
+        let bearer = TestRequest::default()
+            .insert_header((header::AUTHORIZATION, "Bearer secret-token"))
+            .to_http_request();
+        assert_eq!(
+            authenticate_stream_request(&bearer, None, "secret-token"),
+            AuthenticationResult::Authorized
+        );
+        let legacy = TestRequest::default().to_http_request();
+        assert_eq!(
+            authenticate_stream_request(&legacy, Some("secret-token"), "secret-token"),
+            AuthenticationResult::Authorized
+        );
+        assert_eq!(
+            authenticate_stream_request(&legacy, None, "secret-token"),
+            AuthenticationResult::Missing
+        );
+        assert_eq!(
+            authenticate_stream_request(&legacy, Some("wrong"), "secret-token"),
+            AuthenticationResult::Invalid
+        );
+        let redacted = redact_sensitive(
+            "http://127.0.0.1:1/stream/1/2?token=secret-token Authorization: Bearer secret-token",
+        );
+        assert!(!redacted.contains("secret-token"));
+        assert_eq!(redacted.matches("[REDACTED]").count(), 2);
+    }
+
+    #[test]
+    fn head_is_identified_before_stream_construction() {
+        let request = TestRequest::default()
+            .method(Method::HEAD)
+            .to_http_request();
+        assert_eq!(request.method(), Method::HEAD);
+    }
+
+    #[test]
+    fn dynamic_port_binding_uses_ipv4_loopback() {
+        let listener = TcpListener::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let address = listener.local_addr().unwrap();
+        assert!(address.ip().is_loopback());
+        assert_ne!(address.port(), 0);
+    }
 }

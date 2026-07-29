@@ -66,11 +66,6 @@ pub mod share_routes;
 pub mod transcode;
 pub mod upload_service;
 
-/// Single source of truth for the Actix streaming server port.
-/// Referenced in lib.rs (server startup) and exposed to the frontend
-/// via cmd_get_stream_info so no component ever hardcodes the port.
-pub const STREAM_PORT: u16 = 14201;
-
 /// Generate a random 32-character hex token for streaming server auth
 fn generate_stream_token() -> String {
     let mut rng = rand::rng();
@@ -207,6 +202,7 @@ pub fn restart_api_server(_app: &tauri::AppHandle) {
 }
 
 #[tauri::command]
+#[cfg_attr(target_os = "android", allow(unused_variables))]
 fn cmd_open_file_externally(path: String, app_handle: tauri::AppHandle) -> Result<(), String> {
     #[cfg(target_os = "android")]
     {
@@ -464,6 +460,8 @@ fn cmd_get_system_diagnostics(app: tauri::AppHandle) -> Result<String, String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let stream_token = generate_stream_token();
+    let stream_config = StreamConfig::new(stream_token.clone());
+    let stream_config_for_setup = stream_config.clone();
 
     // Shared handle for stopping the Actix streaming server during shutdown
     let server_handle: Arc<std::sync::Mutex<Option<actix_web::dev::ServerHandle>>> =
@@ -491,7 +489,17 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_deep_link::init())
-        .plugin(tauri_plugin_clipboard_manager::init());
+        .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_native_player::init(|app, _source| {
+            let session = app
+                .state::<StreamConfig>()
+                .trusted_session()
+                .map_err(tauri_plugin_native_player::Error::StreamServer)?;
+            Ok(tauri_plugin_native_player::ResolvedStreamSource::direct(
+                session.base_url,
+                session.token,
+            ))
+        }));
 
     // The updater plugin is not supported on Android and can cause crashes
     // (APKs are managed by the Play Store; the plugin attempts restricted FS ops).
@@ -591,7 +599,7 @@ pub fn run() {
                 cancelled_transfers: Arc::new(tokio::sync::RwLock::new(HashSet::new())),
             });
             app.manage(Arc::new(bandwidth::BandwidthManager::new(app.handle())));
-            app.manage(StreamConfig { token: stream_token.clone(), port: STREAM_PORT });
+            app.manage(stream_config_for_setup.clone());
             app.manage(ActixServerHandle(server_handle_for_setup.clone()));
             app.manage(ApiServerHandle(Arc::new(std::sync::Mutex::new(None))));
             app.manage(ApiServerRunning(Arc::new(std::sync::atomic::AtomicBool::new(false))));
@@ -658,38 +666,59 @@ pub fn run() {
                 restored_ms_session,
             ));
 
-            // Start Streaming Server on dedicated thread (Actix needs its own runtime)
-            // Disabled on Android: actix_rt::System creates a second Tokio runtime that
-            // conflicts with Tauri's runtime and crashes the process on launch.
-            #[cfg(not(target_os = "android"))]
-            {
-                let state = Arc::new(app.state::<TelegramState>().inner().clone());
-                let token_for_server = stream_token.clone();
-                let handle_for_thread = server_handle_for_setup.clone();
-                let db_pool_for_server = db_pool.clone();
-                let transcode_for_server = transcode_arc.clone();
-                std::thread::spawn(move || {
+            // Actix owns one dedicated System on one named OS thread on every
+            // platform. It never constructs or blocks a runtime inside Tauri's
+            // Tokio executor, which avoids the former nested-runtime crash on Android.
+            let state = Arc::new(app.state::<TelegramState>().inner().clone());
+            let token_for_server = stream_token.clone();
+            let handle_for_thread = server_handle_for_setup.clone();
+            let status_for_thread = stream_config_for_setup.clone();
+            let db_pool_for_server = db_pool.clone();
+            let transcode_for_server = transcode_arc.clone();
+            std::thread::Builder::new()
+                .name("telegram-stream-server".to_string())
+                .spawn(move || {
                     #[cfg(target_os = "windows")]
                     init_com_on_worker_thread();
-                    let sys = actix_rt::System::new();
-                    sys.block_on(async move {
-                        match server::start_server(state, STREAM_PORT, token_for_server, db_pool_for_server, transcode_for_server).await {
-                            Ok(server) => {
+                    let system = actix_rt::System::new();
+                    system.block_on(async move {
+                        match server::start_server(
+                            state,
+                            token_for_server,
+                            db_pool_for_server,
+                            transcode_for_server,
+                        ) {
+                            Ok(started) => {
+                                status_for_thread.mark_ready(started.address);
                                 if let Ok(mut handle) = handle_for_thread.lock() {
-                                    *handle = Some(server.handle());
+                                    *handle = Some(started.server.handle());
                                 }
-                                // Now await the server — blocks until stopped
-                                server.await.ok();
+                                log::info!(
+                                    "Streaming server ready on http://{}",
+                                    started.address
+                                );
+                                if let Err(error) = started.server.await {
+                                    let message = server::redact_sensitive(&error.to_string());
+                                    status_for_thread.mark_failed(message.clone());
+                                    log::error!("Streaming server stopped with an error: {}", message);
+                                } else {
+                                    status_for_thread.mark_stopped();
+                                }
                             }
-                            Err(e) => log::error!("Streaming server failed: {}", e),
+                            Err(error) => {
+                                let message = server::redact_sensitive(&error.to_string());
+                                status_for_thread.mark_failed(message.clone());
+                                log::error!("Streaming server failed to start: {}", message);
+                            }
                         }
                     });
-                });
-            }
-            #[cfg(target_os = "android")]
-            {
-                log::info!("Streaming server disabled on Android (Actix runtime conflict avoidance).");
-            }
+                })
+                .map_err(|error| {
+                    let message = server::redact_sensitive(&error.to_string());
+                    stream_config_for_setup.mark_failed(message.clone());
+                    log::error!("Failed to create streaming server thread: {}", message);
+                    error
+                })?;
 
             // Start API server if enabled in settings
             restart_api_server(app.handle());
