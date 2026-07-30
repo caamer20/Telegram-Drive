@@ -9,6 +9,7 @@ import { toast } from 'sonner';
 import { BottomNavBar } from './BottomNavBar';
 import { TouchFileList } from './TouchFileList';
 import { ThemeToggle } from '../shared/ThemeToggle';
+import { MediaLibraryButton } from './MediaLibraryButton';
 import AdsterraBanner from '../shared/AdsterraBanner';
 import { ActionPopover, ActionItem } from './ActionPopover';
 import { ShareDialog } from '../desktop/dashboard/ShareDialog';
@@ -532,6 +533,7 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
         </div>
         <div className="flex items-center gap-2">
           <ThemeToggle />
+          <MediaLibraryButton isAndroid={isAndroid} />
           <button
             onClick={() => setIsSidebarOpen(true)}
             className="p-2 rounded-xl bg-telegram-hover/30 hover:bg-telegram-hover/60 border border-telegram-border/40 text-telegram-subtext transition-all duration-300"
