@@ -39,6 +39,7 @@ env_logger = "0.11"
 tauri-plugin-log = "2"
 tauri-plugin-updater = "2"
 tauri-plugin-native-player = { path = "plugins/native-player" }
+tauri-plugin-media-library = { path = "plugins/media-library" }
 
 actix-web = "4"
 actix-cors = "0.7"

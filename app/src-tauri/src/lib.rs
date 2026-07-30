@@ -59,6 +59,7 @@ pub mod api_routes;
 pub mod db;
 pub mod fmp4_remux;
 pub mod jni_cache;
+pub mod media_library_routes;
 pub mod migration;
 pub mod mp4_utils;
 pub mod server;
@@ -656,6 +657,18 @@ pub fn run() {
                 session.base_url,
                 session.token,
             ))
+        }))
+        .plugin(tauri_plugin_media_library::init(|app| {
+            let session = app
+                .state::<StreamConfig>()
+                .trusted_session()
+                .map_err(tauri_plugin_media_library::Error::LocalServer)?;
+            Ok(
+                tauri_plugin_media_library::ResolvedMediaLibrarySession::new(
+                    session.base_url,
+                    session.token,
+                ),
+            )
         }));
 
     // The updater plugin is not supported on Android and can cause crashes

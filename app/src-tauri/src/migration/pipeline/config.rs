@@ -32,7 +32,7 @@ impl Default for PipelineConfig {
         Self {
             planner_concurrency: 1,
             download_concurrency: 2,
-            processing_concurrency: 1,
+            processing_concurrency: 2,
             upload_concurrency: 1,
             local_finalizer_concurrency: 1,
 
@@ -50,5 +50,15 @@ impl Default for PipelineConfig {
 
             flood_wait_max_retries: 10,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_uses_two_video_processing_workers() {
+        assert_eq!(PipelineConfig::default().processing_concurrency, 2);
     }
 }

@@ -1,0 +1,462 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 1,
+    "identityHash": "27035babb5977da61c8e79269a26a194",
+    "entities": [
+      {
+        "tableName": "telegram_media",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`accountId` INTEGER NOT NULL, `peerId` INTEGER NOT NULL, `messageId` INTEGER NOT NULL, `folderId` INTEGER, `peerName` TEXT, `senderId` INTEGER, `displayName` TEXT NOT NULL, `originalFilename` TEXT, `normalizedName` TEXT NOT NULL, `normalizedSearchText` TEXT NOT NULL, `caption` TEXT, `mediaType` TEXT NOT NULL, `mimeType` TEXT, `extension` TEXT, `sizeBytes` INTEGER, `dateEpochSeconds` INTEGER NOT NULL, `durationSeconds` INTEGER, `width` INTEGER, `height` INTEGER, `thumbnailAvailable` INTEGER NOT NULL, `thumbnailVariant` TEXT, `thumbnailPath` TEXT, `thumbnailStatus` TEXT NOT NULL, `lastSyncedAtEpochSeconds` INTEGER NOT NULL, `deleted` INTEGER NOT NULL, PRIMARY KEY(`accountId`, `peerId`, `messageId`))",
+        "fields": [
+          {
+            "fieldPath": "accountId",
+            "columnName": "accountId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "peerId",
+            "columnName": "peerId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "messageId",
+            "columnName": "messageId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "folderId",
+            "columnName": "folderId",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "peerName",
+            "columnName": "peerName",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "senderId",
+            "columnName": "senderId",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "displayName",
+            "columnName": "displayName",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "originalFilename",
+            "columnName": "originalFilename",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "normalizedName",
+            "columnName": "normalizedName",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "normalizedSearchText",
+            "columnName": "normalizedSearchText",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "caption",
+            "columnName": "caption",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "mediaType",
+            "columnName": "mediaType",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "mimeType",
+            "columnName": "mimeType",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "extension",
+            "columnName": "extension",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "sizeBytes",
+            "columnName": "sizeBytes",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "dateEpochSeconds",
+            "columnName": "dateEpochSeconds",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "durationSeconds",
+            "columnName": "durationSeconds",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "width",
+            "columnName": "width",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "height",
+            "columnName": "height",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "thumbnailAvailable",
+            "columnName": "thumbnailAvailable",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "thumbnailVariant",
+            "columnName": "thumbnailVariant",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "thumbnailPath",
+            "columnName": "thumbnailPath",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "thumbnailStatus",
+            "columnName": "thumbnailStatus",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastSyncedAtEpochSeconds",
+            "columnName": "lastSyncedAtEpochSeconds",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "deleted",
+            "columnName": "deleted",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "accountId",
+            "peerId",
+            "messageId"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_telegram_media_accountId_dateEpochSeconds",
+            "unique": false,
+            "columnNames": [
+              "accountId",
+              "dateEpochSeconds"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_telegram_media_accountId_dateEpochSeconds` ON `${TABLE_NAME}` (`accountId`, `dateEpochSeconds`)"
+          },
+          {
+            "name": "index_telegram_media_accountId_mediaType_dateEpochSeconds",
+            "unique": false,
+            "columnNames": [
+              "accountId",
+              "mediaType",
+              "dateEpochSeconds"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_telegram_media_accountId_mediaType_dateEpochSeconds` ON `${TABLE_NAME}` (`accountId`, `mediaType`, `dateEpochSeconds`)"
+          },
+          {
+            "name": "index_telegram_media_accountId_normalizedName",
+            "unique": false,
+            "columnNames": [
+              "accountId",
+              "normalizedName"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_telegram_media_accountId_normalizedName` ON `${TABLE_NAME}` (`accountId`, `normalizedName`)"
+          },
+          {
+            "name": "index_telegram_media_accountId_sizeBytes",
+            "unique": false,
+            "columnNames": [
+              "accountId",
+              "sizeBytes"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_telegram_media_accountId_sizeBytes` ON `${TABLE_NAME}` (`accountId`, `sizeBytes`)"
+          },
+          {
+            "name": "index_telegram_media_accountId_peerId",
+            "unique": false,
+            "columnNames": [
+              "accountId",
+              "peerId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_telegram_media_accountId_peerId` ON `${TABLE_NAME}` (`accountId`, `peerId`)"
+          },
+          {
+            "name": "index_telegram_media_accountId_durationSeconds",
+            "unique": false,
+            "columnNames": [
+              "accountId",
+              "durationSeconds"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_telegram_media_accountId_durationSeconds` ON `${TABLE_NAME}` (`accountId`, `durationSeconds`)"
+          },
+          {
+            "name": "index_telegram_media_accountId_extension",
+            "unique": false,
+            "columnNames": [
+              "accountId",
+              "extension"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_telegram_media_accountId_extension` ON `${TABLE_NAME}` (`accountId`, `extension`)"
+          },
+          {
+            "name": "index_telegram_media_accountId_mimeType",
+            "unique": false,
+            "columnNames": [
+              "accountId",
+              "mimeType"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_telegram_media_accountId_mimeType` ON `${TABLE_NAME}` (`accountId`, `mimeType`)"
+          }
+        ],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "telegram_media_peer",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`accountId` INTEGER NOT NULL, `peerId` INTEGER NOT NULL, `folderId` INTEGER, `name` TEXT NOT NULL, `kind` TEXT NOT NULL, `lastSyncedAtEpochSeconds` INTEGER, PRIMARY KEY(`accountId`, `peerId`))",
+        "fields": [
+          {
+            "fieldPath": "accountId",
+            "columnName": "accountId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "peerId",
+            "columnName": "peerId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "folderId",
+            "columnName": "folderId",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "name",
+            "columnName": "name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "kind",
+            "columnName": "kind",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastSyncedAtEpochSeconds",
+            "columnName": "lastSyncedAtEpochSeconds",
+            "affinity": "INTEGER",
+            "notNull": false
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "accountId",
+            "peerId"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_telegram_media_peer_accountId_name",
+            "unique": false,
+            "columnNames": [
+              "accountId",
+              "name"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_telegram_media_peer_accountId_name` ON `${TABLE_NAME}` (`accountId`, `name`)"
+          }
+        ],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "media_sync_state",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`accountId` INTEGER NOT NULL, `peerId` INTEGER NOT NULL, `nextOffsetMessageId` INTEGER, `newestIndexedMessageId` INTEGER, `oldestIndexedMessageId` INTEGER, `fullSyncCompleted` INTEGER NOT NULL, `fullSyncStartedAtEpochSeconds` INTEGER, `lastSuccessfulSyncAtEpochSeconds` INTEGER, `lastError` TEXT, PRIMARY KEY(`accountId`, `peerId`))",
+        "fields": [
+          {
+            "fieldPath": "accountId",
+            "columnName": "accountId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "peerId",
+            "columnName": "peerId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "nextOffsetMessageId",
+            "columnName": "nextOffsetMessageId",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "newestIndexedMessageId",
+            "columnName": "newestIndexedMessageId",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "oldestIndexedMessageId",
+            "columnName": "oldestIndexedMessageId",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "fullSyncCompleted",
+            "columnName": "fullSyncCompleted",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "fullSyncStartedAtEpochSeconds",
+            "columnName": "fullSyncStartedAtEpochSeconds",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "lastSuccessfulSyncAtEpochSeconds",
+            "columnName": "lastSuccessfulSyncAtEpochSeconds",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "lastError",
+            "columnName": "lastError",
+            "affinity": "TEXT",
+            "notNull": false
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "accountId",
+            "peerId"
+          ]
+        },
+        "indices": [],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "media_playback_state",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`accountId` INTEGER NOT NULL, `peerId` INTEGER NOT NULL, `messageId` INTEGER NOT NULL, `positionMs` INTEGER NOT NULL, `durationMs` INTEGER, `completed` INTEGER NOT NULL, `updatedAtEpochSeconds` INTEGER NOT NULL, PRIMARY KEY(`accountId`, `peerId`, `messageId`))",
+        "fields": [
+          {
+            "fieldPath": "accountId",
+            "columnName": "accountId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "peerId",
+            "columnName": "peerId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "messageId",
+            "columnName": "messageId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "positionMs",
+            "columnName": "positionMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "durationMs",
+            "columnName": "durationMs",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "completed",
+            "columnName": "completed",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAtEpochSeconds",
+            "columnName": "updatedAtEpochSeconds",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "accountId",
+            "peerId",
+            "messageId"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_media_playback_state_accountId_updatedAtEpochSeconds",
+            "unique": false,
+            "columnNames": [
+              "accountId",
+              "updatedAtEpochSeconds"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_media_playback_state_accountId_updatedAtEpochSeconds` ON `${TABLE_NAME}` (`accountId`, `updatedAtEpochSeconds`)"
+          }
+        ],
+        "foreignKeys": []
+      }
+    ],
+    "views": [],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '27035babb5977da61c8e79269a26a194')"
+    ]
+  }
+}

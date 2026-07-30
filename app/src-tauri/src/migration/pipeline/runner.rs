@@ -4,9 +4,10 @@ use crate::migration::events::{emit_item_complete, now_millis, ItemCompletePaylo
 use crate::migration::pipeline::classifier::{classify_file, FileCategory};
 use crate::migration::pipeline::config::PipelineConfig;
 use crate::migration::pipeline::stages::{
-    validate_canonical_output, CanonicalVideoProfile, LocalFinalizer, MediaInspector, PipelineItem,
-    PipelineStage, SourceDownloader, TelegramMediaKind, TelegramUploadRequest,
-    TelegramUploadResult, TelegramUploader, VideoProcessRequest, VideoProcessor,
+    is_below_optimization_target, validate_canonical_output, CanonicalVideoProfile, LocalFinalizer,
+    MediaInspector, PipelineItem, PipelineStage, SourceDownloader, TelegramMediaKind,
+    TelegramUploadRequest, TelegramUploadResult, TelegramUploader, VideoProcessRequest,
+    VideoProcessor,
 };
 use crate::migration::pipeline::transitions::update_item_pipeline_stage;
 use crate::migration::quota_reserve::{commit_quota, release_quota, reserve_quota};
@@ -198,6 +199,15 @@ pub(crate) async fn validate_passthrough_artifact(
         .inspect_file(std::path::Path::new(original_path))
         .await
         .map_err(|error| format!("Passthrough FFprobe validation failed: {}", error))?;
+    if item.video_decision.as_deref() == Some("size_passthrough_original") {
+        return Ok(metadata.is_valid);
+    }
+    if item.video_decision.as_deref() == Some("quality_passthrough_original") {
+        let source_size = std::fs::metadata(original_path)
+            .map_err(|error| format!("Passthrough metadata failed: {}", error))?
+            .len();
+        return Ok(is_below_optimization_target(&metadata, source_size));
+    }
     let canonical = match item.video_decision.as_deref() {
         Some("canonical_passthrough_main8") => metadata.is_canonical_main8(),
         Some("canonical_passthrough_main10") => metadata.is_canonical_main10(),
@@ -767,7 +777,11 @@ impl PipelineRunner {
                     let is_passthrough_checkpoint = item
                         .video_decision
                         .as_deref()
-                        .map(|decision| decision.starts_with("canonical_passthrough"))
+                        .map(|decision| {
+                            decision.starts_with("canonical_passthrough")
+                                || decision == "size_passthrough_original"
+                                || decision == "quality_passthrough_original"
+                        })
                         .unwrap_or(false);
                     let passthrough_validation = if is_passthrough_checkpoint {
                         Some(validate_passthrough_artifact(inspector.as_ref(), &item).await)
@@ -1230,8 +1244,16 @@ impl PipelineRunner {
                     // Inspect video
                     match inspector_clone.inspect_file(&input_path).await {
                         Ok(meta) => {
+                            let original_size = input_path
+                                .metadata()
+                                .map_err(|error| {
+                                    format!("Original artifact metadata failed: {}", error)
+                                })?
+                                .len();
                             // Determine decision using VideoMetadata helpers
-                            let decision = if meta.is_hdr() || meta.is_10bit() {
+                            let decision = if is_below_optimization_target(&meta, original_size) {
+                                "quality_passthrough_original"
+                            } else if meta.is_hdr() || meta.is_10bit() {
                                 if meta.is_canonical_main10() && meta.is_mp4_source(&input_path) {
                                     "canonical_passthrough_main10"
                                 } else {
@@ -1247,22 +1269,17 @@ impl PipelineRunner {
 
                             item.video_decision = Some(decision.to_string());
 
-                            if decision.starts_with("canonical_passthrough") {
+                            if decision.starts_with("canonical_passthrough")
+                                || decision == "quality_passthrough_original"
+                            {
                                 // Passthrough: use original artifact
                                 item.processed_artifact_path = None;
                                 item.processed_sha256 = None;
-                                let original_size = input_path
-                                    .metadata()
-                                    .map_err(|error| {
-                                        format!("Original artifact metadata failed: {}", error)
-                                    })?
-                                    .len()
-                                    as i64;
                                 persist_passthrough_checkpoint(
                                     &db_clone,
                                     item.id,
                                     decision,
-                                    original_size,
+                                    original_size as i64,
                                 )?;
                                 transition_item(&db_clone, item.id, PipelineStage::Processed)?;
                                 transition_item(&db_clone, item.id, PipelineStage::QueuedUpload)?;
@@ -1296,16 +1313,53 @@ impl PipelineRunner {
                                     .await
                                 {
                                     Ok(proc_hash) => {
-                                        item.processed_sha256 = Some(proc_hash.clone());
-                                        item.processed_artifact_path =
-                                            Some(output_path.to_string_lossy().into_owned());
-                                        persist_processed_checkpoint(
-                                            &db_clone,
-                                            item.id,
-                                            decision,
-                                            &proc_hash,
-                                            &output_path,
-                                        )?;
+                                        let original_size = input_path
+                                            .metadata()
+                                            .map_err(|error| {
+                                                format!(
+                                                    "Original artifact metadata failed: {}",
+                                                    error
+                                                )
+                                            })?
+                                            .len();
+                                        let processed_size = output_path
+                                            .metadata()
+                                            .map_err(|error| {
+                                                format!(
+                                                    "Processed artifact metadata failed: {}",
+                                                    error
+                                                )
+                                            })?
+                                            .len();
+                                        if processed_size >= original_size {
+                                            std::fs::remove_file(&output_path).map_err(|error| {
+                                                format!(
+                                                    "Failed to discard oversized processed artifact: {}",
+                                                    error
+                                                )
+                                            })?;
+                                            let size_decision = "size_passthrough_original";
+                                            item.video_decision = Some(size_decision.to_string());
+                                            item.processed_sha256 = None;
+                                            item.processed_artifact_path = None;
+                                            persist_passthrough_checkpoint(
+                                                &db_clone,
+                                                item.id,
+                                                size_decision,
+                                                original_size as i64,
+                                            )?;
+                                        } else {
+                                            item.processed_sha256 = Some(proc_hash.clone());
+                                            item.processed_artifact_path =
+                                                Some(output_path.to_string_lossy().into_owned());
+                                            persist_processed_checkpoint(
+                                                &db_clone,
+                                                item.id,
+                                                decision,
+                                                &proc_hash,
+                                                &output_path,
+                                            )?;
+                                        }
                                         transition_item(
                                             &db_clone,
                                             item.id,
@@ -2035,6 +2089,13 @@ mod tests {
             profile: profile.to_string(),
             pixel_format: pixel_format.to_string(),
             fps: 30.0,
+            bitrate: if marker.contains("h264-low") {
+                750_000
+            } else if marker.contains("h264") {
+                4_000_000
+            } else {
+                1_000_000
+            },
             major_brand: "isom".to_string(),
             ..Default::default()
         })
@@ -2223,8 +2284,40 @@ mod tests {
                 "completed_telegram"
             ]
         );
+        {
+            let conn = db.lock().unwrap();
+            let mut stmt = conn
+                .prepare(
+                    "SELECT video_decision, processed_artifact_path IS NULL, artifact_size \
+                     FROM migration_items WHERE id = 100",
+                )
+                .unwrap();
+            assert_eq!(stmt.next().unwrap(), sqlite::State::Row);
+            assert_eq!(
+                stmt.read::<String, _>(0).unwrap(),
+                "size_passthrough_original"
+            );
+            assert_eq!(stmt.read::<i64, _>(1).unwrap(), 1);
+            assert_eq!(stmt.read::<i64, _>(2).unwrap(), "h264-source".len() as i64);
+        }
         assert!(!tmp.0.join("100").exists());
         assert!(!tmp.0.join("100.processed.mp4").exists());
+    }
+
+    #[tokio::test]
+    async fn low_quality_noncanonical_video_skips_transcode() {
+        let (_tmp, db, calls, observed) = run_video_flow("h264-low-source", false).await;
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert_eq!(observed.lock().unwrap().as_slice(), ["uploading"]);
+        let conn = db.lock().unwrap();
+        let mut stmt = conn
+            .prepare("SELECT video_decision FROM migration_items WHERE id = 100")
+            .unwrap();
+        assert_eq!(stmt.next().unwrap(), sqlite::State::Row);
+        assert_eq!(
+            stmt.read::<String, _>(0).unwrap(),
+            "quality_passthrough_original"
+        );
     }
 
     #[tokio::test]

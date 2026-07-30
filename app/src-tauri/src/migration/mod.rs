@@ -8,6 +8,7 @@ pub mod models;
 pub mod pipeline;
 pub mod quota_reserve;
 pub mod session_store;
+pub mod storage;
 pub mod telegram_idempotency;
 
 use std::sync::atomic::AtomicBool;

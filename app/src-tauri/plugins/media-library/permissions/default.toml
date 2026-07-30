@@ -1,0 +1,9 @@
+[default]
+description = "Allows the native Android Telegram Media Library API"
+permissions = [
+  "allow-open-media-library",
+  "allow-close-media-library",
+  "allow-get-media-library-state",
+  "allow-clear-media-library-data",
+]
+

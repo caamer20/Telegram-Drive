@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-open-media-library"
+description = "Enables the open_media_library command without any pre-configured scope."
+commands.allow = ["open_media_library"]
+
+[[permission]]
+identifier = "deny-open-media-library"
+description = "Denies the open_media_library command without any pre-configured scope."
+commands.deny = ["open_media_library"]

@@ -1,62 +1,66 @@
 package com.cameronamer.telegramdrive.nativeplayer
 
 import android.app.Activity
-import android.content.Intent
 import androidx.activity.result.ActivityResult
 import app.tauri.annotation.ActivityCallback
 import app.tauri.annotation.Command
 import app.tauri.annotation.TauriPlugin
 import app.tauri.plugin.Invoke
 import app.tauri.plugin.Plugin
-import java.util.concurrent.atomic.AtomicBoolean
 
 @TauriPlugin
 class NativePlayerPlugin(private val activity: Activity) : Plugin(activity) {
-    private val opening = AtomicBoolean(false)
-    @Volatile private var pendingSessionId: String? = null
+    @Volatile private var pendingLaunch: NativePlayerLaunchHandle? = null
+    @Volatile private var pendingResult: NativePlayerResultData? = null
 
     @Command
     fun openNativePlayer(invoke: Invoke) {
-        if (!opening.compareAndSet(false, true)) {
-            invoke.reject("native player is already open")
-            return
-        }
         try {
             val args = invoke.parseArgs(OpenNativePlayerArgs::class.java)
             args.validate()
-            PendingNativePlayerRestoreStore.clear(activity)
-            NativePlayerActivityRegistry.clearPendingClose()
-            val session = NativePlayerSessionStore.create(args)
-            pendingSessionId = session.id
-            session.stateListener = { snapshot ->
-                trigger("native-player://playback-state", snapshot.toJsObject())
-            }
-            val intent = Intent(activity, NativePlayerActivity::class.java).apply {
-                putExtra(NativePlayerActivity.EXTRA_SESSION_ID, session.id)
-                args.folderId?.let { putExtra(NativePlayerActivity.EXTRA_FOLDER_ID, it) }
-                putExtra(NativePlayerActivity.EXTRA_MESSAGE_ID, args.messageId)
-                putExtra(NativePlayerActivity.EXTRA_TITLE, args.title)
-                args.fileName?.let { putExtra(NativePlayerActivity.EXTRA_FILE_NAME, it) }
-                args.mimeType?.let { putExtra(NativePlayerActivity.EXTRA_MIME_TYPE, it) }
-                putExtra(NativePlayerActivity.EXTRA_AUTOPLAY, args.autoplay)
-            }
-            startActivityForResult(invoke, intent, "nativePlayerResult")
+            val request = NativePlayerLaunchRequest(
+                args.folderId, args.messageId, args.title, args.fileName, args.mimeType,
+                args.startPositionMs, args.autoplay,
+            )
+            val streamPath = "/stream/${args.folderId ?: "home"}/${args.messageId}"
+            require(args.streamUrl.endsWith(streamPath)) { "stream identity does not match request" }
+            val playbackSession = NativePlaybackSession(
+                baseUrl = args.streamUrl.removeSuffix(streamPath),
+                authorizationToken = args.authorizationToken,
+                codec = args.codec,
+                width = args.width,
+                height = args.height,
+                frameRate = args.frameRate,
+                bitrate = args.bitrate,
+                bitDepth = args.bitDepth,
+                hdr = args.hdr,
+            )
+            pendingResult = null
+            pendingLaunch = NativePlayerLauncher.prepare(
+                activity = activity,
+                callerKey = CALLER_KEY,
+                request = request,
+                playbackSession = playbackSession,
+                onState = { snapshot -> trigger("native-player://playback-state", snapshot.toJsObject()) },
+                callback = object : NativePlayerLaunchResultCallback {
+                    override fun onResult(result: NativePlayerResultData) {
+                        pendingResult = result
+                    }
+                },
+            )
+            startActivityForResult(invoke, pendingLaunch!!.intent, "nativePlayerResult")
         } catch (_: Exception) {
-            opening.set(false)
-            pendingSessionId?.let(NativePlayerSessionStore::remove)
-            pendingSessionId = null
+            NativePlayerLauncher.abandon(CALLER_KEY)
+            pendingLaunch = null
             invoke.reject("invalid native player request")
         }
     }
 
     @ActivityCallback
     fun nativePlayerResult(invoke: Invoke, result: ActivityResult) {
-        val sessionId = pendingSessionId
-        pendingSessionId = null
-        opening.set(false)
-        NativePlayerActivityRegistry.clearPendingClose()
-        NativePlayerSessionStore.remove(sessionId)
-        val response = NativePlayerResultCodec.fromIntent(result.data)
+        pendingLaunch = null
+        val response = NativePlayerLauncher.complete(CALLER_KEY, result.data)
+        pendingResult = null
         invoke.resolve(response.toJsObject())
     }
 
@@ -81,5 +85,9 @@ class NativePlayerPlugin(private val activity: Activity) : Plugin(activity) {
     fun clearPendingRestore(invoke: Invoke) {
         PendingNativePlayerRestoreStore.clear(activity)
         invoke.resolve()
+    }
+
+    companion object {
+        private const val CALLER_KEY = "tauri-native-player-plugin"
     }
 }

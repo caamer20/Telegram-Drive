@@ -274,6 +274,34 @@ pub async fn cmd_logout(
 ) -> Result<bool, String> {
     log::info!("Logging out...");
 
+    #[cfg(target_os = "android")]
+    let media_account_id = {
+        let client = state.client.lock().await.clone();
+        match client {
+            Some(client) => tokio::time::timeout(Duration::from_secs(3), client.get_me())
+                .await
+                .ok()
+                .and_then(Result::ok)
+                .map(|account| account.bare_id()),
+            None => None,
+        }
+    };
+
+    // Native screens own process-local credentials and must be closed and
+    // account-scoped data cleared before the Telegram identity is discarded.
+    #[cfg(target_os = "android")]
+    {
+        use tauri_plugin_media_library::MediaLibraryExt;
+        use tauri_plugin_native_player::NativePlayerExt;
+        let _ = app_handle.native_player().close().await;
+        let _ = app_handle.native_player().clear_pending_restore().await;
+        let _ = app_handle.media_library().close().await;
+        let _ = app_handle
+            .media_library()
+            .clear_account(media_account_id)
+            .await;
+    }
+
     // 1. Shutdown the network runner FIRST to prevent any operations
     {
         let mut shutdown_guard = state.runner_shutdown.lock().unwrap();

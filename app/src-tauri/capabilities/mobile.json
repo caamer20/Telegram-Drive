@@ -25,6 +25,7 @@
     "dialog:default",
     "opener:default",
     "shell:allow-open",
-    "native-player:default"
+    "native-player:default",
+    "media-library:default"
   ]
 }

@@ -213,10 +213,17 @@ fn token_matches(candidate: &str, expected: &str) -> bool {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum AuthenticationResult {
+pub(crate) enum AuthenticationResult {
     Authorized,
     Missing,
     Invalid,
+}
+
+pub(crate) fn authenticate_bearer_request(
+    req: &actix_web::HttpRequest,
+    expected: &str,
+) -> AuthenticationResult {
+    authenticate_stream_request(req, None, expected)
 }
 
 fn authenticate_stream_request(
@@ -708,6 +715,7 @@ pub fn start_server(
                     .route(web::get().to(stream_media))
                     .route(web::head().to(stream_media)),
             )
+            .configure(crate::media_library_routes::configure_media_library_routes)
             .configure(crate::share_routes::configure_share_routes)
             .configure(crate::transcode::configure_hls_routes)
             .configure(crate::fmp4_remux::configure_fmp4_routes)

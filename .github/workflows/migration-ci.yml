@@ -35,6 +35,9 @@ jobs:
       - name: Native player plugin tests
         working-directory: app/src-tauri
         run: cargo test --manifest-path plugins/native-player/Cargo.toml
+      - name: Media Library plugin tests
+        working-directory: app/src-tauri
+        run: cargo test --manifest-path plugins/media-library/Cargo.toml
       - name: Install frontend dependencies
         working-directory: app
         run: npm ci
@@ -45,7 +48,7 @@ jobs:
         working-directory: app
         run: npm run build
 
-  android-native-player:
+  android-native-media:
     runs-on: ubuntu-22.04
     env:
       ANDROID_NDK_VERSION: 27.2.12479018
@@ -117,26 +120,41 @@ jobs:
           test "$ANDROID_NDK_ROOT" = "$NDK_HOME"
           grep -F "ndkVersion = \"$ANDROID_NDK_VERSION\"" app/build.gradle.kts
           grep -F "include ':tauri-plugin-native-player'" tauri.settings.gradle
+          grep -F "include ':tauri-plugin-media-library'" tauri.settings.gradle
           ./gradlew projects
           ./gradlew :app:tasks --all | grep -F 'compileUniversalDebugKotlin'
           ./gradlew :tauri-plugin-native-player:tasks --all | grep -F 'testDebugUnitTest'
           ./gradlew :tauri-plugin-native-player:tasks --all | grep -F 'compileDebugAndroidTestKotlin'
+          ./gradlew :tauri-plugin-media-library:tasks --all | grep -F 'testDebugUnitTest'
+          ./gradlew :tauri-plugin-media-library:tasks --all | grep -F 'compileDebugAndroidTestKotlin'
+          ./gradlew :tauri-plugin-media-library:tasks --all | grep -F 'lintDebug'
           ./gradlew :app:tasks --all | grep -F 'lintUniversalDebug'
           ./gradlew :tauri-plugin-native-player:tasks --all | grep -F 'lintDebug'
       - name: Verify native-player-enabled frontend bundle
         run: |
           echo "Android rollout mode: VITE_ANDROID_NATIVE_PLAYER=$VITE_ANDROID_NATIVE_PLAYER"
           grep -R -F 'telegram-drive:native-player-enabled' app/dist/assets
-      - name: Compile Kotlin and run native-player unit tests
+      - name: Compile Kotlin and run native plugin unit tests
         working-directory: app/src-tauri/gen/android
         run: >-
           ./gradlew :app:compileUniversalDebugKotlin
           :tauri-plugin-native-player:testDebugUnitTest
           :tauri-plugin-native-player:compileDebugAndroidTestKotlin
+          :tauri-plugin-media-library:compileDebugKotlin
+          :tauri-plugin-media-library:testDebugUnitTest
+          :tauri-plugin-media-library:compileDebugAndroidTestKotlin
+      - name: Verify Room schema and shared-player ownership
+        run: |
+          test -f app/src-tauri/plugins/media-library/android/schemas/com.cameronamer.telegramdrive.medialibrary.data.TelegramMediaDatabase/1.json
+          grep -R -F 'NativePlayerLauncher.bind' app/src-tauri/plugins/media-library/android/src/main/java
+          if grep -R -E 'ExoPlayer|Media3' app/src-tauri/plugins/media-library/android/src/main/java; then
+            echo 'Media Library must not own a playback implementation' >&2
+            exit 1
+          fi
       - name: Android lint
         working-directory: app/src-tauri/gen/android
-        run: ./gradlew :tauri-plugin-native-player:lintDebug :app:lintUniversalDebug
-      - name: Build final native-player debug APK
+        run: ./gradlew :tauri-plugin-native-player:lintDebug :tauri-plugin-media-library:lintDebug :app:lintUniversalDebug
+      - name: Build final native-media debug APK
         working-directory: app
         env:
           CI: true
@@ -163,12 +181,12 @@ jobs:
         run: |
           APK=app/src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk
           test -f "$APK"
-          sha256sum "$APK" > telegram-drive-native-player-debug.apk.sha256
-          cp "$APK" telegram-drive-native-player-debug.apk
+          sha256sum "$APK" > telegram-drive-native-media-debug.apk.sha256
+          cp "$APK" telegram-drive-native-media-debug.apk
       - uses: actions/upload-artifact@v4
         with:
-          name: telegram-drive-native-player-debug
+          name: telegram-drive-native-media-debug
           path: |
-            telegram-drive-native-player-debug.apk
-            telegram-drive-native-player-debug.apk.sha256
+            telegram-drive-native-media-debug.apk
+            telegram-drive-native-media-debug.apk.sha256
           if-no-files-found: error

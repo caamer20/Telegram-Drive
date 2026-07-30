@@ -220,6 +220,66 @@ impl VideoMetadata {
     }
 }
 
+pub fn target_audio_bitrate(metadata: &VideoMetadata) -> u64 {
+    match metadata.audio_channels {
+        0 => 0,
+        1 => 64_000,
+        2 => 96_000,
+        _ => 192_000,
+    }
+}
+
+pub fn resolution_video_bitrate_cap(metadata: &VideoMetadata) -> u64 {
+    let short_edge = metadata.width.min(metadata.height);
+    let mut cap = if short_edge <= 480 {
+        900_000u64
+    } else if short_edge <= 720 {
+        1_800_000u64
+    } else {
+        3_000_000u64
+    };
+    if metadata.fps > 30.0 {
+        cap = cap.saturating_mul(6) / 5;
+    }
+    cap
+}
+
+pub fn target_video_bitrate(metadata: &VideoMetadata) -> u64 {
+    let resolution_cap = resolution_video_bitrate_cap(metadata);
+    if metadata.bitrate == 0 {
+        return resolution_cap;
+    }
+    let source_cap = metadata
+        .bitrate
+        .saturating_mul(4)
+        .checked_div(5)
+        .unwrap_or(0)
+        .saturating_sub(target_audio_bitrate(metadata))
+        .max(96_000);
+    resolution_cap.min(source_cap)
+}
+
+pub fn is_below_optimization_target(metadata: &VideoMetadata, source_size: u64) -> bool {
+    if !metadata.is_valid
+        || metadata.duration <= 0.0
+        || metadata.width == 0
+        || metadata.height == 0
+        || metadata.width > 1920
+        || metadata.height > 1080
+        || metadata.fps <= 0.0
+        || metadata.fps > 60.0
+    {
+        return false;
+    }
+    let effective_bitrate = if metadata.bitrate > 0 {
+        metadata.bitrate
+    } else {
+        ((source_size as f64 * 8.0) / metadata.duration) as u64
+    };
+    effective_bitrate
+        <= resolution_video_bitrate_cap(metadata).saturating_add(target_audio_bitrate(metadata))
+}
+
 /// Canonical video profile for encoding decisions
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CanonicalVideoProfile {
@@ -382,4 +442,54 @@ pub trait LocalFinalizer: Send + Sync {
         source_path: &Path,
         dest_path: &Path,
     ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send>>;
+}
+
+#[cfg(test)]
+mod optimization_tests {
+    use super::*;
+
+    fn metadata(width: u32, height: u32, fps: f64, bitrate: u64) -> VideoMetadata {
+        VideoMetadata {
+            is_valid: true,
+            duration: 60.0,
+            width,
+            height,
+            fps,
+            bitrate,
+            audio_codec: "aac".to_string(),
+            audio_channels: 2,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn low_quality_video_skips_optimization() {
+        assert!(is_below_optimization_target(
+            &metadata(1280, 720, 30.0, 1_500_000),
+            11_250_000,
+        ));
+    }
+
+    #[test]
+    fn high_resolution_fps_or_bitrate_requires_optimization() {
+        assert!(!is_below_optimization_target(
+            &metadata(3840, 2160, 30.0, 2_000_000),
+            15_000_000,
+        ));
+        assert!(!is_below_optimization_target(
+            &metadata(1920, 1080, 120.0, 2_000_000),
+            15_000_000,
+        ));
+        assert!(!is_below_optimization_target(
+            &metadata(1920, 1080, 30.0, 5_000_000),
+            37_500_000,
+        ));
+    }
+
+    #[test]
+    fn missing_bitrate_uses_file_size_and_duration() {
+        let meta = metadata(1280, 720, 30.0, 0);
+        assert!(is_below_optimization_target(&meta, 10_000_000));
+        assert!(!is_below_optimization_target(&meta, 20_000_000));
+    }
 }

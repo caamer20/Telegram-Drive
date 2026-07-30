@@ -1,4 +1,4 @@
-use tauri::{Manager, State};
+use tauri::State;
 
 use crate::migration::microsoft;
 use crate::migration::models::*;
@@ -342,27 +342,8 @@ pub async fn cmd_migration_start(
         ));
     }
 
-    let workspace_dir = app_handle
-        .path()
-        .app_data_dir()
-        .unwrap_or_default()
-        .join("migration_workspace")
-        .to_string_lossy()
-        .to_string();
-    let workspace_path = std::path::Path::new(&workspace_dir);
-    std::fs::create_dir_all(workspace_path)
-        .map_err(|e| format!("Cannot create workspace directory: {}", e))?;
-
-    // Ensure workspace and backup don't overlap
-    let backup_canon = backup_path
-        .canonicalize()
-        .unwrap_or_else(|_| backup_path.to_path_buf());
-    let workspace_canon = workspace_path
-        .canonicalize()
-        .unwrap_or_else(|_| workspace_path.to_path_buf());
-    if backup_canon == workspace_canon {
-        return Err("Local backup directory and workspace directory must be different".into());
-    }
+    let workspace_path = crate::migration::storage::prepare_external_workspace(backup_path)?;
+    let workspace_dir = workspace_path.to_string_lossy().into_owned();
 
     let capabilities =
         crate::migration::adapters::media::preflight_media_for_app(Some(&app_handle)).await?;
@@ -679,8 +660,12 @@ pub async fn cmd_migration_resume(
             backup_dir
         ));
     }
-    std::fs::create_dir_all(&workspace_dir)
-        .map_err(|e| format!("Cannot restore migration workspace: {}", e))?;
+    let workspace_dir = crate::migration::storage::validate_persisted_workspace(
+        std::path::Path::new(&workspace_dir),
+        std::path::Path::new(&backup_dir),
+    )?
+    .to_string_lossy()
+    .into_owned();
 
     let capabilities =
         crate::migration::adapters::media::preflight_media_for_app(Some(&app_handle)).await?;
@@ -824,8 +809,12 @@ pub async fn cmd_migration_retry_failed(
             backup_dir
         ));
     }
-    std::fs::create_dir_all(&workspace_dir)
-        .map_err(|error| format!("Cannot restore migration workspace: {}", error))?;
+    let workspace_dir = crate::migration::storage::validate_persisted_workspace(
+        std::path::Path::new(&workspace_dir),
+        std::path::Path::new(&backup_dir),
+    )?
+    .to_string_lossy()
+    .into_owned();
 
     let capabilities =
         crate::migration::adapters::media::preflight_media_for_app(Some(&app_handle)).await?;

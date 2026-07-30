@@ -76,4 +76,26 @@ class NativePlayerValidationTest {
         registry.clear(first)
         assertNull(registry.get())
     }
+
+    @Test
+    fun sharedLauncherRequestAndSessionEnforceSafeInputs() {
+        NativePlayerLaunchRequest(
+            folderId = null,
+            messageId = 7,
+            title = "Movie",
+            fileName = "movie.mkv",
+            mimeType = "video/x-matroska",
+            startPositionMs = 123,
+            autoplay = true,
+        ).validate()
+        NativePlaybackSession("http://127.0.0.1:49152", "private-token").validate()
+        assertThrows(IllegalArgumentException::class.java) {
+            NativePlaybackSession("http://localhost:49152", "private-token").validate()
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            NativePlayerLaunchRequest(null, 7, "Movie", "content://7", null, 0, true).validate()
+        }
+        val publicRequestFields = NativePlayerLaunchRequest::class.java.declaredFields.map { it.name.lowercase() }
+        assertFalse(publicRequestFields.any { it.contains("token") || it.contains("url") })
+    }
 }

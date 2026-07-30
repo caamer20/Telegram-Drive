@@ -7,8 +7,8 @@
 
 use crate::migration::events::{emit_item_progress, now_millis, ItemProgressPayload};
 use crate::migration::pipeline::stages::{
-    validate_canonical_output, CanonicalVideoProfile, MediaInspector, VideoMetadata,
-    VideoProcessRequest, VideoProcessor,
+    target_audio_bitrate, target_video_bitrate, validate_canonical_output, CanonicalVideoProfile,
+    MediaInspector, VideoMetadata, VideoProcessRequest, VideoProcessor,
 };
 use serde::Deserialize;
 use std::future::Future;
@@ -358,6 +358,8 @@ impl FFmpegMediaAdapter {
 
         let pix_fmt = if is_10bit { "yuv420p10le" } else { "yuv420p" };
         let profile = if is_10bit { "main10" } else { "main" };
+        let audio_bitrate = target_audio_bitrate(metadata);
+        let video_bitrate = target_video_bitrate(metadata);
 
         args.push("-c:v".to_string());
         args.push(encoder.to_string());
@@ -365,33 +367,20 @@ impl FFmpegMediaAdapter {
         if encoder == "hevc_videotoolbox" {
             args.push("-profile:v".to_string());
             args.push(profile.to_string());
-            let short_edge = metadata.width.min(metadata.height);
-            let mut bitrate = if short_edge <= 480 {
-                1_200_000u64
-            } else if short_edge <= 720 {
-                2_500_000u64
-            } else {
-                4_500_000u64
-            };
-            if metadata.fps > 30.0 {
-                bitrate = bitrate.saturating_mul(5) / 4;
-            }
-            args.extend([
-                "-b:v".to_string(),
-                bitrate.to_string(),
-                "-maxrate".to_string(),
-                (bitrate.saturating_mul(3) / 2).to_string(),
-                "-bufsize".to_string(),
-                bitrate.saturating_mul(2).to_string(),
-            ]);
         } else {
             args.push("-preset".to_string());
-            args.push("faster".to_string());
-            args.push("-crf".to_string());
-            args.push("26".to_string());
+            args.push("medium".to_string());
             args.push("-profile:v".to_string());
             args.push(profile.to_string());
         }
+        args.extend([
+            "-b:v".to_string(),
+            video_bitrate.to_string(),
+            "-maxrate".to_string(),
+            (video_bitrate.saturating_mul(5) / 4).to_string(),
+            "-bufsize".to_string(),
+            video_bitrate.saturating_mul(2).to_string(),
+        ]);
         args.push("-tag:v".to_string());
         args.push("hvc1".to_string());
 
@@ -400,11 +389,6 @@ impl FFmpegMediaAdapter {
         if metadata.audio_codec.is_empty() || metadata.audio_channels == 0 {
             args.push("-an".to_string());
         } else {
-            let audio_bitrate = match metadata.audio_channels {
-                0 | 1 => "64k",
-                2 => "128k",
-                _ => "256k",
-            };
             args.extend([
                 "-map".to_string(),
                 "0:a:0?".to_string(),
@@ -1366,6 +1350,9 @@ mod tests {
         assert!(args_str.contains("yuv420p"));
         assert!(args_str.contains("main"));
         assert!(args_str.contains("+faststart"));
+        assert_eq!(arg_value(&args, "-preset"), Some("medium"));
+        assert_eq!(arg_value(&args, "-b:v"), Some("3000000"));
+        assert!(!args.iter().any(|arg| arg == "-crf"));
     }
 
     #[test]
@@ -1439,10 +1426,10 @@ mod tests {
     #[test]
     fn test_videotoolbox_bitrate_policy_by_resolution_and_fps() {
         for (width, height, fps, expected) in [
-            (854, 480, 30.0, 1_200_000u64),
-            (1280, 720, 30.0, 2_500_000u64),
-            (1920, 1080, 30.0, 4_500_000u64),
-            (1920, 1080, 60.0, 5_625_000u64),
+            (854, 480, 30.0, 900_000u64),
+            (1280, 720, 30.0, 1_800_000u64),
+            (1920, 1080, 30.0, 3_000_000u64),
+            (1920, 1080, 60.0, 3_600_000u64),
         ] {
             let args = FFmpegMediaAdapter::build_transcode_args(
                 Path::new("in.mp4"),
@@ -1452,7 +1439,7 @@ mod tests {
                 &transcode_metadata(width, height, fps, 2),
             );
             let bitrate = expected.to_string();
-            let maxrate = (expected * 3 / 2).to_string();
+            let maxrate = (expected * 5 / 4).to_string();
             let bufsize = (expected * 2).to_string();
             assert_eq!(arg_value(&args, "-b:v"), Some(bitrate.as_str()));
             assert_eq!(arg_value(&args, "-maxrate"), Some(maxrate.as_str()));
@@ -1462,8 +1449,25 @@ mod tests {
     }
 
     #[test]
+    fn test_video_bitrate_is_capped_below_low_bitrate_source() {
+        let mut metadata = transcode_metadata(1920, 1080, 30.0, 2);
+        metadata.bitrate = 2_000_000;
+        for encoder in ["hevc_videotoolbox", "libx265"] {
+            let args = FFmpegMediaAdapter::build_transcode_args(
+                Path::new("in.mp4"),
+                Path::new("out.mp4"),
+                false,
+                encoder,
+                &metadata,
+            );
+            assert_eq!(arg_value(&args, "-b:v"), Some("1504000"));
+            assert_eq!(arg_value(&args, "-b:a"), Some("96000"));
+        }
+    }
+
+    #[test]
     fn test_audio_policy_for_none_mono_stereo_and_multichannel() {
-        for (channels, expected_bitrate) in [(1, "64k"), (2, "128k"), (6, "256k")] {
+        for (channels, expected_bitrate) in [(1, "64000"), (2, "96000"), (6, "192000")] {
             let args = FFmpegMediaAdapter::build_transcode_args(
                 Path::new("in.mp4"),
                 Path::new("out.mp4"),

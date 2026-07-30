@@ -6,7 +6,8 @@ import sys
 import xml.etree.ElementTree as ET
 
 ANDROID = "{http://schemas.android.com/apk/res/android}"
-ACTIVITY = "com.cameronamer.telegramdrive.nativeplayer.NativePlayerActivity"
+PLAYER_ACTIVITY = "com.cameronamer.telegramdrive.nativeplayer.NativePlayerActivity"
+MEDIA_LIBRARY_ACTIVITY = "com.cameronamer.telegramdrive.medialibrary.MediaLibraryActivity"
 
 
 def require(condition: bool, message: str) -> None:
@@ -39,11 +40,20 @@ def main() -> None:
         "loopback network security config is not applied to the final application",
     )
     require(application.get(ANDROID + "usesCleartextTraffic") != "true", "global cleartext traffic is enabled")
-    activities = [item for item in application.findall("activity") if item.get(ANDROID + "name") == ACTIVITY]
+    activities = [item for item in application.findall("activity") if item.get(ANDROID + "name") == PLAYER_ACTIVITY]
     require(len(activities) == 1, "NativePlayerActivity is missing or duplicated")
     activity = activities[0]
     require(activity.get(ANDROID + "exported") == "false", "NativePlayerActivity must not be exported")
     require(activity.get(ANDROID + "supportsPictureInPicture") == "true", "PiP support is missing")
+    media_activities = [
+        item for item in application.findall("activity")
+        if item.get(ANDROID + "name") == MEDIA_LIBRARY_ACTIVITY
+    ]
+    require(len(media_activities) == 1, "MediaLibraryActivity is missing or duplicated")
+    require(
+        media_activities[0].get(ANDROID + "exported") == "false",
+        "MediaLibraryActivity must not be exported",
+    )
 
     security = ET.parse(network_config).getroot()
     base = security.find("base-config")
