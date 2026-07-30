@@ -41,3 +41,13 @@ This project is indexed by GitNexus as **Telegram-Drive** (5042 symbols, 9000 re
 | Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
 
 <!-- gitnexus:end -->
+
+## Ứng dụng Android độc lập
+
+- Project nằm tại `android-app/`; không sửa `app/src-tauri/gen/android` vì đó là output generated của Tauri.
+- Dùng Kotlin, Compose, Kotlin DSL, minSdk 26 và application ID `com.nmtuong.telegramdrive`.
+- Dependency hướng vào trong: UI/feature → repository → gateway; UI/domain không import `org.drinkless.tdlib`.
+- TDLib chỉ lấy từ source Telegram chính thức và build bằng `scripts/build-tdlib-android.sh`; không thêm binary bên thứ ba.
+- Real/fake source chọn bằng Gradle property `-PtelegramDataSource=real|fake`; không đưa credential/session thật vào source hoặc artifact.
+- Trước handoff phải chạy `./gradlew testDebugUnitTest lintDebug assembleDebug` trong `android-app/` và dùng Android CLI/adb để install, launch, layout, screenshot khi có runtime.
+- Giai đoạn 0 không gồm login thật, browsing, download/preview, Room, background transfer, release, CI/CD, MCP hoặc Lightbuild.
