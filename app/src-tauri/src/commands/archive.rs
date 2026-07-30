@@ -217,11 +217,11 @@ async fn extract_zip_entry(
         let entry_name = file.name().to_string();
         let entry_size = file.size();
         let safe_name = sanitise_entry_name(&entry_name, entry_index);
-        let temp_path = std::env::temp_dir().join(format!(
-            "{}_{}",
-            generate_unique_temp_prefix("extract"),
-            safe_name
-        ));
+        let temp_path = crate::temp_storage::get_temp_file_path(
+            None,
+            &generate_unique_temp_prefix("extract"),
+            &safe_name,
+        );
         let mut buf = Vec::with_capacity(entry_size as usize);
         file.read_to_end(&mut buf)
             .map_err(|e| format!("Failed to read ZIP entry bytes: {}", e))?;
@@ -249,8 +249,8 @@ async fn download_to_temp_file(
     extension: &str,
 ) -> Result<(std::path::PathBuf, std::path::PathBuf), String> {
     let unique_id = generate_unique_temp_prefix("viewer");
-    let archive_path = std::env::temp_dir().join(format!("{}.{}", unique_id, extension));
-    let extract_dir = std::env::temp_dir().join(format!("{}_extract", unique_id));
+    let archive_path = crate::temp_storage::get_temp_file_path(None, &unique_id, extension);
+    let extract_dir = crate::temp_storage::get_media_temp_dir(None).join(format!("{}_extract", unique_id));
 
     tokio::fs::create_dir_all(&extract_dir)
         .await
@@ -397,11 +397,11 @@ async fn extract_rar_entry(
                 .map_err(|e| format!("Failed to read RAR entry bytes: {}", e))?;
 
             let safe_name = sanitise_entry_name(&entry_name, entry_index);
-            let temp_path = std::env::temp_dir().join(format!(
-                "{}_{}",
-                generate_unique_temp_prefix("extract"),
-                safe_name
-            ));
+            let temp_path = crate::temp_storage::get_temp_file_path(
+                None,
+                &generate_unique_temp_prefix("extract"),
+                &safe_name,
+            );
             let data_len = data.len() as u64;
             std::fs::write(&temp_path, data)
                 .map_err(|e| format!("Failed to write extracted RAR entry: {}", e))?;
@@ -526,11 +526,11 @@ async fn extract_sevenz_entry(
         let (safe_name, size, buf) =
             found.ok_or_else(|| format!("Entry index {} not found in 7z archive", entry_index))?;
 
-        let temp_path = std::env::temp_dir().join(format!(
-            "{}_{}",
-            generate_unique_temp_prefix("extract"),
-            safe_name
-        ));
+        let temp_path = crate::temp_storage::get_temp_file_path(
+            None,
+            &generate_unique_temp_prefix("extract"),
+            &safe_name,
+        );
         std::fs::write(&temp_path, &buf)
             .map_err(|e| format!("Failed to write extracted 7z entry: {}", e))?;
 

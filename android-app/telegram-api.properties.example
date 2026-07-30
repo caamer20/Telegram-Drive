@@ -1,0 +1,3 @@
+# Copy to telegram-api.properties (ignored) and provide values from my.telegram.org.
+apiId=
+apiHash=

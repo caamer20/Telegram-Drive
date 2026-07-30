@@ -207,6 +207,50 @@ export const OneDriveMigrationPage: React.FC = () => {
         }
     };
     
+    const handleExportCsv = async () => {
+        if (!currentDetail?.files) {
+            setError("No files to export");
+            return;
+        }
+        
+        try {
+            const header = ["ID", "Name", "Path", "Size", "Stage", "Last Error", "Updated At"];
+            const escapeCsv = (str: string | null | undefined) => {
+                if (!str) return '""';
+                const s = String(str);
+                if (s.includes(',') || s.includes('"') || s.includes('\n')) {
+                    return `"${s.replace(/"/g, '""')}"`;
+                }
+                return s;
+            };
+
+            const rows = currentDetail.files.map(f => [
+                f.id,
+                escapeCsv(f.name),
+                escapeCsv(f.path),
+                f.size,
+                escapeCsv(f.pipeline_stage),
+                escapeCsv(f.last_error),
+                new Date(f.updated_at * 1000).toISOString()
+            ].join(","));
+
+            const csvContent = [header.join(","), ...rows].join("\n");
+            
+            // Add timestamp to filename to prevent accidental overrides
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+            const targetPath = `/Volumes/DATASTORE/Temo/migration_queue_export_${timestamp}.csv`;
+            
+            await invoke('cmd_migration_export_queue_csv', { 
+                csvContent, 
+                filePath: targetPath 
+            });
+            
+            alert(`Đã lưu file CSV thành công tại:\n${targetPath}`);
+        } catch (e: any) {
+            setError(e.toString());
+        }
+    };
+    
     // We determine if we are in Setup phase or Execution phase
     const showSetup = !currentDetail
         || !msAccount
@@ -286,8 +330,14 @@ export const OneDriveMigrationPage: React.FC = () => {
                             
                             {/* File Table / Queue */}
                             <div className="flex-1 min-h-[300px] bg-slate-900/60 rounded-xl border border-slate-800/60 overflow-hidden flex flex-col">
-                                <div className="p-4 border-b border-slate-800/60 bg-slate-900/80">
+                                <div className="p-4 border-b border-slate-800/60 bg-slate-900/80 flex justify-between items-center">
                                     <h3 className="font-semibold text-slate-300">File Queue</h3>
+                                    <button 
+                                        onClick={handleExportCsv}
+                                        className="px-3 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 text-sm font-medium rounded-md transition-colors border border-slate-700"
+                                    >
+                                        Export CSV
+                                    </button>
                                 </div>
                                 <div className="flex-1 overflow-hidden">
                                     {currentDetail?.files && <FileTable files={currentDetail.files} onRetryItem={(itemId) => { console.log("Retry", itemId); }} />}

@@ -8,7 +8,9 @@
     "build": "tsc && vite build",
     "test": "vitest run",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "build:desktop": "tauri build",
+    "build:desktop:debug": "tauri build --debug"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

@@ -697,7 +697,7 @@ impl PipelineRunner {
             let query = format!(
                 "SELECT id, job_id, name, path, source_item_id, size, item_category, \
                  original_sha256, processed_sha256, video_decision, pipeline_stage, \
-                 original_artifact_path, processed_artifact_path \
+                 original_artifact_path, processed_artifact_path, retry_count \
                  FROM migration_items \
                  WHERE job_id = ? AND pipeline_stage NOT IN ({})",
                 terminal_stages
@@ -721,6 +721,7 @@ impl PipelineRunner {
                 let state: String = stmt.read(10).unwrap();
                 let original_path: Option<String> = stmt.read(11).unwrap_or_default();
                 let processed_path: Option<String> = stmt.read(12).unwrap_or_default();
+                let retry_count: i64 = stmt.read(13).unwrap_or(0);
 
                 items.push(PipelineItem {
                     id,
@@ -740,6 +741,7 @@ impl PipelineRunner {
                     processed_artifact_path: processed_path,
                     telegram_random_id: None,
                     video_decision,
+                    retry_count,
                 });
             }
             items
@@ -2862,6 +2864,7 @@ mod tests {
                     }
                     .to_string(),
                 ),
+                retry_count: 0,
             };
             assert!(
                 !validate_processed_artifact(&ContentInspector, &item).await,

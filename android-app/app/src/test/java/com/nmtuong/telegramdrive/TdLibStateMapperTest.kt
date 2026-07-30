@@ -12,4 +12,10 @@ class TdLibStateMapperTest {
     assertEquals(AuthorizationState.WaitingForTdlibParameters, TdLibStateMapper.authorizationState(json))
   }
   @Test fun ignoresUnrelatedUpdates() = assertNull(TdLibStateMapper.authorizationState("{\"@type\":\"ok\"}"))
+  @Test fun mapsNestedAuthorizationStateDetails() {
+    val password = """{"@type":"updateAuthorizationState","authorization_state":{"@type":"authorizationStateWaitPassword","password_hint":"pet"}}"""
+    val otherDevice = """{"@type":"authorizationStateWaitOtherDeviceConfirmation","link":"tg://login?token=safe-placeholder"}"""
+    assertEquals(AuthorizationState.WaitingForPassword("pet"), TdLibStateMapper.authorizationState(password))
+    assertEquals(AuthorizationState.WaitingForOtherDevice("tg://login?token=safe-placeholder"), TdLibStateMapper.authorizationState(otherDevice))
+  }
 }

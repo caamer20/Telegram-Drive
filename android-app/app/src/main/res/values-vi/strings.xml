@@ -1,0 +1,28 @@
+<resources>
+    <string name="app_name">Telegram Drive</string>
+    <string name="auth_title">Đăng nhập Telegram</string>
+    <string name="missing_configuration">Thiếu cấu hình Telegram API. Xem README.</string>
+    <string name="initializing">Đang khởi tạo Telegram…</string>
+    <string name="phone_label">Số điện thoại</string>
+    <string name="code_label">Mã xác thực</string>
+    <string name="password_label">Mật khẩu xác minh hai bước</string>
+    <string name="email_label">Địa chỉ email</string>
+    <string name="email_code_label">Mã email</string>
+    <string name="submit">Tiếp tục</string>
+    <string name="saved_messages">Tin nhắn đã lưu</string>
+    <string name="loading">Đang tải…</string>
+    <string name="empty_library">Không có media gần đây được hỗ trợ</string>
+    <string name="refresh">Tải lại</string>
+    <string name="logout">Đăng xuất</string>
+    <string name="download">Tải xuống</string>
+    <string name="cancel">Hủy</string>
+    <string name="preview">Xem</string>
+    <string name="back">Quay lại</string>
+    <string name="unsupported_state">Telegram yêu cầu bước chưa hỗ trợ: %1$s</string>
+    <string name="other_device">Xác nhận trên thiết bị khác: %1$s</string>
+    <string name="image_preview">Xem ảnh</string>
+    <string name="video_preview">Xem video</string>
+    <string name="media_error">Không thể mở file local này</string>
+    <string name="session_closed">Phiên Telegram đã đóng. Mở lại ứng dụng để đăng nhập lại.</string>
+    <string name="download_canceled">Đã hủy tải xuống</string>
+</resources>

@@ -22,6 +22,7 @@ fun DiagnosticsScreen(viewModel: DiagnosticsViewModel) {
     Text("Telegram Drive", style = MaterialTheme.typography.headlineMedium)
     Text("Phase 0 diagnostics", style = MaterialTheme.typography.titleMedium)
     DiagnosticRow("Data source", state.dataSource.id)
+    DiagnosticRow("Lifecycle", state.lifecycle.name.lowercase())
     DiagnosticRow("Native library", if (state.nativeLibraryLoaded) "loaded" else "not loaded")
     DiagnosticRow("TDLib client", if (state.clientCreated) "created" else "not created")
     DiagnosticRow("Authorization", state.authorizationState.javaClass.simpleName)

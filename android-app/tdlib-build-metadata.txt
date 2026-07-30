@@ -1,0 +1,14 @@
+format=telegram-drive-tdlib-build-v1
+tdlib_repository=https://github.com/tdlib/td.git
+tdlib_commit=022d60202e446ad1287b9fb68e687c8a0760788b
+openssl_source=https://github.com/openssl/openssl/releases/download/openssl-3.5.7/openssl-3.5.7.tar.gz
+openssl_version=3.5.7
+openssl_source_sha256=a8c0d28a529ca480f9f36cf5792e2cd21984552a3c8e4aa11a24aa31aeac98e8
+ndk_version=27.2.12479018
+cmake_version=3.22.1
+android_api=26
+build_host=Darwin-arm64
+binary.arm64-v8a.path=app/src/main/jniLibs/arm64-v8a/libtdjsonjava.so
+binary.arm64-v8a.sha256=2bf94a0c10605b370a23a908d25bb6e1c263115b498060eef00ebf00f0ed390b
+binary.x86_64.path=app/src/main/jniLibs/x86_64/libtdjsonjava.so
+binary.x86_64.sha256=a8c1a2da4ce873e7e3b09c3d1fea22255e6419beeca1aa88df597ba2173cbb5d

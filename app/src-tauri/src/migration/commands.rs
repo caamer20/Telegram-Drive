@@ -781,6 +781,7 @@ pub async fn cmd_migration_retry_failed(
                     processed_artifact_path: load_stmt.read::<Option<String>, _>(7).ok().flatten(),
                     telegram_random_id: None,
                     video_decision: load_stmt.read::<Option<String>, _>(10).ok().flatten(),
+                    retry_count: load_stmt.read::<i64, _>(11).unwrap_or(0),
                 },
                 load_stmt.read::<i64, _>(11).unwrap_or(0),
             ));
@@ -952,6 +953,12 @@ pub async fn cmd_migration_reset_database(state: State<'_, MigrationState>) -> R
     Ok(())
 }
 
+#[tauri::command]
+pub async fn cmd_migration_export_queue_csv(csv_content: String, file_path: String) -> Result<(), String> {
+    std::fs::write(&file_path, csv_content).map_err(|e| format!("Failed to write CSV: {}", e))?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod resume_tests {
     use super::{determine_retry_route, latest_resumable_job, mark_interrupted_job_stopped};
@@ -1023,6 +1030,7 @@ mod resume_tests {
             processed_artifact_path: processed.map(|path| path.to_string_lossy().into_owned()),
             telegram_random_id: Some(987654321),
             video_decision: Some(decision.to_string()),
+            retry_count: 0,
         }
     }
 

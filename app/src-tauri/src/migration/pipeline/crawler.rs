@@ -394,6 +394,7 @@ impl StreamingCrawler {
                         processed_artifact_path: None,
                         telegram_random_id: None,
                         video_decision: None,
+                        retry_count: 0,
                     });
                 }
                 stmt_file.reset().map_err(|error| error.to_string())?;

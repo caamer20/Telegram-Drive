@@ -780,11 +780,7 @@ async fn api_bulk_files(
                 }
             }
 
-            let temp_zip_path = std::env::temp_dir().join(format!(
-                "archive_{}_{}.zip",
-                rand::random::<u32>(),
-                rand::random::<u32>()
-            ));
+            let temp_zip_path = crate::temp_storage::get_temp_file_path(None, "archive", "zip");
             let zip_path_for_task = temp_zip_path.clone();
 
             // All zip I/O runs on a blocking thread — never touches Actix workers.
@@ -1188,11 +1184,7 @@ async fn api_upload_file(
         None => return json_error("NOT_CONNECTED", "Telegram client is not connected", 503),
     };
 
-    let temp_path = std::env::temp_dir().join(format!(
-        "upload_{}_{}",
-        rand::random::<u32>(),
-        rand::random::<u32>()
-    ));
+    let temp_path = crate::temp_storage::get_temp_file_path(None, "upload", "");
     let mut file = match tokio::fs::File::create(&temp_path).await {
         Ok(f) => f,
         Err(e) => return json_error("TEMP_FILE_CREATE_FAILED", &e.to_string(), 500),
@@ -1804,11 +1796,11 @@ async fn api_get_file_thumbnail(
             };
 
             if is_image {
-                let temp_path = std::env::temp_dir().join(format!(
-                    "thumb_{}_{}",
-                    message_id,
-                    rand::random::<u32>()
-                ));
+                let temp_path = crate::temp_storage::get_temp_file_path(
+                    None,
+                    &format!("thumb_{}", message_id),
+                    "",
+                );
                 let temp_path_str = temp_path.to_string_lossy().to_string();
 
                 let thumbs = match &media {

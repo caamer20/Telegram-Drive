@@ -2012,7 +2012,7 @@ pub async fn cmd_zip_folder(folder_path: String) -> Result<String, String> {
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| "folder".to_string());
 
-    let zip_path = std::env::temp_dir().join(format!("{}.zip", folder_name));
+    let zip_path = crate::temp_storage::get_temp_file_path(None, &folder_name, "zip");
     let src_owned = src.clone();
     let out_path = zip_path.clone();
 
@@ -2080,10 +2080,13 @@ pub async fn cmd_delete_temp_zip(path: String) -> Result<(), String> {
         let canonical_p = p
             .canonicalize()
             .map_err(|e| format!("Invalid path: {}", e))?;
-        let tmp = std::env::temp_dir()
-            .canonicalize()
-            .map_err(|e| format!("Could not resolve temp directory: {}", e))?;
-        if !canonical_p.starts_with(&tmp) {
+        let tmp = crate::temp_storage::get_media_temp_dir(None);
+        let sys_tmp = std::env::temp_dir();
+        let canonical_tmp = tmp.canonicalize().ok();
+        let canonical_sys_tmp = sys_tmp.canonicalize().ok();
+        let is_in_temp = canonical_tmp.as_ref().map_or(false, |t| canonical_p.starts_with(t))
+            || canonical_sys_tmp.as_ref().map_or(false, |t| canonical_p.starts_with(t));
+        if !is_in_temp {
             return Err("Refusing to delete file outside temp directory".to_string());
         }
         std::fs::remove_file(&canonical_p).map_err(|e| e.to_string())?;
@@ -2487,7 +2490,7 @@ pub async fn cmd_upload_from_url(
         .and_then(|v| v.to_str().ok())
         .and_then(|s| s.parse::<u64>().ok());
 
-    let temp_dir = std::env::temp_dir();
+    let temp_dir = crate::temp_storage::get_media_temp_dir(None);
 
     if let Some(sz) = known_size {
         if sz > 2_147_483_648 {

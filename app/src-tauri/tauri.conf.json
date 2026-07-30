@@ -12,7 +12,7 @@
     }
   },
   "productName": "Telegram Drive",
-  "version": "1.9.7",
+  "version": "1.9.9",
   "identifier": "com.cameronamer.telegramdrive",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -29,7 +29,7 @@
         "minWidth": 1000,
         "minHeight": 700,
         "dragDropEnabled": false,
-        "devtools": true
+        "devtools": false
       }
     ],
     "security": {
@@ -42,8 +42,14 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
-    "createUpdaterArtifacts": false,
+    "targets": [
+      "deb",
+      "appimage",
+      "msi",
+      "nsis",
+      "dmg"
+    ],
+    "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -52,7 +58,13 @@
       "icons/icon.ico"
     ],
     "macOS": {
-      "entitlements": "entitlements.plist"
+      "entitlements": "entitlements.plist",
+      "minimumSystemVersion": "10.15"
+    },
+    "linux": {
+      "deb": {
+        "depends": []
+      }
     },
     "android": {
       "minSdkVersion": 24

@@ -95,6 +95,7 @@ pub struct PipelineItem {
     pub processed_artifact_path: Option<String>,
     pub telegram_random_id: Option<i64>,
     pub video_decision: Option<String>,
+    pub retry_count: i64,
 }
 
 // Media metadata return from ffprobe

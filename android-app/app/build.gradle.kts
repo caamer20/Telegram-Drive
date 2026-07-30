@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
   alias(libs.plugins.android.application)
   alias(libs.plugins.compose.compiler)
@@ -5,6 +7,11 @@ plugins {
 }
 
 val telegramDataSource = providers.gradleProperty("telegramDataSource").orElse("real")
+val telegramApiProperties = Properties().apply {
+    rootProject.file("telegram-api.properties").takeIf { it.isFile }?.inputStream()?.use(::load)
+}
+val telegramApiId = telegramApiProperties.getProperty("apiId")?.toIntOrNull() ?: 0
+val telegramApiHash = telegramApiProperties.getProperty("apiHash").orEmpty()
 
 android {
     namespace = "com.nmtuong.telegramdrive"
@@ -16,6 +23,9 @@ android {
         versionCode = 1
         versionName = "1.0"
         buildConfigField("String", "TELEGRAM_DATA_SOURCE", "\"${telegramDataSource.get()}\"")
+        buildConfigField("int", "TELEGRAM_API_ID", telegramApiId.toString())
+        buildConfigField("String", "TELEGRAM_API_HASH", "\"${telegramApiHash.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
+        buildConfigField("boolean", "TELEGRAM_API_CONFIGURED", (telegramApiId > 0 && telegramApiHash.isNotBlank()).toString())
         ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
     }
 
@@ -61,6 +71,9 @@ dependencies {
   implementation(libs.androidx.lifecycle.runtime.compose)
   implementation(libs.androidx.lifecycle.viewmodel.compose)
   implementation(libs.kotlinx.coroutines.android)
+  implementation(libs.kotlinx.serialization.json)
+  implementation(libs.androidx.media3.exoplayer)
+  implementation(libs.androidx.media3.ui)
 
   // Compose
   implementation(libs.androidx.compose.ui)

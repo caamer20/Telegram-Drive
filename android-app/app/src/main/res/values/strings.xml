@@ -1,3 +1,28 @@
 <resources>
     <string name="app_name">Telegram Drive</string>
+    <string name="auth_title">Telegram sign in</string>
+    <string name="missing_configuration">Telegram API configuration is missing. See README.</string>
+    <string name="initializing">Initializing Telegram…</string>
+    <string name="phone_label">Phone number</string>
+    <string name="code_label">Authentication code</string>
+    <string name="password_label">Two-step verification password</string>
+    <string name="email_label">Email address</string>
+    <string name="email_code_label">Email code</string>
+    <string name="submit">Continue</string>
+    <string name="saved_messages">Saved Messages</string>
+    <string name="loading">Loading…</string>
+    <string name="empty_library">No supported recent media</string>
+    <string name="refresh">Refresh</string>
+    <string name="logout">Log out</string>
+    <string name="download">Download</string>
+    <string name="cancel">Cancel</string>
+    <string name="preview">Preview</string>
+    <string name="back">Back</string>
+    <string name="unsupported_state">Telegram requires an unsupported step: %1$s</string>
+    <string name="other_device">Confirm on another device: %1$s</string>
+    <string name="image_preview">Image preview</string>
+    <string name="video_preview">Video preview</string>
+    <string name="media_error">Unable to open this local file</string>
+    <string name="session_closed">Telegram session closed. Reopen the app to sign in again.</string>
+    <string name="download_canceled">Download canceled</string>
 </resources>

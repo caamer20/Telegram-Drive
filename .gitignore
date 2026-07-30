@@ -28,6 +28,7 @@ Error.html
 .gradle/
 local.properties
 android-app/local.properties
+android-app/telegram-api.properties
 android-app/.gradle/
 android-app/**/build/
 android-app/**/.cxx/

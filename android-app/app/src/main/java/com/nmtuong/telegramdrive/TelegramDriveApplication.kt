@@ -12,9 +12,4 @@ class TelegramDriveApplication : Application() {
     container = AppContainer.create(this)
     container.start()
   }
-
-  override fun onTerminate() {
-    container.close()
-    super.onTerminate()
-  }
 }
