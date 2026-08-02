@@ -114,7 +114,7 @@ export function DesktopAdBanner() {
     try {
       await open(AD_CLICK_URL);
     } catch {
-      window.open(AD_CLICK_URL, '_blank');
+      window.open(AD_CLICK_URL, '_blank', 'noopener,noreferrer');
     }
   }, []);
 

@@ -37,7 +37,7 @@ export default function AdsterraBanner({ visible }: AdsterraBannerProps) {
     try {
       await open(SMARTLINK_URL);
     } catch {
-      window.open(SMARTLINK_URL, '_blank');
+      window.open(SMARTLINK_URL, '_blank', 'noopener,noreferrer');
     }
   }, []);
 
