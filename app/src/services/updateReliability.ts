@@ -19,6 +19,30 @@ interface PendingUpdate {
     createdAt: string;
 }
 
+function readLocalStorage(key: string): string | null {
+    try {
+        return localStorage.getItem(key);
+    } catch {
+        return null;
+    }
+}
+
+function writeLocalStorage(key: string, value: string): void {
+    try {
+        localStorage.setItem(key, value);
+    } catch {
+        // Storage can be unavailable in private browsing or locked-down shells.
+    }
+}
+
+function removeLocalStorage(key: string): void {
+    try {
+        localStorage.removeItem(key);
+    } catch {
+        // Best-effort cleanup should not mask the original update error.
+    }
+}
+
 function writePendingUpdate(update: Update): void {
     const pending: PendingUpdate = {
         fromVersion: update.currentVersion,
@@ -26,7 +50,7 @@ function writePendingUpdate(update: Update): void {
         body: update.body,
         createdAt: new Date().toISOString(),
     };
-    localStorage.setItem(PENDING_UPDATE_KEY, JSON.stringify(pending));
+    writeLocalStorage(PENDING_UPDATE_KEY, JSON.stringify(pending));
 }
 
 export async function installVerifiedUpdate(
@@ -72,25 +96,25 @@ export async function installVerifiedUpdate(
         await update.install();
         await relaunch();
     } catch (error) {
-        localStorage.removeItem(PENDING_UPDATE_KEY);
+        removeLocalStorage(PENDING_UPDATE_KEY);
         throw error;
     }
 }
 
 export function consumeWhatsNew(currentVersion: string): WhatsNewDetails | null {
-    const lastSeenVersion = localStorage.getItem(LAST_SEEN_VERSION_KEY);
-    localStorage.setItem(LAST_SEEN_VERSION_KEY, currentVersion);
+    const lastSeenVersion = readLocalStorage(LAST_SEEN_VERSION_KEY);
+    writeLocalStorage(LAST_SEEN_VERSION_KEY, currentVersion);
 
-    const rawPending = localStorage.getItem(PENDING_UPDATE_KEY);
+    const rawPending = readLocalStorage(PENDING_UPDATE_KEY);
     if (rawPending) {
         try {
             const pending = JSON.parse(rawPending) as PendingUpdate;
             if (pending.toVersion === currentVersion) {
-                localStorage.removeItem(PENDING_UPDATE_KEY);
+                removeLocalStorage(PENDING_UPDATE_KEY);
                 return { version: currentVersion, body: pending.body, updated: true };
             }
         } catch {
-            localStorage.removeItem(PENDING_UPDATE_KEY);
+            removeLocalStorage(PENDING_UPDATE_KEY);
         }
     }
 
