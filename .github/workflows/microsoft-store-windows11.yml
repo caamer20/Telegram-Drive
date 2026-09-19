@@ -1,0 +1,45 @@
+name: Microsoft Store Windows 11 installation
+
+on:
+  push:
+    branches: [codex/windows-store]
+    paths: ['.github/workflows/microsoft-store-windows11.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  windows-11-install:
+    runs-on: windows-11-arm
+    timeout-minutes: 90
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SOURCE_RUN_ID: '35424941181'
+      SOURCE_COMMIT: 'd2338c270d72236277e5ef88145a6640117c069f'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Obtain the verified x64 Store candidate
+        shell: pwsh
+        run: |
+          gh run watch $env:SOURCE_RUN_ID --repo $env:GITHUB_REPOSITORY --interval 30
+          $run = gh run view $env:SOURCE_RUN_ID --repo $env:GITHUB_REPOSITORY --json headSha,jobs | ConvertFrom-Json
+          if ($run.headSha -ne $env:SOURCE_COMMIT) { throw 'Unexpected package source commit.' }
+          foreach ($name in @('validate-windows', 'build-msix')) {
+            $job = @($run.jobs | Where-Object name -eq $name)
+            if ($job.Count -ne 1 -or $job[0].conclusion -ne 'success') { throw "Required source job did not pass: $name" }
+          }
+          gh run download $env:SOURCE_RUN_ID --repo $env:GITHUB_REPOSITORY --name Telegram-Drive-Microsoft-Store-x64 --dir candidate
+          if ($LASTEXITCODE -ne 0) { throw 'Could not download the binary candidate.' }
+      - name: Verify Windows 11 installation and package-context compatibility
+        shell: powershell
+        run: ./.github/scripts/test-microsoft-store-install.ps1 -PackagePath ./candidate/Telegram-Drive_3.9.0.0_x64.msix -ReportDirectory ./installation-report
+      - name: Upload the Windows 11 installation report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: Telegram-Drive-Windows-11-installation-report
+          path: installation-report/*.json
+          if-no-files-found: warn
+          retention-days: 14
