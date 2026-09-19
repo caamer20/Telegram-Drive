@@ -67,7 +67,9 @@ if ($vcIdentity.Name -ne 'Microsoft.VCLibs.140.00.UWPDesktop' -or
 
 Push-Location $AppRoot
 try {
-  & npm run tauri -- build --no-bundle --config src-tauri/tauri.microsoft-store.conf.json
+  # The regular npm wrapper prepares the standalone NSIS prerequisites.
+  # MSIX uses the VCLibs framework and the verified fixed WebView2 runtime.
+  & (Join-Path $AppRoot 'node_modules/.bin/tauri.cmd') build --no-bundle --config src-tauri/tauri.microsoft-store.conf.json
   if ($LASTEXITCODE -ne 0) { throw 'The Store build failed.' }
 } finally { Pop-Location }
 

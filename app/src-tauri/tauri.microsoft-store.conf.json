@@ -5,6 +5,7 @@
     "windows": {
       "webviewInstallMode": {
         "type": "fixedRuntime",
+        "silent": null,
         "path": "resources/webview2"
       }
     }
