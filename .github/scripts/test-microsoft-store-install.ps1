@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
   [Parameter(Mandatory = $true)][string]$PackagePath,
-  [Parameter(Mandatory = $true)][string]$ReportDirectory
+  [Parameter(Mandatory = $true)][string]$ReportDirectory,
+  [switch]$LaunchApplication
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -37,6 +38,7 @@ $report = [ordered]@{
   officialIcons = 'pending'
   packagedDataAndCredentialProbe = 'pending'
   uninstallPreservesUnvirtualizedData = 'pending'
+  applicationLaunch = 'not requested on this runner'
   desktopUiAndAuthenticatedTelegramAcceptance = 'not tested; requires Windows 10/11 desktop validation'
   storeCertification = 'not performed'
 }
@@ -44,6 +46,7 @@ $certificate = $null
 $installed = $false
 $credentialTarget = "store-validation-$testId.com.cameronamer.telegramdrive.supporter"
 $markerPaths = @()
+$applicationProcessIds = @()
 try {
   Add-Type -AssemblyName System.IO.Compression.FileSystem
   $unpacked = Join-Path $testRoot 'unpacked'
@@ -150,6 +153,35 @@ $result | ConvertTo-Json | Set-Content $config.output
     if ([IO.File]::ReadAllText($marker) -ne "$testId-packaged") { throw 'Packaged writes were redirected away from existing app data.' }
   }
   $report.packagedDataAndCredentialProbe = $probe
+  if ($LaunchApplication) {
+    $applicationPath = Join-Path $package.InstallLocation 'app.exe'
+    $runtimePath = [IO.Path]::GetFullPath((Join-Path $package.InstallLocation 'resources/webview2/msedgewebview2.exe'))
+    if ((Get-FileHash $applicationPath -Algorithm SHA256).Hash.ToLowerInvariant() -ne $receipt.applicationSha256) {
+      throw 'The installed application differs from the verified build.'
+    }
+    Invoke-CommandInDesktopPackage -PackageFamilyName $family -AppId TelegramDrive -Command $applicationPath -PreventBreakaway
+    $deadline = (Get-Date).AddSeconds(60)
+    $applicationProcesses = @()
+    $runtimeProcesses = @()
+    do {
+      Start-Sleep -Seconds 2
+      $applicationProcesses = @(Get-CimInstance Win32_Process -Filter "Name='app.exe'" | Where-Object ExecutablePath -eq $applicationPath)
+      $runtimeProcesses = @(Get-CimInstance Win32_Process -Filter "Name='msedgewebview2.exe'" | Where-Object ExecutablePath -eq $runtimePath)
+    } while (($applicationProcesses.Count -eq 0 -or $runtimeProcesses.Count -eq 0) -and (Get-Date) -lt $deadline)
+    $applicationProcessIds = @($applicationProcesses | ForEach-Object ProcessId)
+    if ($applicationProcesses.Count -eq 0 -or $runtimeProcesses.Count -eq 0) {
+      throw 'The installed app did not remain running with the bundled WebView2 runtime.'
+    }
+    Start-Sleep -Seconds 10
+    if (@($applicationProcessIds | ForEach-Object { Get-Process -Id $_ -ErrorAction SilentlyContinue }).Count -eq 0) {
+      throw 'The installed application exited during startup validation.'
+    }
+    $report.applicationLaunch = 'passed: exact installed executable remains running and uses the bundled fixed WebView2 runtime'
+    $report.runtimeProcessCount = $runtimeProcesses.Count
+    $applicationProcessIds | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue }
+    $applicationProcessIds = @()
+    Start-Sleep -Seconds 2
+  }
   Remove-AppxPackage -Package $package.PackageFullName
   $installed = $false
   foreach ($marker in $markerPaths) {
@@ -163,6 +195,7 @@ $result | ConvertTo-Json | Set-Content $config.output
   $report.error = $_.Exception.Message
   throw
 } finally {
+  $applicationProcessIds | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue }
   if ($installed) { Get-AppxPackage -Name $packageName | Remove-AppxPackage -ErrorAction Continue }
   & cmdkey.exe "/delete:$credentialTarget" | Out-Null
   foreach ($directory in $dataDirectories) { if (Test-Path $directory) { Remove-Item -LiteralPath $directory -Recurse -Force } }

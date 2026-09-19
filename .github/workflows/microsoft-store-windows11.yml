@@ -34,7 +34,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Could not download the binary candidate.' }
       - name: Verify Windows 11 installation and package-context compatibility
         shell: powershell
-        run: ./.github/scripts/test-microsoft-store-install.ps1 -PackagePath ./candidate/Telegram-Drive_3.9.0.0_x64.msix -ReportDirectory ./installation-report
+        run: ./.github/scripts/test-microsoft-store-install.ps1 -PackagePath ./candidate/Telegram-Drive_3.9.0.0_x64.msix -ReportDirectory ./installation-report -LaunchApplication
       - name: Upload the Windows 11 installation report
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
