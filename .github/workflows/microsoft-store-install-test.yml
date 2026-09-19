@@ -1,0 +1,44 @@
+name: Microsoft Store installation check
+
+on:
+  push:
+    branches: [codex/windows-store]
+    paths:
+      - '.github/workflows/microsoft-store-install-test.yml'
+      - '.github/scripts/test-microsoft-store-install.ps1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  install-package:
+    runs-on: windows-2022
+    timeout-minutes: 90
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SOURCE_RUN_ID: '35423391333'
+      SOURCE_COMMIT: '6bbee209dc61c0e596c19aca3f12592280f5dbb5'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Obtain the verified binary candidate
+        shell: pwsh
+        run: |
+          gh run watch $env:SOURCE_RUN_ID --repo $env:GITHUB_REPOSITORY --exit-status --interval 30
+          if ($LASTEXITCODE -ne 0) { throw 'The source package workflow did not pass.' }
+          $run = gh run view $env:SOURCE_RUN_ID --repo $env:GITHUB_REPOSITORY --json headSha,conclusion | ConvertFrom-Json
+          if ($run.headSha -ne $env:SOURCE_COMMIT -or $run.conclusion -ne 'success') { throw 'Unexpected source run.' }
+          gh run download $env:SOURCE_RUN_ID --repo $env:GITHUB_REPOSITORY --name Telegram-Drive-Microsoft-Store-x64 --dir candidate
+          if ($LASTEXITCODE -ne 0) { throw 'Could not download the binary candidate.' }
+      - name: Test installation and compatibility in an isolated Windows runner
+        shell: powershell
+        run: ./.github/scripts/test-microsoft-store-install.ps1 -PackagePath ./candidate/Telegram-Drive_3.9.0.0_x64.msix -ReportDirectory ./installation-report
+      - name: Upload the installation report only
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: Telegram-Drive-Store-installation-report
+          path: installation-report/*.json
+          if-no-files-found: warn
+          retention-days: 14

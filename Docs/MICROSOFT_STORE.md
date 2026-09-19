@@ -55,6 +55,21 @@ The script builds the application with the Store configuration, includes the fix
 
 The fixed WebView2 runtime needs to be refreshed and tested for later Store releases; it does not receive Evergreen runtime updates. The initial package targets x64 Windows 10 build 19041 or later. Native compatibility remains to be verified before submission.
 
+## Branding and public links
+
+The owner confirmed the released Telegram-Drive icon and these two public sites on September 19, 2026:
+
+- Product website: https://telegram-drive.com
+- Developer website: https://www.cameronamer.com
+
+Use the existing `app/src-tauri/icons/icon.png` and Windows logo variants. The main icon SHA-256 is `208ac26fcff2a05818b934c0db98e4a36f5d91bca6761efc8fc01f1a03e1820a`; the isolated checkout matches the official released and current local assets. Include both sites in the description if Partner Center provides only one website field, with the product site in that field.
+
+## Approved runtime
+
+The owner explicitly approved accepting and downloading Microsoft Edge WebView2 Fixed Version 153.0.4234.48 x64. The Microsoft-hosted CAB was downloaded after acceptance and has SHA-256 `11e8240cb0bc56dcd3e4498907203c251346f65107fe35a3a13e152c7d51c79e` (308,509,880 bytes). Its official source URL and checksum are supplied through the Store workflow repository variables. Windows Authenticode verification remains mandatory in the packaging script.
+
+Keep all runtime notices in the package. The Store listing must disclose the runtime's Microsoft Defender SmartScreen data handling, with Microsoft's privacy links, and the required runtime terms must be included in the submission's license information before publication. This does not alter the application's optional $5 lifetime supporter contract.
+
 ## Updates and existing users
 
 - A Windows package-identity check identifies MSIX installations. The standalone updater plugin is not registered for those installations; the frontend also avoids the GitHub update check. The Settings update action opens Microsoft's supported Store updates page.
@@ -73,7 +88,7 @@ Use an isolated Windows VM and test-only credentials. A local test certificate m
 - Existing standalone-to-Store activation and data preservation, Store-to-Store updates, offline-grace ad suppression, recovery and device allowance. All stable credential identifiers must remain unchanged.
 - Store-managed updates never launch the GitHub installer, including Settings and background update checks.
 - Windows App Certification Kit, dependency resolution, package manifest validation and installation on supported Windows 10/11 versions.
-- Capture fresh Windows screenshots after native acceptance. The old repository screenshots inspected during preparation show macOS window chrome and should not be submitted as current Windows screenshots.
+- The owner explicitly requested the existing project screenshots. Use the selected original desktop images unchanged; they include macOS window chrome and must not be described as newly captured Windows screenshots. Microsoft may request platform-specific replacements during review.
 
 ## Store submission
 
@@ -96,7 +111,7 @@ Complete pricing/availability, properties, the actual age-rating questionnaire, 
 - Supporter Worker bundle dry run: passed; no production deployment performed.
 - PowerShell packaging script: syntax parsed successfully with official PowerShell 7.
 
-These checks do not exercise Windows-only API branches, build an MSIX, prove an upgrade preserves Windows credentials, or replace native acceptance and Store certification.
+GitHub Actions run `35423391333`, attempt 1, also passed the focused frontend checks/build, native Windows installation and supporter tests, and supporter-service checks on Windows Server 2022. The MSIX job was skipped while runtime approval was pending. Those checks do not prove installed-package behavior, preserve Windows credentials across a real installation, or replace Windows 10/11 acceptance and Store certification.
 
 ## Official references
 
