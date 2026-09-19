@@ -2,7 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 
 export interface InstallationInfo {
     managedByPackageManager: boolean;
-    packageManager: 'pacman' | null;
+    packageManager: 'pacman' | 'microsoft-store' | null;
 }
 
 export const RELEASES_URL = 'https://github.com/caamer20/Telegram-Drive/releases/latest';

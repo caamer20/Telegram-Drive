@@ -66,6 +66,17 @@ export function useUpdateCheck() {
                 return;
             }
             const installation = await getInstallationInfo();
+            if (installation.packageManager === 'microsoft-store') {
+                setUpdate(null);
+                setState(s => ({
+                    ...s,
+                    checking: false,
+                    available: false,
+                    version: null,
+                    managedByPackageManager: true,
+                }));
+                return;
+            }
             const updateInfo = await check();
             if (updateInfo) {
                 setUpdate(updateInfo);

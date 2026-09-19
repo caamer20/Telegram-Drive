@@ -1,0 +1,13 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "bundle": {
+    "createUpdaterArtifacts": false,
+    "windows": {
+      "webviewInstallMode": {
+        "type": "fixedRuntime",
+        "path": "resources/webview2"
+      }
+    }
+  },
+  "productName": "Telegram-Drive"
+}

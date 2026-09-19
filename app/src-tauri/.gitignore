@@ -8,3 +8,6 @@
 
 # Downloaded and Authenticode-verified by the Windows release workflow.
 /resources/vc_redist.x64.exe
+
+# Microsoft Store runtime payload; downloaded separately from Microsoft.
+/resources/webview2/

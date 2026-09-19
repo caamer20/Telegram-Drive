@@ -1,0 +1,137 @@
+name: Microsoft Store candidate
+
+on:
+  push:
+    branches: [codex/windows-store]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: microsoft-store-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate-windows:
+    runs-on: windows-2022
+    timeout-minutes: 60
+    env:
+      TELEGRAM_DRIVE_SUPPORTER_SERVICE_URL: ${{ vars.SUPPORTER_SERVICE_URL }}
+      TELEGRAM_DRIVE_SUPPORTER_PUBLIC_KEY: ${{ vars.SUPPORTER_PUBLIC_KEY }}
+      WRANGLER_SEND_METRICS: 'false'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            app/package-lock.json
+            supporter-service/package-lock.json
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
+      - name: Verify unchanged production supporter configuration
+        shell: pwsh
+        run: |
+          if ($env:TELEGRAM_DRIVE_SUPPORTER_SERVICE_URL -ne 'https://telegram-drive-supporter.cameron-amer.workers.dev' -or
+              $env:TELEGRAM_DRIVE_SUPPORTER_PUBLIC_KEY -ne 'cp3gvSJPjRZDYXZ5EDLfqxbxEe8VHSx5G_vfwMx7s5c') {
+            throw 'The Store must preserve the production supporter origin and public key.'
+          }
+          $health = Invoke-RestMethod "$env:TELEGRAM_DRIVE_SUPPORTER_SERVICE_URL/health"
+          if ($health.status -ne 'ok' -or $health.price -ne '5.00' -or $health.currency -ne 'USD' -or
+              $health.max_active_devices -ne 3 -or $health.entitlement_public_key -ne $env:TELEGRAM_DRIVE_SUPPORTER_PUBLIC_KEY) {
+            throw 'Supporter health no longer matches the protected release contract.'
+          }
+      - name: Install frontend dependencies
+        working-directory: app
+        run: npm ci
+      - name: Verify Store routing and protected supporter behavior
+        working-directory: app
+        run: >-
+          npm test -- --run tests/unit/microsoftStoreUpdates.test.tsx
+          tests/unit/SettingsModalTranscodeCache.test.tsx tests/unit/releaseGates.test.ts
+          tests/unit/SupporterContext.test.tsx tests/unit/SupporterSettingsSection.test.tsx
+          tests/unit/MobileSupporterCard.test.tsx tests/unit/supporterVisibility.test.ts
+          tests/unit/sponsorLinks.test.ts
+      - name: Build frontend and enforce bundle budgets
+        working-directory: app
+        run: npm run build:verify
+      - name: Verify native Windows installation behavior
+        working-directory: app/src-tauri
+        run: cargo test --locked --lib installation
+      - name: Verify native Windows supporter compatibility
+        working-directory: app/src-tauri
+        run: cargo test --locked --lib supporter
+      - name: Install supporter service test dependencies
+        working-directory: supporter-service
+        run: npm ci
+      - name: Type check supporter service
+        working-directory: supporter-service
+        run: npm run check
+      - name: Test supporter service
+        working-directory: supporter-service
+        run: npm test
+      - name: Validate Worker bundle without deployment
+        working-directory: supporter-service
+        run: npx wrangler deploy --dry-run
+
+  build-msix:
+    needs: validate-windows
+    if: vars.MICROSOFT_STORE_WEBVIEW2_LICENSE_ACCEPTED == 'true'
+    runs-on: windows-2022
+    timeout-minutes: 90
+    env:
+      TELEGRAM_DRIVE_SUPPORTER_SERVICE_URL: ${{ vars.SUPPORTER_SERVICE_URL }}
+      TELEGRAM_DRIVE_SUPPORTER_PUBLIC_KEY: ${{ vars.SUPPORTER_PUBLIC_KEY }}
+      WEBVIEW2_FIXED_URL: ${{ vars.MICROSOFT_STORE_WEBVIEW2_URL }}
+      WEBVIEW2_FIXED_SHA256: ${{ vars.MICROSOFT_STORE_WEBVIEW2_SHA256 }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
+      - name: Download and verify the licensed Microsoft runtime
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $uri = [uri]$env:WEBVIEW2_FIXED_URL
+          if ($uri.Scheme -ne 'https' -or $uri.Host -ne 'msedge.sf.dl.delivery.mp.microsoft.com' -or
+              $uri.AbsolutePath -notlike '*.cab' -or $env:WEBVIEW2_FIXED_SHA256 -notmatch '^[a-fA-F0-9]{64}$') {
+            throw 'Provide the approved official Microsoft CAB URL and its pinned SHA-256.'
+          }
+          $cab = Join-Path $env:RUNNER_TEMP 'webview2-fixed.cab'
+          Invoke-WebRequest -Uri $uri -OutFile $cab
+          if ((Get-FileHash $cab -Algorithm SHA256).Hash -ne $env:WEBVIEW2_FIXED_SHA256) {
+            throw 'WebView2 CAB checksum mismatch.'
+          }
+          $unpacked = Join-Path $env:RUNNER_TEMP 'webview2-fixed'
+          New-Item -ItemType Directory -Path $unpacked -Force | Out-Null
+          & expand.exe $cab '-F:*' $unpacked
+          if ($LASTEXITCODE -ne 0) { throw 'WebView2 CAB extraction failed.' }
+          $executables = @(Get-ChildItem $unpacked -Filter msedgewebview2.exe -File -Recurse)
+          if ($executables.Count -ne 1) { throw 'Expected exactly one fixed WebView2 runtime.' }
+          $runtime = Join-Path $env:GITHUB_WORKSPACE 'app/src-tauri/resources/webview2'
+          New-Item -ItemType Directory -Path (Split-Path $runtime) -Force | Out-Null
+          Copy-Item -LiteralPath $executables[0].Directory.FullName -Destination $runtime -Recurse
+      - name: Install frontend dependencies
+        working-directory: app
+        run: npm ci
+      - name: Build unsigned Microsoft Store candidate
+        shell: pwsh
+        run: >-
+          ./app/scripts/package-microsoft-store.ps1
+          -PackageName 'CameronAmer.Telegram-Drive'
+          -Publisher 'CN=89634FAE-7570-4D3F-B685-647564F5B488'
+          -PublisherDisplayName 'CameronAmer'
+      - name: Upload binary candidate and receipt only
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: Telegram-Drive-Microsoft-Store-x64
+          path: |
+            CompiledApps/MicrosoftStore/Telegram-Drive_*.msix
+            CompiledApps/MicrosoftStore/Telegram-Drive_*.msix.json
+          if-no-files-found: error
+          retention-days: 14

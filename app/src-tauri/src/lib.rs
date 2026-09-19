@@ -949,7 +949,13 @@ pub fn run() {
     // The updater plugin is not supported on Android and can cause crashes
     // (APKs are managed by the Play Store; the plugin attempts restricted FS ops).
     #[cfg(not(target_os = "android"))]
-    let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+    let builder = if installation::is_packaged_windows_app() {
+        // MSIX updates belong to the Store. Do not expose the standalone
+        // installer path even if a frontend caller tries to invoke it.
+        builder
+    } else {
+        builder.plugin(tauri_plugin_updater::Builder::new().build())
+    };
 
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     let builder = builder.plugin(tauri_plugin_window_state::Builder::default().build());
@@ -1458,6 +1464,7 @@ pub fn run() {
             cmd_remove_cached_path,
             cmd_get_system_diagnostics,
             installation::cmd_get_installation_info,
+            installation::cmd_open_microsoft_store_updates,
             android_updates::cmd_check_android_update,
             android_updates::cmd_download_and_install_android_update,
             android_security::cmd_get_android_authentication_available,

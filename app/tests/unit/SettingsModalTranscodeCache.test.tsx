@@ -1,11 +1,15 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-const { invokeMock, openMock } = vi.hoisted(() => ({ invokeMock: vi.fn(), openMock: vi.fn() }));
+const { invokeMock, openMock, updateCheckMock, installationMock } = vi.hoisted(() => ({ invokeMock: vi.fn(), openMock: vi.fn(), updateCheckMock: vi.fn(), installationMock: vi.fn() }));
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: invokeMock }));
 vi.mock('@tauri-apps/plugin-shell', () => ({ open: openMock }));
 vi.mock('@tauri-apps/plugin-os', () => ({ type: () => 'windows' }));
-vi.mock('@tauri-apps/plugin-updater', () => ({ check: vi.fn() }));
+vi.mock('@tauri-apps/plugin-updater', () => ({ check: updateCheckMock }));
+vi.mock('../../src/services/installationInfo', () => ({
+  getInstallationInfo: installationMock,
+  RELEASES_URL: 'https://github.com/caamer20/Telegram-Drive/releases/latest',
+}));
 vi.mock('../../src/components/desktop/dashboard/ThemesTab', () => ({ ThemesTab: () => null }));
 vi.mock('react-i18next', () => ({
   initReactI18next: { type: '3rdParty', init: vi.fn() },
@@ -45,6 +49,9 @@ describe('SettingsModal transcode cache state', () => {
     invokeMock.mockReset();
     openMock.mockReset();
     openMock.mockResolvedValue(undefined);
+    updateCheckMock.mockReset();
+    installationMock.mockReset();
+    installationMock.mockResolvedValue({ managedByPackageManager: false, packageManager: null });
     invokeMock.mockImplementation((command: string) => {
       if (command === 'cmd_get_detailed_transcode_cache') {
         return Promise.reject(new Error('Windows cache access denied'));
@@ -84,5 +91,16 @@ describe('SettingsModal transcode cache state', () => {
     await waitFor(() => {
       expect(openMock).toHaveBeenCalledWith('https://ffmpeg.org/download.html#build-windows');
     });
+  });
+
+  it('opens Microsoft Store when an MSIX user manually checks for updates', async () => {
+    installationMock.mockResolvedValue({ managedByPackageManager: true, packageManager: 'microsoft-store' });
+    render(<SettingsModal ownerId={null} isOpen onClose={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'settings.check_now' }));
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith('cmd_open_microsoft_store_updates');
+    });
+    expect(updateCheckMock).not.toHaveBeenCalled();
+    expect(await screen.findByText('Microsoft Store')).toBeTruthy();
   });
 });

@@ -115,6 +115,12 @@ function OwnedSettingsModal({ ownerId, isOpen, onClose, initialTab = 'general' }
         try {
             const installation = await getInstallationInfo();
             setInstallationInfo(installation);
+            if (installation.packageManager === 'microsoft-store') {
+                setUpdateAvailable(null);
+                setUpdateVersion(null);
+                await invoke('cmd_open_microsoft_store_updates');
+                return;
+            }
             const updateInfo = await check();
             if (updateInfo) {
                 setUpdateAvailable(updateInfo);
@@ -1253,7 +1259,7 @@ function OwnedSettingsModal({ ownerId, isOpen, onClose, initialTab = 'general' }
                                             <div>
                                                 <p className="text-sm text-telegram-text font-medium">{t('settings.check_for_updates')}</p>
                                                 <p className="text-xs text-telegram-subtext">
-                                                    {updateVersion ? t('settings.update_available', { version: updateVersion }) : t('settings.check_updates_desc')}
+                                                    {installationInfo?.packageManager === 'microsoft-store' ? 'Microsoft Store' : updateVersion ? t('settings.update_available', { version: updateVersion }) : t('settings.check_updates_desc')}
                                                 </p>
                                             </div>
                                         </div>
