@@ -6,17 +6,20 @@ work="$(mktemp -d)"
 mounted=""
 trap 'if [[ -n "$mounted" ]]; then hdiutil detach "$mounted" || true; fi; rm -rf "$work"' EXIT
 smoke() {
+  # Exercise the numeric-leading regression using a fresh nonce for every app.
+  local token
+  token="$(node -e 'process.stdout.write("0" + require("node:crypto").randomBytes(16).toString("hex").slice(1))')"
   if [[ "$(uname -s)" == Darwin ]]; then
-    node "$repository/scripts/packaged-startup-smoke.cjs" --disposable-user --executable "$1"
+    node "$repository/scripts/packaged-startup-smoke.cjs" --disposable-user --executable "$1" --run-token "$token" --expected-bundle-type "$2"
   else
-    dbus-run-session -- xvfb-run -a node "$repository/scripts/packaged-startup-smoke.cjs" --disposable-user --executable "$1"
+    xvfb-run -a dbus-run-session -- node "$repository/scripts/packaged-startup-smoke.cjs" --disposable-user --executable "$1" --run-token "$token" --expected-bundle-type "$2"
   fi
 }
 one_app() {
   local applications=()
   while IFS= read -r file; do applications+=("$file"); done < <(find "$1" -type f -path '*/Contents/MacOS/app' -print)
   [[ ${#applications[@]} -eq 1 ]] || { echo 'Expected exactly one packaged macOS executable' >&2; exit 1; }
-  smoke "${applications[0]}"
+  smoke "${applications[0]}" app
 }
 if [[ "$(uname -s)" == Darwin ]]; then
   dmgs=0
@@ -43,7 +46,7 @@ else
         rpm) bsdtar -xf "$artifact" -C "$directory"; executable="$directory/usr/bin/app" ;;
       esac
       [[ -f "$executable" ]] || { echo "Missing packaged executable in $artifact" >&2; exit 1; }
-      smoke "$executable"
+      smoke "$executable" "$(echo "$kind" | tr '[:upper:]' '[:lower:]')"
     done < <(find "$bundle" -type f -name "*.$kind" -print)
     [[ $count -gt 0 ]] || { echo "Missing $kind application artifact" >&2; exit 1; }
   done

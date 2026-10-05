@@ -16,6 +16,8 @@ on:
       - 'scripts/check-npm-audit.cjs'
       - 'scripts/check-baseline-expiry.cjs'
       - 'scripts/check-rust-advisory-baseline.cjs'
+      - 'scripts/e2e/**'
+      - 'scripts/*smoke*'
       - '.github/workflows/dependency-assurance.yml'
   push:
     branches: [main, develop]
@@ -79,7 +81,9 @@ jobs:
         run: npm ci --ignore-scripts
       - name: Prepare the registry for offline FTS5 build journeys
         run: cargo fetch --locked --manifest-path app/src-tauri/Cargo.toml
-      - run: node scripts/e2e/assurance.e2e.cjs
+      - run: |
+          node scripts/e2e/assurance.e2e.cjs
+          node scripts/e2e/packaged-startup.e2e.cjs
 
   rust-assurance:
     name: Rust advisories, licenses, bans, and sources

@@ -9,6 +9,7 @@ on:
       - 'scripts/check-android-publication.cjs'
       - 'dependency-policy/android-publication-review.json'
       - 'scripts/e2e/**'
+      - 'scripts/*smoke*'
       - 'supporter-service/**'
       - '.github/workflows/quality-assurance.yml'
   push:
@@ -20,6 +21,7 @@ on:
       - 'scripts/check-android-publication.cjs'
       - 'dependency-policy/android-publication-review.json'
       - 'scripts/e2e/**'
+      - 'scripts/*smoke*'
       - 'supporter-service/**'
       - '.github/workflows/quality-assurance.yml'
   workflow_dispatch:
@@ -73,7 +75,9 @@ jobs:
       - name: Prepare the registry for offline FTS5 build journeys
         run: cargo fetch --locked --manifest-path app/src-tauri/Cargo.toml
       - name: Verify release assurance command-line journeys
-        run: node scripts/e2e/assurance.e2e.cjs
+        run: |
+          node scripts/e2e/assurance.e2e.cjs
+          node scripts/e2e/packaged-startup.e2e.cjs
       - name: Upload end-to-end and bundle reports
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

@@ -7,6 +7,9 @@ on:
       - "scripts/check-test-policy.cjs"
       - "scripts/check-app-security.cjs"
       - "scripts/check-android-publication.cjs"
+      - "scripts/*smoke*"
+      - "scripts/e2e/packaged-startup.e2e.cjs"
+      - "scripts/e2e/fixtures/startup-smoke-app.cjs"
       - "dependency-policy/android-publication-review.json"
       - ".github/workflows/desktop-sync-ci.yml"
       - ".github/workflows/release.yml"
@@ -17,6 +20,9 @@ on:
       - "scripts/check-test-policy.cjs"
       - "scripts/check-app-security.cjs"
       - "scripts/check-android-publication.cjs"
+      - "scripts/*smoke*"
+      - "scripts/e2e/packaged-startup.e2e.cjs"
+      - "scripts/e2e/fixtures/startup-smoke-app.cjs"
       - "dependency-policy/android-publication-review.json"
       - ".github/workflows/desktop-sync-ci.yml"
       - ".github/workflows/release.yml"
@@ -41,8 +47,12 @@ jobs:
             os: ubuntu-22.04
           - name: macOS
             os: macos-latest
+            target: aarch64-apple-darwin
+          - name: macOS Intel
+            os: macos-latest
+            target: x86_64-apple-darwin
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
+    timeout-minutes: 90
 
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -50,6 +60,7 @@ jobs:
         with:
           toolchain: 1.92.0
           components: rustfmt, clippy
+          targets: ${{ matrix.target }}
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
@@ -60,7 +71,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libssl-dev libdbus-1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libssl-dev libdbus-1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev libarchive-tools rpm patchelf libfuse2 xvfb xauth dbus-x11
 
       - name: Install frontend dependencies
         working-directory: app
@@ -95,9 +106,26 @@ jobs:
         working-directory: app/src-tauri
         run: cargo clippy --locked --features native-e2e --lib --all-targets -- -D warnings
 
-      - name: Build the native Tauri application without installers
+      - name: Exercise smoke harness process ownership and failure journeys
+        run: node scripts/e2e/packaged-startup.e2e.cjs
+
+      - name: Build disposable CI installers with updater archives
         working-directory: app
-        run: npm run tauri -- build --no-bundle
+        run: npm run tauri -- build --ci --no-sign ${{ matrix.target && format('--target {0}', matrix.target) || '' }}
+
+      - name: Verify Windows installer runtime
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./app/scripts/verify-windows-bundle.ps1
+
+      - name: Smoke each packaged Windows installer application
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/smoke-windows-package.ps1
+
+      - name: Smoke each packaged macOS or Linux application
+        if: runner.os != 'Windows'
+        run: bash scripts/smoke-packaged-artifacts.sh "app/src-tauri/target/${{ matrix.target }}/release/bundle"
 
   desktop-ui-e2e:
     name: Desktop UI end-to-end

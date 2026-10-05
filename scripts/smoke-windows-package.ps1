@@ -6,6 +6,7 @@ $installers = @(Get-ChildItem -Path $BundleDirectory -Filter '*-setup.exe' -File
 if ($installers.Count -eq 0) { throw 'No packaged NSIS installer found.' }
 foreach ($installer in $installers) {
   $installRoot = Join-Path $env:TEMP ('telegram-drive-installer-smoke-' + [guid]::NewGuid().ToString('N'))
+  $startupFailure = $null
   try {
     # NSIS requires /D last and without surrounding quotes. This generated TEMP
     # path is not accepted from untrusted caller input.
@@ -14,9 +15,15 @@ foreach ($installer in $installers) {
     if ($installation.ExitCode -ne 0) { throw "Installer failed: $($installation.ExitCode)" }
     $applications = @(Get-ChildItem -Path $installRoot -Filter '*.exe' -File | Where-Object { $_.Name -notmatch 'uninstall|vc_redist' })
     if ($applications.Count -ne 1) { throw "Expected one installed application, found $($applications.Count)" }
-    & node (Join-Path $PSScriptRoot 'packaged-startup-smoke.cjs') --disposable-user --executable $applications[0].FullName
+    $token = & node -e 'process.stdout.write("0" + require("node:crypto").randomBytes(16).toString("hex").slice(1))'
+    if ($LASTEXITCODE -ne 0) { throw 'Could not generate private smoke nonce.' }
+    & node (Join-Path $PSScriptRoot 'packaged-startup-smoke.cjs') --disposable-user --executable $applications[0].FullName --run-token $token --expected-bundle-type nsis
     if ($LASTEXITCODE -ne 0) { throw 'Packaged Windows startup readiness failed.' }
-  } finally { if (Test-Path $installRoot) { Remove-Item -Recurse -Force $installRoot } }
+  } catch { $startupFailure = $_; throw }
+  finally {
+    try { if (Test-Path $installRoot) { Remove-Item -Recurse -Force $installRoot } }
+    catch { if ($null -eq $startupFailure) { throw }; Write-Warning "Installer cleanup also failed: $_" }
+  }
 }
 # Registry/shortcuts/keyring effects are confined to the disposable CI VM, not
 # considered isolated by /D or environment-variable overrides alone.

@@ -486,7 +486,9 @@ jobs:
       - name: Run native X11 startup smoke test
         run: |
           set -euo pipefail
-          runuser -u arch-builder -- dbus-run-session -- xvfb-run -a node "$PWD/scripts/packaged-startup-smoke.cjs" --disposable-user --executable /usr/bin/telegram-drive > arch-package/startup-smoke.log 2>&1
+          smoke_token="$(node -e 'process.stdout.write("0" + require("node:crypto").randomBytes(16).toString("hex").slice(1))')"
+          # Arch repackages the exact Debian executable; retain its runtime type.
+          runuser -u arch-builder -- xvfb-run -a dbus-run-session -- node "$PWD/scripts/packaged-startup-smoke.cjs" --disposable-user --executable /usr/bin/telegram-drive --run-token "$smoke_token" --expected-bundle-type deb > arch-package/startup-smoke.log 2>&1
           cat arch-package/startup-smoke.log
 
       - name: Generate resolved Arch runtime SBOM

@@ -35,7 +35,14 @@ mod desktop {
         }
         Ok(Some(Smoke {
             root,
-            identifier: format!("com.cameronamer.telegramdrive.smoke.{token}"),
+            identifier: format!(
+                "com.cameronamer.telegramdrive.smoke.{}{token}",
+                if token.as_bytes()[0].is_ascii_digit() {
+                    "r"
+                } else {
+                    ""
+                }
+            ),
             token,
         }))
     }
@@ -59,13 +66,13 @@ mod desktop {
         if app.config().identifier != smoke.identifier {
             return Err("Smoke profile identity was not applied".into());
         }
-        for path in [
-            app.path().app_data_dir(),
-            app.path().app_cache_dir(),
-            app.path().app_config_dir(),
-            app.path().app_local_data_dir(),
+        for (name, path) in [
+            ("app_data_dir", app.path().app_data_dir()),
+            ("app_cache_dir", app.path().app_cache_dir()),
+            ("app_config_dir", app.path().app_config_dir()),
+            ("app_local_data_dir", app.path().app_local_data_dir()),
         ] {
-            let path = path.map_err(|e| e.to_string())?;
+            let path = path.map_err(|e| format!("Smoke {name} resolver failed: {e}"))?;
             if path.file_name().and_then(|value| value.to_str()) != Some(smoke.identifier.as_str())
             {
                 return Err("Resolved Tauri path is not isolated".into());
@@ -82,6 +89,7 @@ mod desktop {
             "process_id": std::process::id(), "run_token": smoke.token, "profile_identifier": smoke.identifier,
             "version": app.package_info().version.to_string(), "database_ready": true,
             "app_data_ready": true, "streaming_runtime_ready": true,
+            "bundle_type": tauri::utils::platform::bundle_type().map(|kind| kind.to_string()),
             "app_data_dir": app.path().app_data_dir().map_err(|e| e.to_string())?,
             "app_cache_dir": app.path().app_cache_dir().map_err(|e| e.to_string())?,
             "app_config_dir": app.path().app_config_dir().map_err(|e| e.to_string())?,

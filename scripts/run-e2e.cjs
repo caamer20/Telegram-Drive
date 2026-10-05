@@ -8,6 +8,7 @@ const suites = [
   [process.execPath, ['scripts/check-app-security.cjs']],
   [process.execPath, ['scripts/check-android-publication.cjs']],
   [process.execPath, ['scripts/e2e/assurance.e2e.cjs']],
+  [process.execPath, ['scripts/e2e/packaged-startup.e2e.cjs']],
   [npm, ['run', 'test:e2e', '--prefix', 'app']],
   [npm, ['run', 'test:e2e', '--prefix', 'supporter-service']],
   ['cargo', ['test', '--locked', '--manifest-path', 'app/src-tauri/Cargo.toml', '--features', 'native-e2e', '--test', 'native_e2e']],
