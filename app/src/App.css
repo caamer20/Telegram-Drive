@@ -128,36 +128,11 @@ body,
   -webkit-font-smoothing: antialiased;
   background: var(--color-telegram-bg);
   color: var(--color-telegram-text);
-  transition: background-color var(--motion-slow) var(--ease-standard), color var(--motion-standard) var(--ease-standard);
 }
 
 .desktop-shell {
   font-size: 0.8125rem;
   line-height: 1.125rem;
-}
-
-.type-app-title,
-.text-app-title {
-  font-size: 0.9375rem;
-  line-height: 1.25rem;
-}
-
-.type-ui,
-.text-ui {
-  font-size: 0.8125rem;
-  line-height: 1.125rem;
-}
-
-.type-metadata,
-.text-metadata {
-  font-size: 0.75rem;
-  line-height: 1rem;
-}
-
-.type-badge,
-.text-badge {
-  font-size: 0.6875rem;
-  line-height: 0.875rem;
 }
 
 @layer base {
@@ -276,10 +251,6 @@ select:is(.app-select, .settings-select):focus-visible {
 .settings-stepper button:disabled { opacity: 0.35; }
 .settings-stepper > span { min-width: 1.25rem; text-align: center; font-size: 0.8125rem; }
 
-@media (prefers-reduced-motion: reduce) {
-  .settings-switch-track, .settings-switch-thumb { transition: none; }
-}
-
 /* Shared desktop header rows keep dividers continuous across both columns. */
 .desktop-chrome-row {
   box-sizing: border-box;
@@ -301,19 +272,16 @@ select:is(.app-select, .settings-select):focus-visible {
 
 .quiet-control {
   border-radius: var(--radius-control);
-  transition: color var(--motion-fast) var(--ease-standard),
-    background-color var(--motion-fast) var(--ease-standard),
-    border-color var(--motion-fast) var(--ease-standard),
-    box-shadow var(--motion-fast) var(--ease-standard),
-    filter var(--motion-fast) var(--ease-standard),
-    opacity var(--motion-fast) var(--ease-standard);
+  transition-property: color, background-color, border-color, box-shadow, filter, opacity;
+  transition-duration: var(--motion-fast);
+  transition-timing-function: var(--ease-standard);
 }
 
 .quiet-control:hover:not(:disabled) {
   background: var(--color-app-hover);
 }
 
-.encryption-settings .quiet-control.bg-app-accent:hover:not(:disabled) {
+.quiet-control.bg-app-accent:hover:not(:disabled) {
   background: var(--color-app-accent-hover);
 }
 
@@ -1084,11 +1052,22 @@ select:is(.app-select, .settings-select):focus-visible {
 /* Disables GPU-heavy effects for WebKitGTK / older hardware.  */
 /* Toggle via Settings → General → Performance Mode.           */
 
-.performance-mode *,
-.performance-mode *::before,
-.performance-mode *::after {
+:is(.motion-reduced, .performance-mode) *,
+:is(.motion-reduced, .performance-mode) *::before,
+:is(.motion-reduced, .performance-mode) *::after {
   transition: none !important;
   animation: none !important;
+  scroll-behavior: auto !important;
+}
+
+.motion-reduced [data-ui-motion] { opacity: 1 !important; transform: none !important; }
+.ui-enter { animation: ui-enter var(--motion-standard) var(--ease-standard); }
+.ui-enter-sheet { animation: ui-enter-sheet var(--motion-slow) var(--ease-standard); }
+@keyframes ui-enter { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+@keyframes ui-enter-sheet { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+  [data-ui-motion] { opacity: 1 !important; transform: none !important; }
 }
 
 .performance-mode {
@@ -1096,24 +1075,10 @@ select:is(.app-select, .settings-select):focus-visible {
   --tw-backdrop-blur: none !important;
 }
 
-.performance-mode .backdrop-blur-sm,
-.performance-mode .backdrop-blur,
-.performance-mode .backdrop-blur-md,
-.performance-mode .backdrop-blur-lg,
-.performance-mode .backdrop-blur-xl,
-.performance-mode .backdrop-blur-2xl,
-.performance-mode .backdrop-blur-3xl {
-  backdrop-filter: none !important;
-  -webkit-backdrop-filter: none !important;
-}
-
-.performance-mode .glass,
-.performance-mode .auth-glass,
-.performance-mode .quiet-toolbar,
-.performance-mode .quiet-menu,
-.performance-mode .viewer-overlay,
-.performance-mode .viewer-toolbar,
-.performance-mode .viewer-navigation {
+.performance-mode :is(.backdrop-blur-sm, .backdrop-blur, .backdrop-blur-md,
+  .backdrop-blur-lg, .backdrop-blur-xl, .backdrop-blur-2xl, .backdrop-blur-3xl,
+  .glass, .auth-glass, .quiet-toolbar, .quiet-menu, .viewer-overlay,
+  .viewer-toolbar, .viewer-navigation) {
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
 }
@@ -1125,12 +1090,6 @@ select:is(.app-select, .settings-select):focus-visible {
 .performance-mode .drop-shadow-lg {
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12) !important;
   filter: none !important;
-}
-
-/* Reduce paint cost */
-.performance-mode .animate-pulse,
-.performance-mode .animate-spin {
-  animation: none !important;
 }
 
 /* ── Android / Google TV ten-foot interface ───────────────── */

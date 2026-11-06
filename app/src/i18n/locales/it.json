@@ -432,7 +432,12 @@
     "encryption_experimental_inventory_many": "{{count}} file crittografati sperimentali sono indicizzati localmente. I relativi testi cifrati sono stati conservati.",
     "current_vault_passphrase": "Passphrase attuale del deposito",
     "videoFilenameCaption": "Nomi dei file nelle didascalie",
-    "videoFilenameCaptionDesc": "Aggiungi il nome originale ai messaggi video. I caricamenti crittografati lo mantengono privato."
+    "videoFilenameCaptionDesc": "Aggiungi il nome originale ai messaggi video. I caricamenti crittografati lo mantengono privato.",
+    "find_category": "Cerca una categoria",
+    "no_categories": "Nessuna categoria corrispondente",
+    "saved": "Impostazioni salvate",
+    "color_border": "Bordo",
+    "color_hover": "Passaggio del puntatore"
   },
   "files": {
     "download": "Scarica",
@@ -1058,7 +1063,11 @@
     "copy_report": "Copia rapporto diagnostico",
     "report_copied": "Rapporto diagnostico copiato",
     "report_label": "Anteprima diagnostica",
-    "desktop_only": "La cronologia dei trasferimenti desktop è disponibile nell’app desktop. Su Android, avanzamento dei backup e file offline sono mostrati nei rispettivi pannelli."
+    "desktop_only": "La cronologia dei trasferimenti desktop è disponibile nell’app desktop. Su Android, avanzamento dei backup e file offline sono mostrati nei rispettivi pannelli.",
+    "progress_unknown": "Avanzamento sconosciuto",
+    "retry_all_failed": "Riprova tutti i non riusciti",
+    "retry_failed_summary": "In coda: {{queued}} · Saltati: {{skipped}} · Non riusciti: {{failed}} · Non tentati: {{remaining}}",
+    "in_progress": "In corso"
   },
   "androidActivity": {
     "description": "Risultati del backup della fotocamera e avanzamento dei trasferimenti per questo account.",

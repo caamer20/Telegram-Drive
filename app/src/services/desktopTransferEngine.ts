@@ -198,6 +198,11 @@ export async function transferItemAction(
     return invoke<DesktopTransferJob>(`cmd_transfer_${action}`, { id, ownerId });
 }
 
+/** Recheck strict failed-upload eligibility in the native mutation lock. */
+export async function retryFailedUpload(id: string, ownerId: string, promptToken?: number): Promise<{ job: DesktopTransferJob; retried: boolean }> {
+    return invoke<{ job: DesktopTransferJob; retried: boolean }>('cmd_transfer_retry_failed_upload', { id, ownerId, promptToken });
+}
+
 export async function transferBulkAction(
     action: 'pause' | 'resume' | 'cancel',
     direction: TransferDirection,

@@ -88,7 +88,7 @@
     "action_count": "{{action}} ({{count}})",
     "sign_out": "Wyloguj się",
     "browser_picker": "Wybór w przeglądarce",
-    "system": "Systemowy",
+    "system": "System",
     "download_destination": "Wybierz miejsce pobierania",
     "download_folder_to": "Pobierz folder do…",
     "upload_folder_picker": "Wybierz folder do wysłania",
@@ -433,7 +433,12 @@
     "hide_passphrase": "Ukryj frazę hasła",
     "current_vault_passphrase": "Aktualne hasło sejfu",
     "videoFilenameCaption": "Nazwy plików w podpisach",
-    "videoFilenameCaptionDesc": "Dodaj oryginalną nazwę pliku do wiadomości wideo. Przy szyfrowanym przesyłaniu pozostaje ona prywatna."
+    "videoFilenameCaptionDesc": "Dodaj oryginalną nazwę pliku do wiadomości wideo. Przy szyfrowanym przesyłaniu pozostaje ona prywatna.",
+    "find_category": "Znajdź kategorię",
+    "no_categories": "Brak pasujących kategorii",
+    "saved": "Ustawienia zapisane",
+    "color_border": "Obramowanie",
+    "color_hover": "Najechanie kursorem"
   },
   "files": {
     "download": "Pobierać",
@@ -1065,7 +1070,11 @@
     "copy_report": "Kopiuj raport diagnostyczny",
     "report_copied": "Skopiowano raport diagnostyczny",
     "report_label": "Podgląd raportu diagnostycznego",
-    "desktop_only": "Historia transferów z komputera jest dostępna w aplikacji komputerowej. Postęp kopii zapasowych i plików offline Androida jest widoczny w osobnych panelach."
+    "desktop_only": "Historia transferów z komputera jest dostępna w aplikacji komputerowej. Postęp kopii zapasowych i plików offline Androida jest widoczny w osobnych panelach.",
+    "progress_unknown": "Postęp nieznany",
+    "retry_all_failed": "Ponów wszystkie nieudane",
+    "retry_failed_summary": "W kolejce: {{queued}} · Pominięto: {{skipped}} · Nieudane: {{failed}} · Nie podjęto próby: {{remaining}}",
+    "in_progress": "W toku"
   },
   "androidActivity": {
     "description": "Wyniki kopii zapasowych aparatu i postęp transferów dla tego konta.",

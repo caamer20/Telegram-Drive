@@ -1507,6 +1507,8 @@ pub fn run() {
             #[cfg(not(any(target_os = "android", target_os = "ios")))]
             transfer_engine::cmd_transfer_retry,
             #[cfg(not(any(target_os = "android", target_os = "ios")))]
+            transfer_engine::cmd_transfer_retry_failed_upload,
+            #[cfg(not(any(target_os = "android", target_os = "ios")))]
             transfer_engine::cmd_transfer_supply_prompt_token,
             #[cfg(not(any(target_os = "android", target_os = "ios")))]
             transfer_engine::cmd_transfer_pause_all,

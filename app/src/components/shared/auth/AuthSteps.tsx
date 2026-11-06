@@ -1,5 +1,6 @@
 import type { FormEvent } from 'react';
 import { motion } from 'framer-motion';
+import { useMotionPolicy } from '../../../context/MotionContext';
 import { ArrowRight, ExternalLink, HelpCircle, Key, Lock, Phone, QrCode } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { useTranslation } from 'react-i18next';
@@ -53,8 +54,9 @@ export function AuthSetupStep({
   onDevLogin,
 }: AuthSetupStepProps) {
   const { t } = useTranslation();
+  const { reducedMotion, transition } = useMotionPolicy();
   return (
-    <motion.form key="setup" initial={{ x: 20, opacity: 0 }} animate={{ x: 0, opacity: 1 }} exit={{ x: -20, opacity: 0 }} onSubmit={onSubmit} className="space-y-4">
+    <motion.form key="setup" data-ui-motion initial={reducedMotion ? false : { x: 20, opacity: 0 }} animate={{ x: 0, opacity: 1 }} transition={transition(160)} onSubmit={onSubmit} className="space-y-4">
       <div className="rounded-container border border-app-accent/20 bg-app-accent/5 p-4 text-center">
         <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-full bg-app-selected text-app-accent"><QrCode className="h-5 w-5" /></div>
         <h2 className="mt-3 text-sm font-semibold text-app-text">{t('auth_copy.qr_title')}</h2>
@@ -119,8 +121,9 @@ export function AuthMethodStep({
   onQrLogin,
   onBack,
 }: AuthMethodStepProps) {
+  const { reducedMotion, transition } = useMotionPolicy();
   return (
-    <motion.div key="phone" initial={{ x: 20, opacity: 0 }} animate={{ x: 0, opacity: 1 }} exit={{ x: -20, opacity: 0 }} className="space-y-5">
+    <motion.div key="phone" data-ui-motion initial={reducedMotion ? false : { x: 20, opacity: 0 }} animate={{ x: 0, opacity: 1 }} transition={transition(160)} className="space-y-5">
       {!isMobile && (
         <div className="quiet-control flex overflow-hidden border border-app-border bg-app-surface-sunken/40 p-0.5">
           <button type="button" onClick={onSelectPhone} className={`quiet-control order-2 flex h-8 flex-1 items-center justify-center gap-2 text-metadata font-medium ${loginMethod === 'phone' ? 'bg-app-surface-raised text-app-text shadow-sm' : 'text-app-text-secondary hover:text-app-text'}`}>
@@ -209,8 +212,9 @@ export function AuthCodeStep({
   onChangePhone,
 }: AuthCodeStepProps) {
   const { t } = useTranslation();
+  const { reducedMotion, transition } = useMotionPolicy();
   return (
-    <motion.form key="code" initial={{ x: 20, opacity: 0 }} animate={{ x: 0, opacity: 1 }} exit={{ x: -20, opacity: 0 }} onSubmit={onSubmit} className="space-y-5">
+    <motion.form key="code" data-ui-motion initial={reducedMotion ? false : { x: 20, opacity: 0 }} animate={{ x: 0, opacity: 1 }} transition={transition(160)} onSubmit={onSubmit} className="space-y-5">
       <div className="rounded-control border border-app-accent/20 bg-app-selected p-3 text-center">
         <p className="text-ui leading-relaxed text-app-text">{deliveryMessage}</p>
       </div>
@@ -271,9 +275,10 @@ interface AuthPasswordStepProps {
 }
 
 export function AuthPasswordStep({ password, loading, onPasswordChange, onSubmit, onBack }: AuthPasswordStepProps) {
-    useTranslation();
+  useTranslation();
+  const { reducedMotion, transition } = useMotionPolicy();
   return (
-    <motion.form key="password" initial={{ x: 20, opacity: 0 }} animate={{ x: 0, opacity: 1 }} exit={{ x: -20, opacity: 0 }} onSubmit={onSubmit} className="space-y-5">
+    <motion.form key="password" data-ui-motion initial={reducedMotion ? false : { x: 20, opacity: 0 }} animate={{ x: 0, opacity: 1 }} transition={transition(160)} onSubmit={onSubmit} className="space-y-5">
       <div className="space-y-2">
         <div className="mb-4 rounded-control border border-app-accent/20 bg-app-selected p-3">
           <p className="text-center text-metadata text-app-accent">{i18n.t("auth.two_factor_enabled")}</p>

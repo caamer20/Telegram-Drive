@@ -59,21 +59,24 @@ function accessibleText(preferred: string, backgrounds: string[], minimum = 4.5)
 export function ensureAccessiblePalette(palette: ThemeColorPalette): ThemeColorPalette {
   const text = accessibleText(palette.text, [palette.bg, palette.surface]);
   const subtext = accessibleText(palette.subtext, [palette.bg, palette.surface]);
-  const border = contrastRatio(palette.border, palette.surface) >= 3
+  // Translucent legacy borders describe quiet surface separators, not text or
+  // focus indicators. Preserve those overlays rather than treating an rgba
+  // value as failed hex parsing and turning every separator solid white.
+  const border = !parseHex(palette.border) || contrastRatio(palette.border, palette.surface) >= 3
     ? palette.border
     : accessibleText(palette.border, [palette.surface], 3);
   return { ...palette, text, subtext, border };
 }
 
 function contrastText(color: string): string {
-  const hex = color.trim().match(/^#([0-9a-f]{6})$/i)?.[1];
-  if (!hex) return '#ffffff';
-  const channels = [0, 2, 4].map(offset => parseInt(hex.slice(offset, offset + 2), 16) / 255);
-  const linear = channels.map(channel => channel <= 0.03928
-    ? channel / 12.92
-    : Math.pow((channel + 0.055) / 1.055, 2.4));
-  const luminance = 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2];
-  return luminance > 0.46 ? '#101114' : '#ffffff';
+  // Preserve the existing foreground for CSS colors outside the hex parser.
+  if (!parseHex(color)) return '#ffffff';
+  const dark = contrastRatio('#07141b', color);
+  const light = contrastRatio('#ffffff', color);
+  // Mid-tone accents can fall in the gap between off-black and white.
+  // Pure black closes that gap without changing the user's saved accent.
+  if (Math.max(dark, light) < 4.5) return '#000000';
+  return dark > light ? '#07141b' : '#ffffff';
 }
 
 /**

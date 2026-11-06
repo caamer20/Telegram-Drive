@@ -88,7 +88,7 @@
     "action_count": "{{action}} ({{count}})",
     "sign_out": "Abmelden",
     "browser_picker": "Browser-Dateiauswahl",
-    "system": "Systemmodus",
+    "system": "System",
     "download_destination": "Download-Ziel auswählen",
     "download_folder_to": "Ordner herunterladen nach…",
     "upload_folder_picker": "Ordner zum Hochladen auswählen",
@@ -431,7 +431,12 @@
     "hide_passphrase": "Passphrase verbergen",
     "current_vault_passphrase": "Aktuelle Tresor-Passphrase",
     "videoFilenameCaption": "Dateinamen als Bildunterschrift",
-    "videoFilenameCaptionDesc": "Den ursprünglichen Dateinamen zu Videonachrichten hinzufügen. Bei verschlüsselten Uploads bleibt er privat."
+    "videoFilenameCaptionDesc": "Den ursprünglichen Dateinamen zu Videonachrichten hinzufügen. Bei verschlüsselten Uploads bleibt er privat.",
+    "find_category": "Kategorie suchen",
+    "no_categories": "Keine passenden Kategorien",
+    "saved": "Einstellungen gespeichert",
+    "color_border": "Rahmen",
+    "color_hover": "Hover"
   },
   "files": {
     "download": "Herunterladen",
@@ -1051,7 +1056,11 @@
     "copy_report": "Diagnosebericht kopieren",
     "report_copied": "Diagnosebericht kopiert",
     "report_label": "Diagnosevorschau",
-    "desktop_only": "Der Desktop-Übertragungsverlauf ist in der Desktop-App verfügbar. Android-Sicherungen und Offline-Fortschritte werden in ihren jeweiligen Bereichen angezeigt."
+    "desktop_only": "Der Desktop-Übertragungsverlauf ist in der Desktop-App verfügbar. Android-Sicherungen und Offline-Fortschritte werden in ihren jeweiligen Bereichen angezeigt.",
+    "progress_unknown": "Fortschritt unbekannt",
+    "retry_all_failed": "Alle fehlgeschlagenen erneut versuchen",
+    "retry_failed_summary": "Eingereiht: {{queued}} · Übersprungen: {{skipped}} · Fehlgeschlagen: {{failed}} · Nicht versucht: {{remaining}}",
+    "in_progress": "In Bearbeitung"
   },
   "androidActivity": {
     "description": "Ergebnisse der Kamerasicherung und Übertragungsfortschritt für dieses Konto.",

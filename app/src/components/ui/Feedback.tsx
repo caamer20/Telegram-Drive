@@ -7,10 +7,10 @@ interface BadgeProps extends HTMLAttributes<HTMLSpanElement> {
 
 const badgeTones = {
   neutral: 'border-app-border bg-app-hover text-app-text-secondary',
-  accent: 'border-app-accent/20 bg-app-selected text-app-accent',
-  success: 'border-app-success/20 bg-app-success/10 text-app-success',
-  warning: 'border-app-warning/20 bg-app-warning/10 text-app-warning',
-  danger: 'border-app-danger/20 bg-app-danger/10 text-app-danger',
+  accent: 'border-app-accent/20 bg-app-selected text-app-text',
+  success: 'border-app-success/20 bg-app-success/10 text-app-text',
+  warning: 'border-app-warning/20 bg-app-warning/10 text-app-text',
+  danger: 'border-app-danger/20 bg-app-danger/10 text-app-text',
 };
 
 export function Badge({ tone = 'neutral', className, ...props }: BadgeProps) {
@@ -26,7 +26,7 @@ export function Progress({ value, label, className }: { value: number; label: st
   const bounded = Math.min(100, Math.max(0, value));
   return (
     <div className={cx('h-1.5 overflow-hidden rounded-full bg-app-border', className)} role="progressbar" aria-label={label} aria-valuenow={bounded} aria-valuemin={0} aria-valuemax={100}>
-      <div className="h-full rounded-full bg-app-accent transition-[width]" style={{ width: `${bounded}%` }} />
+      <div className="h-full rounded-full bg-app-accent transition-[width] duration-120 ease-linear" style={{ width: `${bounded}%` }} />
     </div>
   );
 }

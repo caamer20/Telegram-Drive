@@ -2,7 +2,6 @@ import { clearImageMemoryCaches } from '../../services/imagePreviewCache';
 import { sourceFolder } from '../../services/fileIdentity';
 import { lazy, useState, useEffect, useLayoutEffect, useCallback, useMemo, useRef } from 'react';
 import { ORGANIZE_FILES_EVENT } from '../../services/workspace';
-import { AnimatePresence } from 'framer-motion';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
@@ -337,7 +336,7 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
     });
 
 
-    const { uploadQueue, handleManualUpload, handleFolderUpload, handleDropUpload, handleUrlUpload, clearFinished: clearUploads, cancelAll: cancelUploads, pauseAll: pauseUploads, resumeAll: resumeUploads, cancelItem: cancelUploadItem, retryItem: retryUploadItem } = useFileUpload(activeFolderId, store, undefined, undefined, accountId ?? undefined);
+    const { uploadQueue, handleManualUpload, handleFolderUpload, handleDropUpload, handleUrlUpload, clearFinished: clearUploads, cancelAll: cancelUploads, pauseAll: pauseUploads, resumeAll: resumeUploads, cancelItem: cancelUploadItem, retryItem: retryUploadItem, retryFailed: retryFailedUploads, retryingFailed: retryingFailedUploads } = useFileUpload(activeFolderId, store, undefined, undefined, accountId ?? undefined);
     const { downloadQueue, queueDownload, queueBulkDownload, clearFinished: clearDownloads, cancelAll: cancelDownloads, pauseAll: pauseDownloads, resumeAll: resumeDownloads, cancelItem: cancelDownloadItem, retryItem: retryDownloadItem } = useFileDownload(store, undefined, undefined, accountId ?? undefined);
 
     const showSupporterOffer = useSupporterPrompt(
@@ -796,7 +795,7 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
                 onUploadClick={handleManualUpload}
             />
 
-            <AnimatePresence>
+            <>
                 {showMoveModal && moveRequest && (
                     <MoveToFolderModal
                         folders={folders}
@@ -851,7 +850,7 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
                         key="remote-upload-modal"
                     />
                 )}
-            </AnimatePresence>
+            </>
 
             <Sidebar
                 folders={folders}
@@ -896,6 +895,7 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
                 <div className="desktop-chrome-row justify-end"><button type="button" onClick={() => setWorkspaceKeys([])} className="quiet-control flex h-8 items-center gap-2 px-3 text-ui font-medium text-app-accent hover:bg-app-hover"><Files className="h-4 w-4" />{t('workspace.title')}</button></div>
                 <TopBar
                     currentFolderName={currentViewName}
+                    fileCount={displayedFiles.length}
                     selectedIds={selectedIds}
                     onShowMoveModal={handleOpenBulkMove}
                     onBulkDownload={handleBulkDownload}
@@ -1004,12 +1004,15 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
                 openRequest={transferCenterOpenRequest}
                 uploads={uploadQueue}
                 downloads={downloadQueue}
+                folders={folders}
                 onClearUploads={clearUploads}
                 onCancelUploads={cancelUploads}
                 onPauseUploads={pauseUploads}
                 onResumeUploads={resumeUploads}
                 onCancelUpload={cancelUploadItem}
                 onRetryUpload={retryUploadItem}
+                onRetryFailedUploads={() => void retryFailedUploads()}
+                retryingFailedUploads={retryingFailedUploads}
                 onClearDownloads={clearDownloads}
                 onCancelDownloads={cancelDownloads}
                 onPauseDownloads={pauseDownloads}

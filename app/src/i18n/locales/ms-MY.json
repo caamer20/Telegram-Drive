@@ -431,7 +431,12 @@
     "hide_passphrase": "Sembunyikan frasa laluan",
     "current_vault_passphrase": "Frasa laluan peti besi semasa",
     "videoFilenameCaption": "Nama fail sebagai kapsyen",
-    "videoFilenameCaptionDesc": "Tambahkan nama fail asal pada mesej video. Muat naik yang disulitkan mengekalkan privasinya."
+    "videoFilenameCaptionDesc": "Tambahkan nama fail asal pada mesej video. Muat naik yang disulitkan mengekalkan privasinya.",
+    "find_category": "Cari kategori",
+    "no_categories": "Tiada kategori yang sepadan",
+    "saved": "Tetapan disimpan",
+    "color_border": "Sempadan",
+    "color_hover": "Tuding"
   },
   "files": {
     "download": "Muat turun",
@@ -1051,7 +1056,11 @@
     "copy_report": "Salin laporan diagnostik",
     "report_copied": "Laporan diagnostik disalin",
     "report_label": "Pratonton laporan diagnostik",
-    "desktop_only": "Sejarah pemindahan desktop tersedia dalam aplikasi desktop. Kemajuan sandaran dan luar talian Android dipaparkan dalam panel masing-masing."
+    "desktop_only": "Sejarah pemindahan desktop tersedia dalam aplikasi desktop. Kemajuan sandaran dan luar talian Android dipaparkan dalam panel masing-masing.",
+    "progress_unknown": "Kemajuan tidak diketahui",
+    "retry_all_failed": "Cuba semula semua yang gagal",
+    "retry_failed_summary": "Dalam baris gilir: {{queued}} · Dilangkau: {{skipped}} · Gagal: {{failed}} · Belum dicuba: {{remaining}}",
+    "in_progress": "Sedang berjalan"
   },
   "androidActivity": {
     "description": "Hasil sandaran kamera dan kemajuan pemindahan untuk akaun ini.",

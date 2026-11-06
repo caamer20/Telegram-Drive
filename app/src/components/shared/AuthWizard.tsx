@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion } from "framer-motion";
+import { useMotionPolicy } from "../../context/MotionContext";
 import { ShieldCheck, Sun, Moon, ExternalLink, X, Heart } from "lucide-react";
 import { load } from '@tauri-apps/plugin-store';
 import { useTheme } from '../../context/ThemeContext';
@@ -37,6 +38,7 @@ function AuthThemeToggle() {
 }
 export function AuthWizard({ onLogin }: { onLogin: () => void }) {
     const { t } = useTranslation();
+    const { reducedMotion, transition } = useMotionPolicy();
     const isBrowser = typeof window !== 'undefined' && !('__TAURI_INTERNALS__' in window);
 
     if (isBrowser) {
@@ -403,9 +405,10 @@ export function AuthWizard({ onLogin }: { onLogin: () => void }) {
             <AuthThemeToggle />
 
             <motion.div
-                initial={{ opacity: 0, y: 8 }}
+                data-ui-motion
+                initial={reducedMotion ? false : { opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.18 }}
+                transition={transition(160)}
                 className="auth-glass my-auto w-full max-w-[26rem] rounded-overlay p-5 sm:p-6"
             >
                 <div className="mb-6 text-center">
@@ -416,11 +419,13 @@ export function AuthWizard({ onLogin }: { onLogin: () => void }) {
                     <p className="mt-1 text-metadata text-app-text-secondary">{i18n.t("auth.tagline")}</p>
                 </div>
 
-                <AnimatePresence mode="wait">
+                <>
                     {floodWait ? (
                         <motion.div
                             key="flood"
-                            initial={{ opacity: 0 }}
+                            data-ui-motion
+                            initial={reducedMotion ? false : { opacity: 0 }}
+                            transition={transition(120)}
                             animate={{ opacity: 1 }}
                             className="space-y-5 text-center"
                         >
@@ -503,11 +508,13 @@ export function AuthWizard({ onLogin }: { onLogin: () => void }) {
                             )}
                         </>
                     )}
-                </AnimatePresence>
+                </>
 
                 {error && (
                     <motion.div
-                        initial={{ opacity: 0, y: 10 }}
+                        data-ui-motion
+                        initial={reducedMotion ? false : { opacity: 0, y: 10 }}
+                        transition={transition(120)}
                         animate={{ opacity: 1, y: 0 }}
                         className="mt-5 flex items-start gap-2 rounded-control border border-app-danger/20 bg-app-danger/10 p-3"
                     >
@@ -528,19 +535,21 @@ export function AuthWizard({ onLogin }: { onLogin: () => void }) {
             </motion.div>
 
 
-            <AnimatePresence>
+            <>
                 {showHelp && (
                     <motion.div
-                        initial={{ opacity: 0 }}
+                        data-ui-motion
+                        initial={reducedMotion ? false : { opacity: 0 }}
+                        transition={transition(120)}
                         animate={{ opacity: 1 }}
-                        exit={{ opacity: 0 }}
                         className="fixed inset-0 z-50 flex items-center justify-center bg-app-overlay p-4 backdrop-blur-sm"
                         onClick={() => setShowHelp(false)}
                     >
                         <motion.div
-                            initial={{ scale: 0.95, opacity: 0 }}
+                            data-ui-motion
+                            initial={reducedMotion ? false : { scale: 0.95, opacity: 0 }}
+                            transition={transition(160)}
                             animate={{ scale: 1, opacity: 1 }}
-                            exit={{ scale: 0.95, opacity: 0 }}
                             className="quiet-raised max-h-[80vh] w-full max-w-lg overflow-y-auto p-5 sm:p-6"
                             onClick={(e) => e.stopPropagation()}
                         >
@@ -606,21 +615,23 @@ export function AuthWizard({ onLogin }: { onLogin: () => void }) {
                         </motion.div>
                     </motion.div>
                 )}
-            </AnimatePresence>
+            </>
 
-            <AnimatePresence>
+            <>
                 {showDonate && (
                     <motion.div
-                        initial={{ opacity: 0 }}
+                        data-ui-motion
+                        initial={reducedMotion ? false : { opacity: 0 }}
+                        transition={transition(120)}
                         animate={{ opacity: 1 }}
-                        exit={{ opacity: 0 }}
                         className="fixed inset-0 z-50 flex items-center justify-center bg-app-overlay p-4 backdrop-blur-sm"
                         onClick={() => setShowDonate(false)}
                     >
                         <motion.div
-                            initial={{ scale: 0.95, opacity: 0 }}
+                            data-ui-motion
+                            initial={reducedMotion ? false : { scale: 0.95, opacity: 0 }}
+                            transition={transition(160)}
                             animate={{ scale: 1, opacity: 1 }}
-                            exit={{ scale: 0.95, opacity: 0 }}
                             className="quiet-raised w-full max-w-sm p-5"
                             onClick={(e) => e.stopPropagation()}
                         >
@@ -652,7 +663,7 @@ export function AuthWizard({ onLogin }: { onLogin: () => void }) {
                         </motion.div>
                     </motion.div>
                 )}
-            </AnimatePresence>
+            </>
 
         </div>
     );

@@ -543,7 +543,7 @@ async fn commit_jobs(
     Ok(())
 }
 
-async fn commit_result(
+pub(crate) async fn commit_result(
     store: &TransferStore,
     jobs: &mut HashMap<String, TransferJob>,
     pending: &mut HashMap<String, TransferJob>,
@@ -560,6 +560,77 @@ async fn commit_result(
         pending.remove(&result.id);
     }
     result
+}
+
+/// Failed-upload retry keeps the durable record and its single-use credential
+/// handle together. Callers serialize mutations before entering this workflow.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RetryFailedUploadResult {
+    pub job: TransferJob,
+    pub retried: bool,
+}
+
+pub(crate) async fn retry_failed_upload(
+    store: &TransferStore,
+    jobs: &mut HashMap<String, TransferJob>,
+    pending: &mut HashMap<String, TransferJob>,
+    prompt_tokens: &mut HashMap<String, u64>,
+    account: &AccountGuard,
+    id: &str,
+    prompt_token: Option<u64>,
+) -> Result<RetryFailedUploadResult, String> {
+    account.validate()?;
+    let mut job = jobs
+        .get(id)
+        .cloned()
+        .ok_or_else(|| "Transfer was not found".to_string())?;
+    if job.owner_id.as_deref() != Some(account.owner.to_string().as_str()) {
+        return Err("ACCOUNT_CHANGED: Transfer is not owned by this account".into());
+    }
+    if job.direction != TransferDirection::Upload {
+        return Ok(RetryFailedUploadResult {
+            job,
+            retried: false,
+        });
+    }
+    // A saved publication result always wins over a stale failed-row snapshot.
+    // Repair its checkpoint without ever scheduling the external operation again.
+    if let Some(mut result) = pending.get(id).cloned() {
+        result.revision = job.revision.saturating_add(1);
+        result.persistence_pending = false;
+        account.validate()?;
+        commit_jobs(store, jobs, &[result.clone()]).await?;
+        pending.remove(id);
+        return Ok(RetryFailedUploadResult {
+            job: result,
+            retried: false,
+        });
+    }
+    if job.status != TransferStatus::Failed || job.persistence_pending {
+        return Ok(RetryFailedUploadResult {
+            job,
+            retried: false,
+        });
+    }
+    job.status = TransferStatus::Pending;
+    job.progress = 0;
+    job.transferred_bytes = 0;
+    job.speed_bytes_per_sec = 0;
+    // A manual retry gets a fresh automatic retry budget.
+    job.network_retries = 0;
+    job.error = None;
+    job.error_category = None;
+    job.retry_at = None;
+    job.revision = job.revision.saturating_add(1);
+    job.updated_at = now_millis();
+    account.validate()?;
+    commit_jobs(store, jobs, &[job.clone()]).await?;
+    prompt_tokens.remove(id);
+    if let Some(token) = prompt_token {
+        prompt_tokens.insert(id.to_string(), token);
+    }
+    Ok(RetryFailedUploadResult { job, retried: true })
 }
 
 #[derive(Debug, Deserialize)]
@@ -1301,6 +1372,41 @@ impl TransferEngine {
         Ok(changed)
     }
 
+    async fn retry_failed_upload(
+        &self,
+        id: &str,
+        owner_id: &str,
+        prompt_token: Option<u64>,
+    ) -> Result<RetryFailedUploadResult, String> {
+        let _mutation = self.mutation_lock.lock().await;
+        let account = self.account(Some(owner_id))?;
+        let mut jobs = self.jobs.write().await;
+        let before = jobs.get(id).map(|job| job.revision);
+        let mut pending = self.pending_commits.lock().await;
+        let mut tokens = self.prompt_tokens.lock().await;
+        let result = retry_failed_upload(
+            &self.store,
+            &mut jobs,
+            &mut pending,
+            &mut tokens,
+            &account,
+            id,
+            prompt_token,
+        )
+        .await?;
+        drop(tokens);
+        drop(pending);
+        drop(jobs);
+        if before != Some(result.job.revision) {
+            self.emit_job(&result.job);
+            if result.job.status == TransferStatus::Completed && !result.job.persistence_pending {
+                self.cleanup_temporary_source(&result.job).await;
+            }
+            self.notify.notify_one();
+        }
+        Ok(result)
+    }
+
     async fn transition(
         &self,
         id: &str,
@@ -2010,6 +2116,18 @@ item_action_command!(cmd_transfer_pause, TransferAction::Pause);
 item_action_command!(cmd_transfer_resume, TransferAction::Resume);
 item_action_command!(cmd_transfer_cancel, TransferAction::Cancel);
 item_action_command!(cmd_transfer_retry, TransferAction::Retry);
+
+#[tauri::command]
+pub async fn cmd_transfer_retry_failed_upload(
+    id: String,
+    owner_id: String,
+    prompt_token: Option<u64>,
+    engine: State<'_, Arc<TransferEngine>>,
+) -> Result<RetryFailedUploadResult, String> {
+    engine
+        .retry_failed_upload(&id, &owner_id, prompt_token)
+        .await
+}
 
 #[tauri::command]
 pub async fn cmd_transfer_supply_prompt_token(

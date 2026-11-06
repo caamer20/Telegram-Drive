@@ -78,6 +78,13 @@
     "vi": [
       "common.proxy",
       "settings.tab_proxy"
+    ],
+    "de": [
+      "common.system",
+      "settings.color_hover"
+    ],
+    "pl-PL": [
+      "common.system"
     ]
   }
 }

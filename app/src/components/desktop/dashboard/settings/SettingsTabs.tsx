@@ -1,6 +1,5 @@
 import {useTranslation} from 'react-i18next';
 import { lazy, useEffect, useState, type ReactNode } from 'react';
-import { motion } from 'framer-motion';
 import { Bug, Cloud, Database, Globe, HardDrive, Megaphone, Shield, Zap, Clipboard, Loader2, RefreshCw, Upload, Download } from 'lucide-react';
 import { open } from '@tauri-apps/plugin-shell';
 import { toast } from 'sonner';
@@ -20,35 +19,30 @@ import { LazyFeatureBoundary } from '../../../shared/LazyFeatureBoundary';
 
 const SupporterSettingsSection = lazy(() => import('./SupporterSettingsSection').then(module => ({ default: module.SupporterSettingsSection })));
 
-const tabMotion = {
-  initial: { opacity: 0 },
-  animate: { opacity: 1 },
-  exit: { opacity: 0 },
-  transition: { duration: 0.12, ease: [0.2, 0.8, 0.2, 1] as [number, number, number, number] },
-};
+
 
 interface SettingsTabFrameProps {
   children: ReactNode;
 }
 
 export function GeneralSettingsTab({ children }: SettingsTabFrameProps) {
-  return <motion.div key="general" {...tabMotion} className="w-full space-y-6">{children}</motion.div>;
+  return <div className="w-full space-y-6">{children}</div>;
 }
 
 export function ProxySettingsTab({ children }: SettingsTabFrameProps) {
-  return <motion.section key="proxy" {...tabMotion} className="w-full space-y-3">{children}</motion.section>;
+  return <section className="w-full space-y-3">{children}</section>;
 }
 
 export function VpnSettingsTab({ children }: SettingsTabFrameProps) {
-  return <motion.section key="vpn" {...tabMotion} className="w-full space-y-3">{children}</motion.section>;
+  return <section className="w-full space-y-3">{children}</section>;
 }
 
 export function WebDavSettingsTab({ children }: SettingsTabFrameProps) {
-  return <motion.section key="webdav" {...tabMotion} className="w-full space-y-4">{children}</motion.section>;
+  return <section className="w-full space-y-4">{children}</section>;
 }
 
 export function SharingSettingsTab({ children }: SettingsTabFrameProps) {
-  return <motion.section key="sharing" {...tabMotion} className="w-full space-y-4">{children}</motion.section>;
+  return <section className="w-full space-y-4">{children}</section>;
 }
 
 interface PrivacySettingsTabProps {
@@ -191,7 +185,7 @@ function SettingsSyncSection({
 export function PrivacySettingsTab({ crashReportingEnabled, onCrashReportingChange, settings, onSettingsChange, onSettingsSyncEnabledChange }: PrivacySettingsTabProps) {
   const { t } = useTranslation();
   return (
-    <motion.section key="privacy" {...tabMotion} className="space-y-4">
+    <section className="space-y-4">
       <div className="flex items-start gap-3 rounded-lg border border-app-accent/20 bg-app-accent/5 p-4">
         <Bug className="mt-0.5 h-5 w-5 shrink-0 text-app-accent" />
         <div><h3 className="text-sm font-semibold text-app-text">Crash-only reporting</h3><p className="mt-1 text-xs leading-5 text-app-text-secondary">Optional reports help diagnose unexpected app crashes. Normal usage, analytics, advertising activity, and file operations are never reported.</p></div>
@@ -215,12 +209,12 @@ export function PrivacySettingsTab({ crashReportingEnabled, onCrashReportingChan
         <p className="rounded-lg border border-app-border-subtle p-3 text-xs leading-5 text-app-text-secondary"><strong className="text-app-text">Privacy policy summary:</strong> Telegram Drive does not sell personal data, inspect file contents for analytics, or operate a cloud account database. Revoking a share or disabling a local server stops that access immediately.</p>
       </section>
       <SettingsSyncSection settings={settings} onSettingsChange={onSettingsChange} onEnabledChange={onSettingsSyncEnabledChange} />
-    </motion.section>
+    </section>
   );
 }
 
 export function LicenseSettingsTab() {
-  return <motion.section key="license" {...tabMotion}><LazyFeatureBoundary><SupporterSettingsSection /></LazyFeatureBoundary></motion.section>;
+  return <section><LazyFeatureBoundary><SupporterSettingsSection /></LazyFeatureBoundary></section>;
 }
 
 interface AdvancedSettingsTabProps {
@@ -233,8 +227,8 @@ interface AdvancedSettingsTabProps {
 export function AdvancedSettingsTab({ onOpenApi, onOpenWebDav, onOpenProxy, onOpenVpn }: AdvancedSettingsTabProps) {
     useTranslation();
   return (
-    <motion.section key="advanced" {...tabMotion} className="space-y-4">
-      <div><h3 className="text-base font-semibold text-app-text">{i18n.t("settings.tab_advanced")}</h3><p className="mt-1 text-sm text-app-text-secondary">Power-user connections are grouped here so everyday settings stay calm and focused. Use the settings search to find any option by name.</p></div>
+    <section className="space-y-4">
+
       <div className="grid gap-3 sm:grid-cols-2">
         {([
           ['REST API', i18n.t('advanced_copy.rest_description'), Globe, onOpenApi],
@@ -245,12 +239,12 @@ export function AdvancedSettingsTab({ onOpenApi, onOpenWebDav, onOpenProxy, onOp
           <button key={label} type="button" onClick={action} className="quiet-surface p-4 text-start hover:border-app-accent/30 hover:bg-app-hover"><Icon className="mb-3 h-5 w-5 text-app-accent" /><strong className="block text-sm text-app-text">{label}</strong><span className="mt-1 block text-xs leading-5 text-app-text-secondary">{description}</span></button>
         ))}
       </div>
-    </motion.section>
+    </section>
   );
 }
 
 export function EncryptionSettingsTab() {
-  return <motion.section key="encryption" {...tabMotion}><EncryptionSettingsSection /></motion.section>;
+  return <section><EncryptionSettingsSection /></section>;
 }
 
 export function ThemeSettingsTab() {
@@ -266,7 +260,7 @@ interface AboutSettingsTabProps {
 
 export function AboutSettingsTab({ appVersion, diagnosticsLoading, t, onCopyDiagnostics }: AboutSettingsTabProps) {
   return (
-    <motion.section key="about" {...tabMotion} className="w-full space-y-4">
+    <section className="w-full space-y-4">
       <div className="flex flex-col items-center space-y-5 py-6">
         <img src="/logo.svg" className="h-16 w-16 drop-shadow-lg" alt={i18n.t('common.app_title')} />
         <div className="text-center"><h3 className="text-base font-bold text-telegram-text">{i18n.t("common.app_title")}</h3><p className="mt-0.5 text-xs text-telegram-subtext">v{appVersion}</p></div>
@@ -285,6 +279,6 @@ export function AboutSettingsTab({ appVersion, diagnosticsLoading, t, onCopyDiag
         </div>
         <p className="max-w-[280px] text-center text-[11px] leading-relaxed text-telegram-subtext">{t('settings.tagline')}</p>
       </div>
-    </motion.section>
+    </section>
   );
 }

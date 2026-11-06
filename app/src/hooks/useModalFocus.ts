@@ -1,4 +1,4 @@
-import { RefObject, useEffect, useRef } from 'react';
+import { RefObject, useLayoutEffect, useRef } from 'react';
 
 const FOCUSABLE = [
     'button:not([disabled])',
@@ -9,6 +9,19 @@ const FOCUSABLE = [
     'summary',
     '[tabindex]:not([tabindex="-1"])',
 ].join(',');
+
+interface ModalEntry {
+    container: HTMLElement;
+    returnFocus: HTMLElement | null;
+    parent?: ModalEntry;
+}
+const modalStack: ModalEntry[] = [];
+const pendingReturns: ModalEntry[] = [];
+const topModal = () => modalStack[modalStack.length - 1];
+const available = (element: HTMLElement) => element.isConnected
+    && element.getClientRects().length > 0
+    && !element.closest('[inert], [hidden], [aria-hidden="true"]');
+const controls = (container: HTMLElement) => Array.from(container.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(available);
 
 /**
  * Gives desktop dialogs predictable keyboard behaviour: initial focus,
@@ -21,42 +34,42 @@ export function useModalFocus(
     suspended = false,
 ) {
     const onCloseRef = useRef(onClose);
-    const suspendedRef = useRef(suspended);
     onCloseRef.current = onClose;
+    const suspendedRef = useRef(suspended);
     suspendedRef.current = suspended;
-    useEffect(() => {
+    // A parent dialog may temporarily pause while a child owns focus. Keep
+    // its original trigger across that handoff, rather than capturing body.
+    const session = useRef<ModalEntry | null>(null);
+    useLayoutEffect(() => {
         if (!enabled) return;
-        const previouslyFocused = document.activeElement as HTMLElement | null;
         const container = containerRef.current;
         if (!container) return;
-
-        if (!suspendedRef.current) {
-            const focusable = Array.from(container.querySelectorAll<HTMLElement>(FOCUSABLE));
-            const preferred = container.querySelector<HTMLElement>('[data-modal-autofocus]');
-            (preferred ?? focusable[0] ?? container).focus();
+        if (session.current?.container !== container) {
+            const active = document.activeElement as HTMLElement | null;
+            const replaced = pendingReturns[pendingReturns.length - 1];
+            session.current = {
+                container,
+                returnFocus: active && active !== document.body && available(active) ? active : replaced?.returnFocus ?? active,
+                parent: topModal() ?? replaced?.parent,
+            };
         }
+        const entry = session.current;
+        modalStack.push(entry);
+        const focusable = controls(container);
+        const preferred = container.querySelector<HTMLElement>('[data-modal-autofocus]');
+        if (!suspendedRef.current) (preferred && available(preferred) ? preferred : focusable[0] ?? container).focus({ preventScroll: true });
 
-        return () => {
-            if (previouslyFocused?.isConnected) previouslyFocused.focus();
-        };
-    }, [containerRef, enabled]);
-
-    // A child dialog suspends the parent's keyboard trap without ending the
-    // parent's focus lifecycle or focusing its first control again on resume.
-    useEffect(() => {
-        if (!enabled || suspended) return;
-        const container = containerRef.current;
-        if (!container) return;
         const handleKeyDown = (event: KeyboardEvent) => {
+            if (topModal() !== entry || suspendedRef.current) return;
             if (event.key === 'Escape') {
                 event.preventDefault();
-                event.stopPropagation();
+                event.stopImmediatePropagation();
                 onCloseRef.current();
                 return;
             }
             if (event.key !== 'Tab') return;
 
-            const current = Array.from(container.querySelectorAll<HTMLElement>(FOCUSABLE));
+            const current = controls(container);
             if (current.length === 0) {
                 event.preventDefault();
                 container.focus();
@@ -64,7 +77,10 @@ export function useModalFocus(
             }
             const first = current[0];
             const last = current[current.length - 1];
-            if (event.shiftKey && document.activeElement === first) {
+            if (!container.contains(document.activeElement)) {
+                event.preventDefault();
+                (event.shiftKey ? last : first).focus();
+            } else if (event.shiftKey && document.activeElement === first) {
                 event.preventDefault();
                 last.focus();
             } else if (!event.shiftKey && document.activeElement === last) {
@@ -74,6 +90,27 @@ export function useModalFocus(
         };
 
         document.addEventListener('keydown', handleKeyDown, true);
-        return () => document.removeEventListener('keydown', handleKeyDown, true);
-    }, [containerRef, enabled, suspended]);
+        return () => {
+            document.removeEventListener('keydown', handleKeyDown, true);
+            const index = modalStack.lastIndexOf(entry);
+            if (index !== -1) modalStack.splice(index, 1);
+            pendingReturns.push(entry);
+            // React removes/activates related dialogs in the same commit.
+            // Let the new top owner register before deciding where to return.
+            queueMicrotask(() => {
+                const pendingIndex = pendingReturns.indexOf(entry);
+                if (pendingIndex !== -1) pendingReturns.splice(pendingIndex, 1);
+                let owner: ModalEntry | undefined = entry;
+                let target = entry.returnFocus;
+                while (target && !available(target) && owner?.parent) {
+                    owner = owner.parent;
+                    target = owner.returnFocus;
+                }
+                const top = topModal();
+                if (top && (!target || !top.container.contains(target))) return;
+                if (target && available(target)) target.focus({ preventScroll: true });
+                if (!container.isConnected || !top) session.current = null;
+            });
+        };
+    }, [containerRef, enabled]);
 }

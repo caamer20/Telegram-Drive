@@ -1,20 +1,25 @@
-import {useTranslation} from 'react-i18next';
 import { useEffect, useState } from 'react';
-import { CheckCircle2, ChevronDown, ChevronUp, Download, Pause, Play, RotateCcw, UploadCloud, X } from 'lucide-react';
-import type { DownloadItem, QueueItem } from '../../../types';
+import { RetryFailedUploadsButton } from '../../shared/RetryFailedUploadsButton';
+import { CheckCircle2, ChevronDown, ChevronUp, Download, Pause, Play, UploadCloud, X } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
+import type { DownloadItem, QueueItem, TelegramFolder } from '../../../types';
 import { formatBytes } from '../../../utils';
-import i18n from '../../../i18n';
+import { Badge, Button, IconButton, Progress } from '../../ui';
+import { stopControlShortcuts } from './useTopBarController';
 
 interface TransferCenterProps {
   openRequest?: number;
   uploads: QueueItem[];
   downloads: DownloadItem[];
+  folders?: TelegramFolder[];
   onClearUploads: () => void;
   onCancelUploads: () => void;
   onPauseUploads: () => void;
   onResumeUploads: () => void;
   onCancelUpload: (id: string) => void;
   onRetryUpload: (id: string) => void;
+  onRetryFailedUploads: () => void;
+  retryingFailedUploads: boolean;
   onClearDownloads: () => void;
   onCancelDownloads: () => void;
   onPauseDownloads: () => void;
@@ -23,42 +28,220 @@ interface TransferCenterProps {
   onRetryDownload: (id: string) => void;
 }
 
-function TransferProgress({ value, tone = 'accent' }: { value?: number; tone?: 'accent' | 'info' }) {
+type TransferStatus = QueueItem['status'] | DownloadItem['status'];
+
+function canCancelTransfer(item: QueueItem | DownloadItem) {
+  return !['success', 'error', 'cancelled'].includes(item.status);
+}
+
+function QueuePlaybackAction({ paused = false, direction, onClick, header = false }: {
+  paused?: boolean;
+  direction: 'upload' | 'download';
+  onClick: () => void;
+  header?: boolean;
+}) {
+  const { t } = useTranslation();
+  const action = t(paused ? 'activity.resume' : 'activity.pause');
+  const title = t(direction === 'upload' ? 'activity.uploads' : 'activity.downloads');
+  const Icon = paused ? Play : Pause;
+  return <button type="button" onClick={onClick} aria-label={`${action} ${title}`} className={`quiet-control flex shrink-0 items-center gap-1.5 text-app-text-secondary ${header ? 'min-h-9 border border-app-border px-3 text-badge font-medium' : 'min-h-8 px-2'}`}><Icon className="h-3.5 w-3.5" aria-hidden="true" />{action}{header && ` ${title}`}</button>;
+}
+
+function statusKey(status: TransferStatus) {
+  const normalized = status === 'success' ? 'completed' : status === 'error' ? 'failed' : status;
+  return `activity.status_${normalized}`;
+}
+
+function statusTone(status: TransferStatus): 'neutral' | 'accent' | 'success' | 'warning' | 'danger' {
+  if (status === 'success') return 'success';
+  if (status === 'error') return 'danger';
+  if (['waiting_for_network', 'waiting_for_unlock', 'cooldown'].includes(status)) return 'warning';
+  if (['uploading', 'downloading', 'encrypting', 'decrypting', 'verifying'].includes(status)) return 'accent';
+  return 'neutral';
+}
+
+function fileName(item: QueueItem | DownloadItem) {
+  return 'filename' in item ? item.filename : (item.url || item.path).split(/[\\/]/).pop() || item.path;
+}
+
+function isTransferStage(status: TransferStatus) {
+  return ['uploading', 'downloading', 'encrypting', 'decrypting', 'verifying'].includes(status);
+}
+
+function isSkipped(item: QueueItem | DownloadItem) {
+  return 'filename' in item && item.downloadOutcome === 'skipped';
+}
+
+function TransferProgress({ item, label }: { item: QueueItem | DownloadItem; label: string }) {
+  const { t } = useTranslation();
+  if (!isTransferStage(item.status)) return null;
+
+  const bytes = 'filename' in item ? item.downloadedBytes : item.uploadedBytes;
+  const totalBytes = item.totalBytes;
+  const canMeasureBytes = typeof bytes === 'number' && Number.isFinite(bytes)
+    && typeof totalBytes === 'number' && Number.isFinite(totalBytes) && totalBytes > 0;
+  const canMeasurePercent = item.status !== 'verifying'
+    && typeof item.progress === 'number' && Number.isFinite(item.progress);
+  const knownProgress = item.status !== 'verifying' && (canMeasureBytes || canMeasurePercent);
+
+  if (!knownProgress) {
+    return (
+      <div className="mt-2 flex items-center gap-2" data-testid={`transfer-progress-${item.id}`}>
+        <span className="h-2 w-2 shrink-0 rounded-full bg-app-accent animate-pulse motion-reduce:animate-none" aria-hidden="true" />
+        <span className="text-metadata text-app-text-secondary" role="status">{t('activity.progress_unknown')}</span>
+      </div>
+    );
+  }
+
+  const measured = canMeasureBytes
+    ? (bytes / totalBytes) * 100
+    : item.progress as number;
+  const progress = Math.min(100, Math.max(0, measured));
+  const bytesLabel = canMeasureBytes ? `${formatBytes(bytes)} / ${formatBytes(totalBytes)}` : null;
   return (
-    <div className="mt-2 h-1 overflow-hidden rounded-full bg-app-border">
-      <div
-        className={`h-full rounded-full transition-[width] ${tone === 'accent' ? 'bg-app-accent' : 'bg-app-info'}`}
-        style={{ width: `${value ?? 18}%` }}
-      />
+    <div className="mt-2 space-y-1" data-testid={`transfer-progress-${item.id}`}>
+      <div className="flex items-center justify-between gap-3 text-metadata text-app-text-secondary">
+        {bytesLabel && <span className="tabular-nums">{bytesLabel}</span>}
+        <span className="ms-auto tabular-nums">{t('activity.progress', { progress: Math.round(progress) })}</span>
+      </div>
+      <Progress value={progress} label={label} className="h-1.5" />
     </div>
   );
 }
 
-function StatusLabel({ status }: { status: QueueItem['status'] | DownloadItem['status'] }) {
-  const tone = status === 'success'
-    ? 'text-app-success'
-    : status === 'error'
-      ? 'text-app-danger'
-      : status === 'cancelled'
-        ? 'text-app-text-tertiary'
-        : status === 'paused'
-          ? 'text-app-text-secondary'
-        : status === 'pending'
-          ? 'text-app-warning'
-          : 'text-app-accent';
-  return <span className={`text-[10px] font-medium capitalize ${tone}`}>{status}</span>;
+function TransferRow({
+  item,
+  direction,
+  folders,
+  onCancel,
+  onRetry,
+  retryBusy = false,
+}: {
+  item: QueueItem | DownloadItem;
+  direction: 'upload' | 'download';
+  folders: TelegramFolder[];
+  onCancel: () => void;
+  onRetry: () => void;
+  retryBusy?: boolean;
+}) {
+  const { t } = useTranslation();
+  const name = fileName(item);
+  const retryable = ['error', 'cancelled', 'waiting_for_unlock'].includes(item.status);
+  const retryLabel = t(item.status === 'waiting_for_unlock' ? 'protection_labels.provide_credentials' : 'activity.retry');
+  const cancellable = canCancelTransfer(item);
+  const destination = item.folderId === null
+    ? t('common.saved_messages')
+    : folders.find(folder => folder.id === item.folderId)?.name;
+  const protection = 'filename' in item ? item.protectionMode : item.protection?.mode;
+  const protectionLabel = t(`settings.encryption_mode_${['vault', 'passphrase', 'vault_and_passphrase'].includes(protection || '') ? protection : 'standard'}`);
+  const active = isTransferStage(item.status);
+  const speed = active && item.speedBytesPerSec && item.speedBytesPerSec > 0
+    ? formatBytes(item.speedBytesPerSec)
+    : null;
+
+  return (
+    <article data-testid={`transfer-row-${item.id}`} className="space-y-2 border-t border-app-border-subtle px-4 py-3 first:border-t-0">
+      <div className="flex min-w-0 items-start gap-3">
+        <span className={`mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-control ${direction === 'upload' ? 'bg-app-selected text-app-accent' : 'bg-app-info/10 text-app-info'}`} aria-hidden="true">
+          {direction === 'upload' ? <UploadCloud className="h-4 w-4" /> : <Download className="h-4 w-4" />}
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-ui font-medium text-app-text" title={name}>{name}</p>
+          <div className="mt-1 flex flex-wrap items-center gap-2">
+            <Badge tone={isSkipped(item) ? 'neutral' : statusTone(item.status)}>{t(isSkipped(item) ? 'downloadCollision.skipped' : statusKey(item.status))}</Badge>
+            {speed && <span className="text-metadata tabular-nums text-app-text-secondary">{speed}/s</span>}
+          </div>
+          {item.error && <p className="mt-1 break-words text-metadata text-app-danger" role={item.status === 'error' ? 'alert' : 'status'}>{item.error}</p>}
+        </div>
+        <div className="flex shrink-0 items-center gap-1">
+          {retryable && <Button size="sm" variant="primary" disabled={retryBusy} aria-label={`${retryLabel}: ${name}`} onClick={onRetry}>{retryLabel}</Button>}
+          {cancellable && <IconButton size="sm" label={`${t('activity.cancel')} ${name}`} tone="danger" onClick={onCancel}><X className="h-4 w-4" aria-hidden="true" /></IconButton>}
+        </div>
+      </div>
+      <TransferProgress item={item} label={name} />
+      {direction === 'upload' && (destination || protection) && (
+        <details className="group rounded-control border border-app-border-subtle bg-app-surface-sunken/25 px-3 py-2">
+          <summary className="flex min-h-7 cursor-pointer list-none items-center gap-1.5 text-badge font-medium text-app-text-secondary focus-visible:outline focus-visible:outline-2 focus-visible:outline-app-accent">
+            <ChevronDown className="h-3.5 w-3.5 group-open:rotate-180" aria-hidden="true" />
+            {t('activity.details')}
+          </summary>
+          <dl className="mt-2 grid gap-2 border-t border-app-border-subtle pt-2 text-metadata sm:grid-cols-2">
+            {destination && <div className="min-w-0"><dt className="text-app-text-tertiary">{t('files.destination_folder')}</dt><dd className="truncate text-app-text" title={destination}>{destination}</dd></div>}
+            {protection && <div className="min-w-0"><dt className="text-app-text-tertiary">{t('settings.tab_encryption')}</dt><dd className="truncate text-app-text">{protectionLabel}</dd></div>}
+          </dl>
+        </details>
+      )}
+    </article>
+  );
+}
+
+function TransferQueueSection({
+  direction,
+  items,
+  paused,
+  folders,
+  onPause,
+  onResume,
+  onCancelAll,
+  onClear,
+  onCancel,
+  onRetry,
+  onRetryFailed,
+  retryBusy = false,
+}: {
+  direction: 'upload' | 'download';
+  items: Array<QueueItem | DownloadItem>;
+  paused: number;
+  folders: TelegramFolder[];
+  onPause: () => void;
+  onResume: () => void;
+  onCancelAll: () => void;
+  onClear: () => void;
+  onCancel: (id: string) => void;
+  onRetry: (id: string) => void;
+  onRetryFailed?: () => void;
+  retryBusy?: boolean;
+}) {
+  const { t } = useTranslation();
+  const title = t(direction === 'upload' ? 'activity.uploads' : 'activity.downloads');
+  const canCancel = items.some(canCancelTransfer);
+  const canPause = items.some(item => canCancelTransfer(item) && item.status !== 'paused');
+  const canClear = items.some(item => ['success', 'error', 'cancelled'].includes(item.status));
+  return (
+    <section aria-label={title}>
+      <header className="flex flex-wrap items-center justify-between gap-2 border-t border-app-border-subtle bg-app-surface-sunken/25 px-4 py-2.5 first:border-t-0">
+        <div className="flex items-center gap-2">
+          <h3 className="text-xs font-semibold text-app-text">{title}</h3>
+          <Badge>{items.length}</Badge>
+        </div>
+        <div className="flex flex-wrap items-center gap-3 text-badge">
+          {onRetryFailed && <RetryFailedUploadsButton count={items.filter(item => item.status === 'error').length} busy={retryBusy} onRetry={onRetryFailed} />}
+          {direction === 'download' && canPause && <QueuePlaybackAction direction={direction} onClick={onPause} />}
+          {direction === 'download' && paused > 0 && <QueuePlaybackAction direction={direction} onClick={onResume} paused />}
+          {canCancel && <button type="button" onClick={onCancelAll} className="quiet-control min-h-8 px-2 text-app-danger" aria-label={`${t('activity.cancel')} ${title}`}>{t('common.cancel')}</button>}
+          <button type="button" onClick={onClear} disabled={!canClear} className="quiet-control min-h-8 px-2 text-app-accent disabled:opacity-45">{t('settings.clear')}</button>
+        </div>
+      </header>
+      {items.length === 0
+        ? <p className="px-4 py-5 text-center text-sm text-app-text-secondary">{t('activity.empty')}</p>
+        : items.map(item => <TransferRow key={item.id} item={item} direction={direction} folders={folders} onCancel={() => onCancel(item.id)} onRetry={() => onRetry(item.id)} retryBusy={retryBusy} />)}
+    </section>
+  );
 }
 
 export function TransferCenter({
   openRequest = 0,
   uploads,
   downloads,
+  folders = [],
   onClearUploads,
   onCancelUploads,
   onPauseUploads,
   onResumeUploads,
   onCancelUpload,
   onRetryUpload,
+  onRetryFailedUploads,
+  retryingFailedUploads,
   onClearDownloads,
   onCancelDownloads,
   onPauseDownloads,
@@ -66,107 +249,69 @@ export function TransferCenter({
   onCancelDownload,
   onRetryDownload,
 }: TransferCenterProps) {
-    useTranslation();
+  const { t } = useTranslation();
   const [expanded, setExpanded] = useState(true);
   useEffect(() => {
     if (openRequest > 0) setExpanded(true);
   }, [openRequest]);
   if (uploads.length === 0 && downloads.length === 0) return null;
 
-  const activeUploads = uploads.filter((item) => ['pending', 'uploading', 'downloading', 'encrypting', 'verifying'].includes(item.status)).length;
-  const activeDownloads = downloads.filter((item) => ['pending', 'cooldown', 'downloading', 'decrypting', 'verifying'].includes(item.status)).length;
+  const activeUploads = uploads.filter(item => item.status === 'pending' || isTransferStage(item.status)).length;
+  const activeDownloads = downloads.filter(item => item.status === 'pending' || isTransferStage(item.status)).length;
   const activeCount = activeUploads + activeDownloads;
-  const pausedUploads = uploads.filter((item) => item.status === 'paused').length;
-  const pausedDownloads = downloads.filter((item) => item.status === 'paused').length;
+  const pausedUploads = uploads.filter(item => item.status === 'paused').length;
+  const pausedDownloads = downloads.filter(item => item.status === 'paused').length;
   const pausedCount = pausedUploads + pausedDownloads;
-  const aggregateSpeed = [...uploads, ...downloads]
-    .filter((item) => ['uploading', 'downloading', 'encrypting', 'decrypting', 'verifying'].includes(item.status))
+  const items = [...uploads, ...downloads];
+  const attentionCount = items.filter(item => ['error', 'waiting_for_unlock'].includes(item.status)).length;
+  const aggregateSpeed = items
+    .filter(item => isTransferStage(item.status))
     .reduce((sum, item) => sum + (item.speedBytesPerSec || 0), 0);
-  const allComplete = activeCount === 0 && pausedCount === 0
-    && [...uploads, ...downloads].length > 0
-    && [...uploads, ...downloads].every((item) => item.status === 'success')
-    && downloads.every(item => item.downloadOutcome !== 'skipped');
+  const completedCount = items.filter(item => item.status === 'success' && !isSkipped(item)).length;
+  const skippedCount = items.filter(isSkipped).length;
+  const allComplete = completedCount === items.length;
+  const counts = [
+    [t('activity.in_progress'), activeCount],
+    [t('activity.attention'), attentionCount],
+    [t('activity.status_paused'), pausedCount],
+    [t('activity.status_waiting_for_network'), items.filter(item => item.status === 'waiting_for_network').length],
+    [t('activity.status_cooldown'), downloads.filter(item => item.status === 'cooldown').length],
+    [t('activity.status_completed'), completedCount],
+    [t('downloadCollision.skipped'), skippedCount],
+    [t('activity.status_cancelled'), items.filter(item => item.status === 'cancelled').length],
+  ] as const;
+  const summary = counts.filter(([, count]) => count > 0).map(([label, count]) => `${label}: ${count}`).join(' · ')
+    + (aggregateSpeed > 0 ? ` · ${formatBytes(aggregateSpeed)}/s` : '');
 
   return (
-    <aside className="quiet-raised fixed bottom-4 start-4 z-50 w-[min(360px,calc(100vw-2rem))] overflow-hidden min-[1050px]:start-auto min-[1050px]:end-4" aria-label={i18n.t("activity.title")}>
-      <button type="button" onClick={() => setExpanded((value) => !value)} aria-expanded={expanded} className="flex w-full items-center gap-3 border-b border-app-border-subtle px-4 py-3 text-start hover:bg-app-hover">
-        <div className="flex h-8 w-8 items-center justify-center rounded-control bg-app-selected text-app-accent"><UploadCloud className="h-4 w-4" /></div>
+    <aside data-testid="transfer-center" data-ui-motion onKeyDown={stopControlShortcuts} className={`quiet-raised ui-enter fixed bottom-4 end-4 z-50 flex max-h-[min(560px,calc(100dvh-12rem))] flex-col overflow-hidden ${expanded ? 'w-[min(600px,calc(100vw-2rem))]' : 'w-[min(360px,calc(100vw-2rem))]'}`} aria-label={t('activity.title')}>
+      <header className="flex shrink-0 flex-wrap items-center gap-3 border-b border-app-border-subtle px-4 py-3">
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-control bg-app-selected text-app-accent" aria-hidden="true"><UploadCloud className="h-4 w-4" /></div>
         <div className="min-w-0 flex-1">
-          <h2 className="text-sm font-medium text-app-text">{i18n.t("common.transfers")}</h2>
-          <p className="text-[11px] text-app-text-secondary">
-            {activeCount > 0
-              ? `${activeCount} active${aggregateSpeed > 0 ? ` · ${formatBytes(aggregateSpeed)}/s` : ''}`
-              : pausedCount > 0
-                ? `${pausedCount} paused`
-                : `${uploads.length + downloads.length} complete or stopped`}
-          </p>
+          <h2 className="text-base font-semibold text-app-text">{t('common.transfers')}</h2>
+          <p className="truncate text-metadata text-app-text-secondary" title={summary}>{summary}</p>
         </div>
-        {expanded ? <ChevronDown className="h-4 w-4 text-app-text-secondary" /> : <ChevronUp className="h-4 w-4 text-app-text-secondary" />}
-      </button>
+        {expanded && uploads.some(item => canCancelTransfer(item) && item.status !== 'paused') && <QueuePlaybackAction direction="upload" onClick={onPauseUploads} header />}
+        {expanded && pausedUploads > 0 && <QueuePlaybackAction direction="upload" onClick={onResumeUploads} paused header />}
+        <IconButton
+          size="sm"
+          label={`${expanded ? t('common.close') : t('files.open')} ${t('common.transfers')}`}
+          aria-expanded={expanded}
+          aria-controls={expanded ? 'desktop-transfer-details' : undefined}
+          onClick={() => setExpanded(value => !value)}
+        >
+          {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronUp className="h-4 w-4" />}
+        </IconButton>
+      </header>
 
       {expanded && (
-        <div className="max-h-[min(420px,60vh)] overflow-y-auto">
-          {uploads.length > 0 && (
-            <section>
-              <div className="flex items-center justify-between bg-app-surface-sunken/25 px-4 py-2">
-                <span className="text-[11px] font-semibold uppercase tracking-wider text-app-text-secondary">{i18n.t('activity.uploads')}</span>
-                <div className="flex gap-3 text-[11px]">
-                  {activeUploads > 0 && <button type="button" onClick={onPauseUploads} className="flex items-center gap-1 text-app-text-secondary"><Pause className="h-3 w-3" aria-hidden="true" />Pause all</button>}
-                  {pausedUploads > 0 && <button type="button" onClick={onResumeUploads} className="flex items-center gap-1 text-app-accent"><Play className="h-3 w-3" aria-hidden="true" />Resume all</button>}
-                  {activeUploads > 0 && <button type="button" onClick={onCancelUploads} className="text-app-danger">Cancel all</button>}
-                  <button type="button" onClick={onClearUploads} className="text-app-accent">Clear finished</button>
-                </div>
-              </div>
-              {uploads.map((item) => (
-                <div key={item.id} className="border-t border-app-border-subtle px-4 py-3 first:border-t-0">
-                  <div className="flex items-center gap-3">
-                    <UploadCloud className="h-4 w-4 shrink-0 text-app-accent" />
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-xs text-app-text" title={item.url || item.path}>{(item.url || item.path).split(/[\\/]/).pop()}</p>
-                      <StatusLabel status={item.status} />
-                    </div>
-                    {(item.status === 'pending' || item.status === 'paused' || item.status === 'uploading' || item.status === 'downloading' || item.status === 'encrypting' || item.status === 'verifying') && <button type="button" onClick={() => onCancelUpload(item.id)} className="quiet-control p-1.5 text-app-text-secondary hover:text-app-danger" aria-label={`Cancel upload ${item.url || item.path}`} title={i18n.t("common.cancel")}><X className="h-3.5 w-3.5" aria-hidden="true" /></button>}
-                    {(item.status === 'error' || item.status === 'cancelled' || item.status === 'waiting_for_unlock') && <button type="button" onClick={() => onRetryUpload(item.id)} className="quiet-control p-1.5 text-app-text-secondary hover:text-app-accent" aria-label={i18n.t('common.action_name', { action: item.status === 'waiting_for_unlock' ? i18n.t('protection_labels.provide_credentials') : i18n.t('common.retry'), name: item.url || item.path })} title={item.status === 'waiting_for_unlock' ? i18n.t('protection_labels.provide_credentials') : i18n.t("common.retry")}><RotateCcw className="h-3.5 w-3.5" aria-hidden="true" /></button>}
-                  </div>
-                  {(item.status === 'uploading' || item.status === 'downloading') && <TransferProgress value={item.progress} />}
-                  {item.error && <p className="mt-1 truncate text-[10px] text-app-danger">{item.error}</p>}
-                </div>
-              ))}
-            </section>
-          )}
-
-          {downloads.length > 0 && (
-            <section>
-              <div className="flex items-center justify-between border-t border-app-border-subtle bg-app-surface-sunken/25 px-4 py-2">
-                <span className="text-[11px] font-semibold uppercase tracking-wider text-app-text-secondary">{i18n.t('activity.downloads')}</span>
-                <div className="flex gap-3 text-[11px]">
-                  {activeDownloads > 0 && <button type="button" onClick={onPauseDownloads} className="flex items-center gap-1 text-app-text-secondary"><Pause className="h-3 w-3" aria-hidden="true" />Pause all</button>}
-                  {pausedDownloads > 0 && <button type="button" onClick={onResumeDownloads} className="flex items-center gap-1 text-app-accent"><Play className="h-3 w-3" aria-hidden="true" />Resume all</button>}
-                  {activeDownloads > 0 && <button type="button" onClick={onCancelDownloads} className="text-app-danger">Cancel all</button>}
-                  <button type="button" onClick={onClearDownloads} className="text-app-accent">Clear finished</button>
-                </div>
-              </div>
-              {downloads.map((item) => (
-                <div key={item.id} className="border-t border-app-border-subtle px-4 py-3 first:border-t-0">
-                  <div className="flex items-center gap-3">
-                    <Download className="h-4 w-4 shrink-0 text-app-info" />
-                    <div className="min-w-0 flex-1"><p className="truncate text-xs text-app-text" title={item.filename}>{item.filename}</p>{item.downloadOutcome === 'skipped' ? <span className="text-[10px] text-app-text-secondary">{i18n.t('downloadCollision.skipped')}</span> : <StatusLabel status={item.status} />}</div>
-                    {(item.status === 'pending' || item.status === 'paused' || item.status === 'cooldown' || item.status === 'downloading' || item.status === 'decrypting' || item.status === 'verifying') && <button type="button" onClick={() => onCancelDownload(item.id)} className="quiet-control p-1.5 text-app-text-secondary hover:text-app-danger" aria-label={`Cancel download ${item.filename}`} title={i18n.t("common.cancel")}><X className="h-3.5 w-3.5" aria-hidden="true" /></button>}
-                    {(item.status === 'error' || item.status === 'cancelled' || item.status === 'waiting_for_unlock') && <button type="button" onClick={() => onRetryDownload(item.id)} className="quiet-control p-1.5 text-app-text-secondary hover:text-app-accent" aria-label={i18n.t('common.action_name', { action: item.status === 'waiting_for_unlock' ? i18n.t('protection_labels.provide_credentials') : i18n.t('common.retry'), name: item.filename })} title={item.status === 'waiting_for_unlock' ? i18n.t('protection_labels.provide_credentials') : i18n.t("common.retry")}><RotateCcw className="h-3.5 w-3.5" aria-hidden="true" /></button>}
-                  </div>
-                  {(item.status === 'downloading' || item.status === 'decrypting' || item.status === 'verifying') && <TransferProgress value={item.progress} tone="info" />}
-                  {item.error && <p className="mt-1 truncate text-[10px] text-app-danger">{item.error}</p>}
-                </div>
-              ))}
-            </section>
-          )}
+        <div id="desktop-transfer-details" data-ui-motion className="ui-enter min-h-0 flex-1 overflow-y-auto">
+          {uploads.length > 0 && <TransferQueueSection direction="upload" items={uploads} paused={pausedUploads} folders={folders} onPause={onPauseUploads} onResume={onResumeUploads} onCancelAll={onCancelUploads} onClear={onClearUploads} onCancel={onCancelUpload} onRetry={onRetryUpload} onRetryFailed={onRetryFailedUploads} retryBusy={retryingFailedUploads} />}
+          {downloads.length > 0 && <TransferQueueSection direction="download" items={downloads} paused={pausedDownloads} folders={folders} onPause={onPauseDownloads} onResume={onResumeDownloads} onCancelAll={onCancelDownloads} onClear={onClearDownloads} onCancel={onCancelDownload} onRetry={onRetryDownload} />}
           {allComplete && (
-            <div className="flex flex-col items-center gap-2 border-t border-app-border-subtle px-5 py-5 text-center" role="status">
-              <CheckCircle2 className="h-7 w-7 text-app-success" />
-              <div>
-                <p className="text-sm font-medium text-app-text">All transfers complete</p>
-                <p className="mt-0.5 text-[11px] text-app-text-secondary">Your files are ready. Finished items can be cleared whenever you like.</p>
-              </div>
+            <div className="flex items-center gap-3 border-t border-app-border-subtle px-4 py-3 text-sm" role="status">
+              <CheckCircle2 className="h-5 w-5 shrink-0 text-app-success" aria-hidden="true" />
+              <span className="font-medium text-app-text">{t('activity.status_completed')}</span>
             </div>
           )}
         </div>

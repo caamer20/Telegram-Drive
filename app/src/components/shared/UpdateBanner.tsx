@@ -1,4 +1,5 @@
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion } from 'framer-motion';
+import { useMotionPolicy } from '../../context/MotionContext';
 import { Download, X, RefreshCw, Sparkles } from 'lucide-react';
 import type { UpdateInstallPhase } from '../../services/updateReliability';
 import { useTranslation } from 'react-i18next';
@@ -25,13 +26,15 @@ export function UpdateBanner({
     onDismiss
 }: UpdateBannerProps) {
     const { t } = useTranslation();
+    const { reducedMotion, transition } = useMotionPolicy();
     return (
-        <AnimatePresence>
+        <>
             {available && (
                 <motion.div
-                    initial={{ opacity: 0, y: -50 }}
+                    data-ui-motion
+                    initial={reducedMotion ? false : { opacity: 0, y: -50 }}
+                    transition={transition(160)}
                     animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -50 }}
                     className="fixed top-0 left-0 right-0 z-50 p-3 bg-gradient-to-r from-telegram-primary/90 via-blue-500/90 to-purple-500/90 backdrop-blur-sm shadow-lg"
                 >
                     <div className="flex items-center justify-center gap-4 max-w-screen-lg mx-auto">
@@ -51,7 +54,9 @@ export function UpdateBanner({
                                 <div className="w-32 h-2 bg-white/30 rounded-full overflow-hidden">
                                     <motion.div
                                         className="h-full bg-white rounded-full"
-                                        initial={{ width: 0 }}
+                                        data-ui-motion
+                                        initial={reducedMotion ? false : { width: 0 }}
+                                        transition={transition(120)}
                                         animate={{ width: `${progress}%` }}
                                     />
                                 </div>
@@ -78,6 +83,6 @@ export function UpdateBanner({
                     </div>
                 </motion.div>
             )}
-        </AnimatePresence>
+        </>
     );
 }

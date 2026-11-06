@@ -1,6 +1,4 @@
-import i18n from '../../../i18n';
 import { useState } from 'react';
-import { motion } from 'framer-motion';
 import { Check, Monitor, Moon, Palette, Plus, RotateCcw, Sparkles, Sun, Trash2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useConfirm } from '../../../context/ConfirmContext';
@@ -47,7 +45,9 @@ export function ThemesTab() {
         updateCustomTheme,
     } = useTheme();
     const { confirm } = useConfirm();
-    const [editingId, setEditingId] = useState<string | null>(null);
+    const [editingId, setEditingId] = useState<string | null>(() =>
+        customThemes.some(theme => theme.id === activeCustomThemeId && !theme.isBuiltin) ? activeCustomThemeId : null
+    );
 
     const builtinThemes = customThemes.filter(theme => theme.isBuiltin);
     const userThemes = customThemes.filter(theme => !theme.isBuiltin);
@@ -109,12 +109,7 @@ export function ThemesTab() {
     };
 
     return (
-        <motion.section
-            key="themes"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.12, ease: [0.2, 0.8, 0.2, 1] }}
+        <section
             className="w-full space-y-6"
         >
             <div className="space-y-2">
@@ -122,19 +117,21 @@ export function ThemesTab() {
                     <Monitor className="h-3.5 w-3.5" />
                     {t('common.theme')}
                 </h3>
-                <div className="grid grid-cols-4 gap-2 rounded-container border border-app-border-subtle bg-app-surface-sunken/30 p-2">
+                <div role="group" aria-label={t('common.theme')} className="grid grid-cols-2 gap-2 sm:grid-cols-4 rounded-container border border-app-border-subtle bg-app-surface-sunken/30 p-2">
                     {([
-                        ['default', Sparkles, t('common.default')],
+                        ['default', Sparkles, t('common.default', { defaultValue: 'Default' })],
                         ['system', Monitor, t('common.system')],
                         ['light', Sun, t('common.light_mode')],
                         ['dark', Moon, t('common.dark_mode')],
                     ] as const).map(([preference, Icon, label]) => (
                         <button
                             key={preference}
+                            type="button"
+                            aria-pressed={!activeCustomThemeId && themePreference === preference}
                             onClick={() => setThemePreference(preference)}
                             className={`quiet-control flex items-center justify-center gap-2 border px-3 py-2 text-xs font-medium ${
                                 !activeCustomThemeId && themePreference === preference
-                                    ? 'border-app-accent/40 bg-app-selected text-app-accent'
+                                    ? 'border-app-accent/40 bg-app-selected text-app-text'
                                     : 'border-transparent text-app-text-secondary hover:text-app-text'
                             }`}
                         >
@@ -153,10 +150,12 @@ export function ThemesTab() {
                     <Palette className="w-3.5 h-3.5" />
                     {t('settings.presets')}
                 </h3>
-                <div className="grid grid-cols-4 gap-3">
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4">
                     {builtinThemes.map(theme => (
                         <button
                             key={theme.id}
+                            type="button"
+                            aria-pressed={activeCustomThemeId === theme.id}
                             onClick={() => handleSelectTheme(theme)}
                             className={`relative rounded-container border p-1.5 transition-colors ${
                                 activeCustomThemeId === theme.id
@@ -170,7 +169,7 @@ export function ThemesTab() {
                                 <div className="flex-1" style={{ background: theme.palette.surface }} />
                                 <div className="flex-1" style={{ background: theme.palette.primary }} />
                             </div>
-                            <p className="mt-1.5 truncate text-center text-[10px] text-app-text-secondary">
+                            <p className="mt-1.5 truncate text-center text-metadata text-app-text-secondary">
                                 {themeName(theme)}
                             </p>
                             {activeCustomThemeId === theme.id && (
@@ -190,10 +189,12 @@ export function ThemesTab() {
                 </h3>
 
                 {userThemes.length > 0 && (
-                    <div className="grid grid-cols-4 gap-3">
+                    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4">
                         {userThemes.map(theme => (
                             <button
                                 key={theme.id}
+                                type="button"
+                                aria-pressed={activeCustomThemeId === theme.id}
                                 onClick={() => handleSelectTheme(theme)}
                                 className={`relative rounded-container border p-1.5 transition-colors ${
                                     activeCustomThemeId === theme.id
@@ -207,7 +208,7 @@ export function ThemesTab() {
                                     <div className="flex-1" style={{ background: theme.palette.surface }} />
                                     <div className="flex-1" style={{ background: theme.palette.primary }} />
                                 </div>
-                                <p className="mt-1.5 truncate text-center text-[10px] text-app-text-secondary">
+                                <p className="mt-1.5 truncate text-center text-metadata text-app-text-secondary">
                                     {themeName(theme)}
                                 </p>
                                 {activeCustomThemeId === theme.id && (
@@ -236,38 +237,41 @@ export function ThemesTab() {
                     </h3>
 
                     <div className="flex items-center gap-2">
-                        <label className="text-xs text-telegram-subtext w-16 shrink-0">{t('common.name')}</label>
+                        <label htmlFor="custom-theme-name" className="text-xs text-app-text-secondary w-16 shrink-0">{t('common.name')}</label>
                         <input
+                            id="custom-theme-name"
                             type="text"
                             value={editingTheme.name}
                             onChange={event => handleNameChange(event.target.value)}
-                            className="flex-1 px-2 py-1.5 rounded-md text-xs bg-telegram-surface border border-telegram-border text-telegram-text focus:border-telegram-primary outline-none transition"
+                            className="quiet-control min-w-0 flex-1 border border-app-border bg-app-surface-sunken px-2.5 py-2 text-ui text-app-text focus:border-app-accent"
                             maxLength={32}
                         />
                     </div>
 
                     <div className="flex items-center gap-2">
                         <label className="text-xs text-telegram-subtext w-16 shrink-0">{t('settings.base_mode')}</label>
-                        <div className="flex gap-1">
+                        <div className="flex gap-1" role="group" aria-label={t('settings.base_mode')}>
                             <button
+                                type="button" aria-pressed={editingTheme.isDark}
                                 onClick={() => handleBaseToggle(true)}
                                 className={`px-3 py-1 rounded-md text-xs font-medium transition ${
                                     editingTheme.isDark
-                                        ? 'bg-telegram-primary text-white'
+                                        ? 'bg-app-accent text-app-accent-contrast'
                                         : 'bg-telegram-hover text-telegram-subtext hover:text-telegram-text'
                                 }`}
                             >
-                                {i18n.t('ui_copy.dark')}
+                                {t('common.dark_mode')}
                             </button>
                             <button
+                                type="button" aria-pressed={!editingTheme.isDark}
                                 onClick={() => handleBaseToggle(false)}
                                 className={`px-3 py-1 rounded-md text-xs font-medium transition ${
                                     !editingTheme.isDark
-                                        ? 'bg-telegram-primary text-white'
+                                        ? 'bg-app-accent text-app-accent-contrast'
                                         : 'bg-telegram-hover text-telegram-subtext hover:text-telegram-text'
                                 }`}
                             >
-                                {i18n.t('ui_copy.light')}
+                                {t('common.light_mode')}
                             </button>
                         </div>
                     </div>
@@ -275,19 +279,21 @@ export function ThemesTab() {
                     <div className="space-y-2">
                         {PALETTE_KEYS.map(({ key, labelKey }) => (
                             <div key={key} className="flex items-center gap-2">
-                                <label className="w-24 shrink-0 text-xs text-telegram-subtext">{t(labelKey)}</label>
-                                <div className="flex items-center gap-1.5 flex-1">
+                                <label htmlFor={`custom-theme-${key}`} className="w-24 shrink-0 text-xs text-app-text-secondary">{t(labelKey)}</label>
+                                <div className="flex min-w-0 flex-1 items-center gap-1.5">
                                     <input
                                         type="color"
+                                        aria-label={t(labelKey)}
                                         value={editingTheme.palette[key].startsWith('rgba') ? '#888888' : editingTheme.palette[key]}
                                         onChange={event => handlePaletteChange(key, event.target.value)}
                                         className="w-7 h-7 rounded-md border border-telegram-border cursor-pointer p-0.5 bg-transparent"
                                     />
                                     <input
+                                        id={`custom-theme-${key}`}
                                         type="text"
                                         value={editingTheme.palette[key]}
                                         onChange={event => handlePaletteChange(key, event.target.value)}
-                                        className="flex-1 px-2 py-1 rounded-md text-xs bg-telegram-surface border border-telegram-border text-telegram-text focus:border-telegram-primary outline-none transition font-mono"
+                                        className="quiet-control min-w-0 flex-1 border border-app-border bg-app-surface-sunken px-2.5 py-2 text-ui text-app-text focus:border-app-accent font-mono"
                                         maxLength={30}
                                     />
                                 </div>
@@ -317,6 +323,6 @@ export function ThemesTab() {
                     {t('settings.reset_default')}
                 </button>
             )}
-        </motion.section>
+        </section>
     );
 }

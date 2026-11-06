@@ -230,6 +230,7 @@ export function FileExplorer({
     return (
         <div
             ref={parentRef}
+            data-testid="file-explorer"
             className="custom-scrollbar flex-1 overflow-auto p-3"
         >
             {syncProgress?.active && syncProgress.count > 0 && (
@@ -312,17 +313,18 @@ export function FileExplorer({
             ) : (
                 <div className="flex w-full flex-col overflow-hidden border-y border-app-border-subtle">
                     {/* List Header */}
-                    <div className="grid h-8 grid-cols-[1.75rem_2fr_6rem_8rem] items-center gap-3 border-b border-app-border-subtle bg-app-surface-sunken/20 px-3 text-metadata font-medium text-app-text-secondary select-none">
-                        <div className="text-center">#</div>
+                    <div className="grid h-8 grid-cols-[1.75rem_minmax(0,1fr)_2rem] sm:grid-cols-[1.75rem_minmax(0,2fr)_6rem_8rem_2rem] items-center gap-3 border-b border-app-border-subtle bg-app-surface-sunken/20 px-3 text-metadata font-medium text-app-text-secondary select-none">
+                        <div aria-hidden="true" />
                         <button onClick={() => onSortChange('name')} className="flex items-center gap-1 transition-colors hover:text-app-text">
                             {t('common.name')} <SortIcon field="name" />
                         </button>
-                        <button onClick={() => onSortChange('size')} className="flex items-center justify-end gap-1 transition-colors hover:text-app-text">
+                        <button onClick={() => onSortChange('size')} className="hidden sm:flex items-center justify-end gap-1 transition-colors hover:text-app-text">
                             {t('common.size')} <SortIcon field="size" />
                         </button>
-                        <button onClick={() => onSortChange('date')} className="flex items-center justify-end gap-1 transition-colors hover:text-app-text">
+                        <button onClick={() => onSortChange('date')} className="hidden sm:flex items-center justify-end gap-1 transition-colors hover:text-app-text">
                             {t('common.date')} <SortIcon field="date" />
                         </button>
+                        <div aria-hidden="true" />
                     </div>
 
                     <div

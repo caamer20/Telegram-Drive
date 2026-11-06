@@ -431,7 +431,12 @@
     "hide_passphrase": "隱藏密碼片語",
     "current_vault_passphrase": "目前保險庫通行片語",
     "videoFilenameCaption": "檔案名稱說明",
-    "videoFilenameCaptionDesc": "將原始檔案名稱加入影片訊息說明中。加密上傳會保護檔案名稱隱私。"
+    "videoFilenameCaptionDesc": "將原始檔案名稱加入影片訊息說明中。加密上傳會保護檔案名稱隱私。",
+    "find_category": "尋找分類",
+    "no_categories": "沒有相符的分類",
+    "saved": "設定已儲存",
+    "color_border": "邊框",
+    "color_hover": "懸停"
   },
   "files": {
     "download": "下載",
@@ -1051,7 +1056,11 @@
     "copy_report": "複製診斷報告",
     "report_copied": "診斷報告已複製",
     "report_label": "診斷報告預覽",
-    "desktop_only": "桌面傳輸歷史可在桌面應用程式中查看。Android 備份和離線進度顯示在各自的面板中。"
+    "desktop_only": "桌面傳輸歷史可在桌面應用程式中查看。Android 備份和離線進度顯示在各自的面板中。",
+    "progress_unknown": "進度未知",
+    "retry_all_failed": "重試所有失敗項目",
+    "retry_failed_summary": "已排入佇列：{{queued}} · 已略過：{{skipped}} · 失敗：{{failed}} · 尚未嘗試：{{remaining}}",
+    "in_progress": "進行中"
   },
   "androidActivity": {
     "description": "此帳號的相機備份結果和檔案傳輸進度。",
