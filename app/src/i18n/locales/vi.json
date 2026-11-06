@@ -431,7 +431,12 @@
     "hide_passphrase": "Ẩn cụm mật khẩu",
     "current_vault_passphrase": "Mật khẩu kho hiện tại",
     "videoFilenameCaption": "Tên tệp trong chú thích",
-    "videoFilenameCaptionDesc": "Thêm tên tệp gốc vào tin nhắn video. Nội dung tải lên được mã hóa sẽ giữ tên riêng tư."
+    "videoFilenameCaptionDesc": "Thêm tên tệp gốc vào tin nhắn video. Nội dung tải lên được mã hóa sẽ giữ tên riêng tư.",
+    "find_category": "Tìm danh mục",
+    "no_categories": "Không có danh mục phù hợp",
+    "saved": "Đã lưu cài đặt",
+    "color_border": "Viền",
+    "color_hover": "Di chuột"
   },
   "files": {
     "download": "Tải xuống",
@@ -1051,7 +1056,11 @@
     "copy_report": "Sao chép báo cáo chẩn đoán",
     "report_copied": "Đã sao chép báo cáo chẩn đoán",
     "report_label": "Bản xem trước báo cáo chẩn đoán",
-    "desktop_only": "Lịch sử truyền trên máy tính có trong ứng dụng máy tính. Tiến độ sao lưu và ngoại tuyến Android hiển thị ở các bảng riêng."
+    "desktop_only": "Lịch sử truyền trên máy tính có trong ứng dụng máy tính. Tiến độ sao lưu và ngoại tuyến Android hiển thị ở các bảng riêng.",
+    "progress_unknown": "Chưa rõ tiến độ",
+    "retry_all_failed": "Thử lại tất cả mục thất bại",
+    "retry_failed_summary": "Đã xếp hàng: {{queued}} · Đã bỏ qua: {{skipped}} · Thất bại: {{failed}} · Chưa thử: {{remaining}}",
+    "in_progress": "Đang tiến hành"
   },
   "androidActivity": {
     "description": "Kết quả sao lưu máy ảnh và tiến độ truyền của tài khoản này.",

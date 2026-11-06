@@ -431,7 +431,12 @@
     "hide_passphrase": "Hide passphrase",
     "current_vault_passphrase": "Current vault passphrase",
     "videoFilenameCaption": "Filename captions",
-    "videoFilenameCaptionDesc": "Add the original filename to video media messages. Encrypted uploads keep it private."
+    "videoFilenameCaptionDesc": "Add the original filename to video media messages. Encrypted uploads keep it private.",
+    "find_category": "Find a category",
+    "no_categories": "No matching categories",
+    "saved": "Settings saved",
+    "color_border": "Border",
+    "color_hover": "Hover"
   },
   "files": {
     "download": "Download",
@@ -617,7 +622,11 @@
     "copy_report": "Copy diagnostic report",
     "report_copied": "Diagnostic report copied",
     "report_label": "Diagnostic report preview",
-    "desktop_only": "Desktop transfer history is available in the desktop app. Android backup and offline progress are shown in their own panels."
+    "desktop_only": "Desktop transfer history is available in the desktop app. Android backup and offline progress are shown in their own panels.",
+    "progress_unknown": "Progress unknown",
+    "retry_all_failed": "Retry all failed",
+    "retry_failed_summary": "Queued: {{queued}} · Skipped: {{skipped}} · Failed: {{failed}} · Not attempted: {{remaining}}",
+    "in_progress": "In progress"
   },
   "syncPreview": {
     "setup_title": "Review a folder mapping",

@@ -76,16 +76,16 @@ test('populated Transfer Center actions and states pass axe through the native e
   await expect(center).toContainText('Fixture download.bin');
   expect(await audit(page,'aside[aria-label="Transfer activity"]')).toEqual([]);
   const sections=center.locator('section');
-  await sections.filter({hasText:'Fixture download.bin'}).getByRole('button',{name:'Pause all',exact:true}).click();
-  await expect(sections.filter({hasText:'Fixture download.bin'})).toContainText('paused');
-  await sections.filter({hasText:'Fixture download.bin'}).getByRole('button',{name:'Resume all',exact:true}).click();
-  await expect(sections.filter({hasText:'Fixture download.bin'})).toContainText('downloading');
-  await center.getByRole('button',{name:'Retry /fixture/Fixture retry.bin',exact:true}).click();
+  await sections.filter({hasText:'Fixture download.bin'}).getByRole('button',{name:'Pause Downloads',exact:true}).click();
+  await expect(sections.filter({hasText:'Fixture download.bin'})).toContainText('Paused');
+  await sections.filter({hasText:'Fixture download.bin'}).getByRole('button',{name:'Resume Downloads',exact:true}).click();
+  await expect(sections.filter({hasText:'Fixture download.bin'})).toContainText('Downloading');
+  await center.getByRole('button',{name:'Retry this file: Fixture retry.bin',exact:true}).click();
   await expect.poll(async()=> (await nativeCalls(page,'cmd_transfer_retry')).length).toBe(1);
-  await center.getByRole('button',{name:'Cancel download Fixture download.bin',exact:true}).click();
-  await expect(center).toContainText('cancelled');
+  await center.getByRole('button',{name:'Cancel Fixture download.bin',exact:true}).click();
+  await expect(center).toContainText('Cancelled');
   expect(await audit(page,'aside[aria-label="Transfer activity"]')).toEqual([]);
-  await sections.filter({hasText:'Fixture download.bin'}).getByRole('button',{name:'Clear finished',exact:true}).click();
+  await sections.filter({hasText:'Fixture download.bin'}).getByRole('button',{name:'Clear',exact:true}).click();
   await expect(center).not.toContainText('Fixture finished.bin');
 });
 
@@ -104,6 +104,9 @@ test('TV directional navigation reaches scrollable content and stays within an o
     await page.keyboard.press(key);
     expect(await dialog.evaluate(element=>element.contains(document.activeElement))).toBe(true);
   }
+  // Directional navigation may land on a native select; Escape first leaves
+  // native editing there. Focus Close to exercise the dialog-level dismissal.
+  await dialog.getByRole('button',{name:'Close',exact:true}).focus();
   await page.keyboard.press('Escape');await expect(dialog).toBeHidden();await expect(open).toBeFocused();
 });
 

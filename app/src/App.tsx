@@ -65,7 +65,7 @@ function AppContent() {
   const { available, version, downloading, progress, phase, managedByPackageManager, downloadAndInstall, dismissUpdate } = useUpdates();
   const { isTelevision } = usePlatform();
   useTvSpatialNavigation(isTelevision);
-  const { settings, updateSetting, isLoaded, persistenceStatus, retryPersistence } = useSettings();
+  const { settings, isLoaded, persistenceStatus, retryPersistence } = useSettings();
   const { status: supporterStatus } = useSupporter();
   const { i18n, t } = useTranslation();
 
@@ -100,31 +100,6 @@ function AppContent() {
       });
     return () => { cancelled = true; };
   }, [settings.language, isLoaded, i18n]);
-
-  // Performance mode: auto-enable when user has prefers-reduced-motion
-  useEffect(() => {
-    const mediaQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
-    if (mediaQuery.matches && !settings.performanceMode) {
-      updateSetting('performanceMode', true);
-    }
-    const handler = (e: MediaQueryListEvent) => {
-      if (e.matches && !settings.performanceMode) {
-        updateSetting('performanceMode', true);
-      }
-    };
-    mediaQuery.addEventListener('change', handler);
-    return () => mediaQuery.removeEventListener('change', handler);
-  }, []);
-
-  // Apply performance-mode class to body (guarded by settings load to avoid flicker)
-  useEffect(() => {
-    if (!isLoaded) return;
-    if (settings.performanceMode) {
-      document.body.classList.add('performance-mode');
-    } else {
-      document.body.classList.remove('performance-mode');
-    }
-  }, [settings.performanceMode, isLoaded]);
 
   useEffect(() => {
     document.documentElement.classList.toggle('tv-mode', isTelevision);
@@ -260,7 +235,7 @@ function AppContent() {
     return (
       <main className="h-screen w-screen flex items-center justify-center bg-telegram-bg">
         <div className="flex w-full max-w-sm flex-col items-center gap-5 px-8" role="status" aria-live="polite">
-          <img src="/logo.svg" className="w-16 h-16 drop-shadow-lg animate-pulse" alt={i18n.t("common.app_title")} />
+          <img src="/logo.svg" className="w-16 h-16" alt={i18n.t("common.app_title")} />
           <div className="w-full text-center">
             <p className="text-sm font-semibold text-telegram-text">{t(`runtime.startup_${visibleProgress.stage}_label`)}</p>
             <p className="mt-1 text-xs text-telegram-subtext">{t(`runtime.startup_${visibleProgress.stage}_detail`)}</p>

@@ -3097,7 +3097,11 @@ fn zip_preview_and_extraction_use_private_files_verify_crc_limits_and_cleanup_ca
         let mut zip =
             zip::ZipArchive::new(std::fs::File::open(fixture.path("document.zip")).unwrap())
                 .unwrap();
-        let offset = zip.by_index(0).unwrap().data_start() as usize;
+        let offset = zip
+            .by_index(0)
+            .unwrap()
+            .data_start()
+            .expect("stored ZIP fixture has a data offset") as usize;
         offset
     };
     damaged[data_offset + 100] ^= 1;
@@ -9771,4 +9775,233 @@ fn video_upload_unused_prepared_preview_admission_is_released_when_main_upload_i
         assert_video_upload_scratch_empty(&fixture);
         app.stop();
     }
+}
+
+fn retry_upload_fixture(id: &str, owner: &str, status: &str) -> Value {
+    json!({
+        "id":id,"ownerId":owner,"direction":"upload","kind":"local_upload",
+        "status":status,"path":format!("/synthetic/{id}.mp4"),"filename":format!("{id}.mp4"),
+        "folderId":91,"protectionMode":"vault_and_passphrase","protectMetadata":true,
+        "videoUploadMode":"file","videoFilenameCaption":true,"tempZipPath":"/synthetic/retained.zip",
+        "progress":81,"transferredBytes":810,"totalBytes":1000,"speedBytesPerSec":24,
+        "error":"synthetic network failure","retryAt":1000,"networkRetries":5,"queuePosition":3,
+        "revision":7,"createdAt":1,"updatedAt":2
+    })
+}
+
+#[test]
+fn retry_failed_uploads_preserves_other_states_account_scope_and_durable_inputs() {
+    let fixture = Fixture::new();
+    let mut app = Backend::start(&fixture.0);
+    app.ok(json!({"command":"seed_account","owner":101}));
+    for status in [
+        "failed",
+        "cancelled",
+        "paused",
+        "waiting_for_unlock",
+        "waiting_for_network",
+        "cooldown",
+        "pending",
+        "completed",
+    ] {
+        app.ok(json!({"command":"save_transfer","job":retry_upload_fixture(status,"101",status)}));
+    }
+    let mut download = retry_upload_fixture("download", "101", "failed");
+    download["direction"] = json!("download");
+    download["kind"] = json!("download");
+    app.ok(json!({"command":"save_transfer","job":download}));
+    app.ok(json!({"command":"save_transfer","job":retry_upload_fixture("foreign","202","failed")}));
+    app.ok(json!({"command":"capture_account","owner":"101"}));
+    let accepted = app
+        .ok(json!({"command":"retry_failed_upload","id":"failed","owner":"101","promptToken":53}));
+    assert_eq!(accepted["retried"], true);
+    assert_eq!(accepted["job"]["status"], "pending");
+    assert_eq!(accepted["job"]["revision"], 8);
+    assert_eq!(accepted["job"]["progress"], 0);
+    assert_eq!(accepted["job"]["transferredBytes"], 0);
+    assert_eq!(accepted["job"]["speedBytesPerSec"], 0);
+    assert_eq!(accepted["job"]["networkRetries"], 0);
+    assert_eq!(accepted["hasPromptToken"], true);
+    let original = retry_upload_fixture("failed", "101", "failed");
+    for key in [
+        "id",
+        "ownerId",
+        "path",
+        "folderId",
+        "filename",
+        "protectionMode",
+        "protectMetadata",
+        "videoUploadMode",
+        "videoFilenameCaption",
+        "tempZipPath",
+        "queuePosition",
+        "totalBytes",
+        "createdAt",
+    ] {
+        assert_eq!(accepted["job"][key], original[key], "retry changed {key}");
+    }
+    let repeated = app
+        .ok(json!({"command":"retry_failed_upload","id":"failed","owner":"101","promptToken":99}));
+    assert_eq!(repeated["retried"], false);
+    assert_eq!(
+        repeated["job"]["revision"], 8,
+        "a repeated click requeued an accepted item"
+    );
+    for status in [
+        "cancelled",
+        "paused",
+        "waiting_for_unlock",
+        "waiting_for_network",
+        "cooldown",
+        "pending",
+        "completed",
+    ] {
+        let result = app.ok(
+            json!({"command":"retry_failed_upload","id":status,"owner":"101","promptToken":99}),
+        );
+        assert_eq!(result["retried"], false);
+        assert_eq!(result["job"]["status"], status);
+        assert_eq!(result["job"]["revision"], 7);
+        assert_eq!(result["hasPromptToken"], false);
+    }
+    let result = app.ok(
+        json!({"command":"retry_failed_upload","id":"download","owner":"101","promptToken":99}),
+    );
+    assert_eq!(result["retried"], false);
+    assert_eq!(result["job"]["status"], "failed");
+    assert_eq!(result["hasPromptToken"], false);
+    assert!(app
+        .failure(json!({"command":"retry_failed_upload","id":"foreign","owner":"101"}))
+        .contains("ACCOUNT_CHANGED"));
+    app.ok(json!({"command":"seed_account","owner":202}));
+    assert!(app
+        .failure(json!({"command":"retry_failed_upload","id":"foreign","owner":"101"}))
+        .contains("ACCOUNT_CHANGED"));
+    assert!(app.failure(json!({"command":"retry_failed_upload","id":"foreign","owner":"202","capturedAccount":true})).contains("ACCOUNT_CHANGED"));
+    app.stop();
+    let raw = sqlite::open(fixture.path("transfers.db")).unwrap();
+    let mut query = raw
+        .prepare("SELECT payload_json FROM transfer_jobs WHERE id='failed'")
+        .unwrap();
+    assert_eq!(query.next().unwrap(), sqlite::State::Row);
+    let payload = query.read::<String, _>(0).unwrap();
+    assert!(
+        !payload.contains("promptToken"),
+        "a credential handle was persisted"
+    );
+    drop(query);
+    drop(raw);
+    let mut app = Backend::start(&fixture.0);
+    let persisted = app.ok(json!({"command":"transfers"}));
+    let failed = persisted
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|job| job["id"] == "failed")
+        .unwrap();
+    assert_eq!(failed["status"], "pending");
+    assert_eq!(failed["path"], original["path"]);
+    app.ok(json!({"command":"seed_account","owner":101}));
+    let unchanged = app.ok(json!({"command":"retry_failed_upload","id":"failed","owner":"101"}));
+    assert_eq!(unchanged["hasPromptToken"], false);
+    app.stop();
+}
+
+#[test]
+fn retry_failed_uploads_rolls_back_storage_failure_and_recovers_only_pending_metadata() {
+    let fixture = Fixture::new();
+    let mut app = Backend::start(&fixture.0);
+    app.ok(json!({"command":"seed_account","owner":101}));
+    app.ok(
+        json!({"command":"save_transfer","job":retry_upload_fixture("rollback","101","failed")}),
+    );
+    app.ok(json!({"command":"save_transfer","job":retry_upload_fixture("receipt","101","failed")}));
+    let connection = sqlite::open(fixture.path("transfers.db")).unwrap();
+    connection.execute("CREATE TRIGGER deny_retry BEFORE UPDATE ON transfer_jobs WHEN NEW.id='rollback' AND NEW.status='pending' BEGIN SELECT RAISE(ABORT,'fixture disk failure'); END;").unwrap();
+    assert!(app
+        .failure(
+            json!({"command":"retry_failed_upload","id":"rollback","owner":"101","promptToken":55})
+        )
+        .contains("PERSISTENCE_ERROR"));
+    let snapshot = app.ok(json!({"command":"transfer_retry_snapshot","id":"rollback"}));
+    assert_eq!(snapshot["job"]["status"], "failed");
+    assert_eq!(snapshot["job"]["revision"], 7);
+    assert_eq!(snapshot["hasPromptToken"], false);
+    connection
+        .execute(concat!(
+            "DROP TRIGGER deny_retry; ",
+            "CREATE TRIGGER deny_receipt BEFORE UPDATE ON transfer_jobs ",
+            "WHEN NEW.id='receipt' AND NEW.status='completed' ",
+            "BEGIN SELECT RAISE(ABORT,'fixture checkpoint failure'); END;"
+        ))
+        .unwrap();
+    let mut completed = retry_upload_fixture("receipt", "101", "completed");
+    completed["progress"] = json!(100);
+    completed["revision"] = json!(8);
+    let pending = app.ok(json!({"command":"record_transfer_result","job":completed}));
+    assert_eq!(pending["persistencePending"], true);
+    connection.execute("DROP TRIGGER deny_receipt").unwrap();
+    drop(connection);
+    let recovered = app
+        .ok(json!({"command":"retry_failed_upload","id":"receipt","owner":"101","promptToken":56}));
+    assert_eq!(
+        recovered["job"]["status"], "completed",
+        "published data must not be enqueued again"
+    );
+    assert_eq!(recovered["retried"], false);
+    assert_eq!(recovered["job"]["persistencePending"], false);
+    assert_eq!(recovered["hasPromptToken"], false);
+    app.stop();
+    let mut app = Backend::start(&fixture.0);
+    let persisted = app.ok(json!({"command":"transfers"}));
+    let jobs = persisted.as_array().unwrap();
+    assert_eq!(
+        jobs.iter().find(|job| job["id"] == "receipt").unwrap()["status"],
+        "completed"
+    );
+    assert_eq!(
+        jobs.iter().find(|job| job["id"] == "rollback").unwrap()["status"],
+        "failed"
+    );
+    app.stop();
+}
+
+#[test]
+fn retry_failed_uploads_keeps_a_hundred_item_batch_durable_across_process_restart() {
+    let fixture = Fixture::new();
+    let mut app = Backend::start(&fixture.0);
+    app.ok(json!({"command":"seed_account","owner":101}));
+    for index in 0..100 {
+        app.ok(json!({"command":"save_transfer","job":retry_upload_fixture(&format!("batch-{index}"),"101","failed")}));
+    }
+    let started = Instant::now();
+    for index in 0..50 {
+        let result = app.ok(json!({"command":"retry_failed_upload","id":format!("batch-{index}"),"owner":"101","promptToken":1000+index}));
+        assert_eq!(result["job"]["status"], "pending");
+        assert_eq!(result["job"]["revision"], 8);
+    }
+    app.stop();
+    let mut app = Backend::start(&fixture.0);
+    // Replaying the accepted half must not create a second queue attempt.
+    for index in 0..100 {
+        let result = app.ok(json!({"command":"retry_failed_upload","id":format!("batch-{index}"),"owner":"101","promptToken":2000+index}));
+        assert_eq!(result["job"]["status"], "pending");
+        assert_eq!(result["job"]["revision"], 8);
+        assert_eq!(result["retried"], index >= 50);
+        assert_eq!(result["hasPromptToken"], index >= 50);
+    }
+    println!(
+        "100 failed-upload queue acceptances plus restart/replay took {:?}",
+        started.elapsed()
+    );
+    app.stop();
+    let mut app = Backend::start(&fixture.0);
+    let jobs = app.ok(json!({"command":"transfers"}));
+    assert_eq!(jobs.as_array().unwrap().len(), 100);
+    assert!(jobs
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|job| job["status"] == "pending" && job["revision"] == 8));
+    app.stop();
 }

@@ -26,6 +26,8 @@ import { useActionScope } from '../../../hooks/useActionScope';
 import { useUpdates } from '../../../context/UpdateContext';
 import { BandwidthSettings } from './settings/BandwidthSettings';
 import { applyProxySettings, applyVpnSettings } from '../../../services/networkSettings';
+import { useMotionPolicy } from '../../../context/MotionContext';
+import { MotionPane } from '../../shared/MotionPane';
 
 interface SettingsModalProps {
     ownerId: string | null;
@@ -67,6 +69,7 @@ export function SettingsModal(props: SettingsModalProps) {
 function OwnedSettingsModal({ ownerId, isOpen, onClose, initialTab = 'general', focusSupporter = false }: SettingsModalProps) {
     const { settings, updateSetting, updateSettings, resetSettings, isLoaded, persistenceStatus } = useSettings();
     const { confirm } = useConfirm();
+    const { reducedMotion, transition } = useMotionPolicy();
     const { t } = useTranslation();
     const { status: supporterStatus } = useSupporter();
     const tabLabel = (tab: SettingsTab) => tab === 'license'
@@ -86,6 +89,15 @@ function OwnedSettingsModal({ ownerId, isOpen, onClose, initialTab = 'general', 
     const [clearingVariant, setClearingVariant] = useState<string | null>(null); // file_key:quality being cleared
     const [activeTab, setActiveTab] = useState<SettingsTab>('general');
     const [settingsSearch, setSettingsSearch] = useState('');
+    const categoryGroups = [
+        [t('ui_copy.nav_essentials'), [['general', Globe, 'General transfers language updates'], ['themes', Palette, 'Appearance colors themes']] as const],
+        [t('ui_copy.nav_security'), [['privacy', Bug, 'Privacy telemetry crash reports consent'], ['encryption', Shield, 'Encryption vault security auto lock']] as const],
+        [t('ui_copy.nav_connections'), [['sync', FolderSync, 'Folder sync local directories Telegram channels'], ['sharing', Link, 'Sharing links local server']] as const],
+        [t('settings.tab_advanced'), [['advanced', Gauge, 'REST API proxy VPN WebDAV network integration Finder token port']] as const],
+        [t('ui_copy.nav_support'), [['license', Key, 'Supporter lifetime license ad-free ads $5 PayPal recovery purchase'], ['about', Info, 'About diagnostics version updates']] as const],
+    ] as const;
+    const matchesCategory = (key: SettingsTab, keywords: string) =>
+        `${key} ${keywords} ${tabLabel(key)}`.toLowerCase().includes(settingsSearch.trim().toLowerCase());
     const [showGeneralAdvanced, setShowGeneralAdvanced] = useState(false);
     const [accessTransparency, setAccessTransparency] = useState<LocalAccessService | null>(null);
     const modalRef = useRef<HTMLDivElement>(null);
@@ -681,13 +693,10 @@ function OwnedSettingsModal({ ownerId, isOpen, onClose, initialTab = 'general', 
     };
 
     return (
-        <AnimatePresence>
+        <AnimatePresence initial={false}>
             {isOpen && (
-                <motion.div
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    exit={{ opacity: 0 }}
-                    className="fixed inset-0 z-[100] flex items-center justify-center bg-app-overlay p-6 backdrop-blur-sm"
+                <MotionPane overlay
+                    className="fixed inset-0 z-[100] flex items-center justify-center bg-app-overlay p-3 sm:p-6 backdrop-blur-sm"
                     onClick={onClose}
                 >
                     <motion.div
@@ -696,16 +705,16 @@ function OwnedSettingsModal({ ownerId, isOpen, onClose, initialTab = 'general', 
                         aria-modal="true"
                         aria-labelledby="settings-dialog-title"
                         tabIndex={-1}
-                        layout
-                        initial={{ opacity: 0, scale: 0.95, y: 10 }}
-                        animate={{ opacity: 1, scale: 1, y: 0 }}
-                        exit={{ opacity: 0, scale: 0.95, y: 10 }}
-                        transition={{ duration: 0.18, ease: [0.2, 0.8, 0.2, 1] }}
-                        className="quiet-raised flex h-[min(760px,calc(100vh-3rem))] w-[min(920px,calc(100vw-3rem))] flex-col overflow-hidden"
+                        initial={{ opacity: reducedMotion ? 1 : 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        transition={transition(160)}
+                        data-ui-motion="settings-dialog"
+                        className="quiet-raised settings-modal flex h-[min(760px,calc(100dvh-1.5rem))] w-[min(920px,calc(100vw-1.5rem))] flex-col overflow-hidden sm:h-[min(760px,calc(100dvh-3rem))] sm:w-[min(920px,calc(100vw-3rem))]"
                         onClick={e => e.stopPropagation()}
                     >
                         {/* Header */}
-                        <div className="flex min-h-16 items-center justify-between border-b border-app-border-subtle px-6 py-4">
+                        <div className="flex min-h-16 items-center justify-between border-b border-app-border-subtle px-4 py-4 sm:px-6">
                             <div>
                                 <h2 id="settings-dialog-title" className="text-base font-semibold text-app-text">{t('settings.title')}</h2>
                                 <p className="mt-0.5 text-xs text-app-text-tertiary">{tabLabel(activeTab)}</p>
@@ -719,27 +728,22 @@ function OwnedSettingsModal({ ownerId, isOpen, onClose, initialTab = 'general', 
                             </button>
                         </div>
 
-                        <div className="flex min-h-0 flex-1">
+                        <div className="flex min-h-0 flex-1 flex-col sm:flex-row">
                         {/* Settings navigation */}
-                        <aside className="w-56 shrink-0 overflow-y-auto border-e border-app-border-subtle bg-app-sidebar p-3">
+                        <aside className="settings-navigation max-h-52 shrink-0 overflow-y-auto border-b border-app-border-subtle bg-app-sidebar p-3 sm:max-h-none sm:w-56 sm:border-b-0 sm:border-e">
+                            <nav aria-label={t('settings.title')}>
                             <div className="relative mb-3">
                                 <Search className="pointer-events-none absolute start-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-app-text-tertiary" />
-                                <input value={settingsSearch} onChange={(event) => setSettingsSearch(event.target.value)} placeholder={i18n.t('ui_copy.search_settings')} className="quiet-control h-9 w-full border border-app-border bg-app-surface-sunken ps-8 pe-2 text-sm text-app-text outline-none focus:border-app-accent" />
+                                <input value={settingsSearch} onChange={(event) => setSettingsSearch(event.target.value)} type="search" placeholder={t('settings.find_category')} aria-label={t('settings.find_category')} className="quiet-control h-9 w-full border border-app-border bg-app-surface-sunken ps-8 pe-2 text-sm text-app-text outline-none focus:border-app-accent" />
                             </div>
-                            {([
-                                [t('ui_copy.nav_essentials'), [['general', Globe, 'General transfers language updates'], ['themes', Palette, 'Appearance colors themes']] as const],
-                                [t('ui_copy.nav_security'), [['privacy', Bug, 'Privacy telemetry crash reports consent'], ['encryption', Shield, 'Encryption vault security auto lock']] as const],
-                                [t('ui_copy.nav_connections'), [['sync', FolderSync, 'Folder sync local directories Telegram channels'], ['sharing', Link, 'Sharing links local server']] as const],
-                                [t('settings.tab_advanced'), [['advanced', Gauge, 'REST API proxy VPN WebDAV network integration Finder token port']] as const],
-                                [t('ui_copy.nav_support'), [['license', Key, 'Supporter lifetime license ad-free ads $5 PayPal recovery purchase'], ['about', Info, 'About diagnostics version updates']] as const],
-                            ] as const).map(([group, items]) => {
-                                const visibleItems = items.filter(([key, , keywords]) => `${key} ${keywords} ${tabLabel(key)}`.toLowerCase().includes(settingsSearch.trim().toLowerCase()));
+                            {categoryGroups.map(([group, items]) => {
+                                const visibleItems = items.filter(([key, , keywords]) => matchesCategory(key, keywords));
                                 if (visibleItems.length === 0) return null;
                                 return (
                                     <div key={group} className="mb-3">
                                         <div className="mb-1 px-2 text-[10px] font-semibold uppercase tracking-wider text-app-text-tertiary">{group}</div>
                                         {visibleItems.map(([key, Icon]) => (
-                                            <button key={key} onClick={() => setActiveTab(key)} className={`quiet-control mb-0.5 flex w-full items-center gap-2.5 px-3 py-2 text-start text-sm font-medium ${activeTab === key ? 'bg-app-selected text-app-text' : 'text-app-text-secondary hover:text-app-text'}`}>
+                                            <button key={key} type="button" aria-current={activeTab === key ? 'page' : undefined} onClick={() => setActiveTab(key)} className={`quiet-control mb-0.5 flex w-full items-center gap-2.5 px-3 py-2 text-start text-sm font-medium ${activeTab === key ? 'bg-app-selected text-app-text' : 'text-app-text-secondary hover:text-app-text'}`}>
                                                 <Icon className={`h-4 w-4 shrink-0 ${activeTab === key ? 'text-app-accent' : ''}`} />
                                                 {tabLabel(key)}
                                             </button>
@@ -747,21 +751,41 @@ function OwnedSettingsModal({ ownerId, isOpen, onClose, initialTab = 'general', 
                                     </div>
                                 );
                             })}
+                            {categoryGroups.every(([, items]) => items.every(([key, , keywords]) => !matchesCategory(key, keywords))) && (
+                                <p role="status" className="px-2 py-3 text-metadata text-app-text-secondary">{t('settings.no_categories')}</p>
+                            )}
+                            </nav>
                         </aside>
 
                         {/* Body */}
-                        <div className="relative min-w-0 flex-1 overflow-y-auto overflow-x-hidden px-7 py-6">
+                        <div className="relative min-w-0 flex-1 overflow-y-auto overflow-x-hidden px-4 py-5 sm:px-6 sm:py-6">
                             {((activeTab === 'proxy' && networkApplyFailed.proxy) || (activeTab === 'vpn' && networkApplyFailed.vpn)) && (
                                 <div role="alert" className="mb-4 flex items-center justify-between gap-3 rounded-lg border border-app-danger/30 p-3 text-sm text-app-text">
                                     <span>{t('common.operation_failed')}</span>
                                     <button type="button" onClick={() => setNetworkRetry(value => value + 1)} className="quiet-control px-3 py-1.5">{t('common.retry')}</button>
                                 </div>
                             )}
-                            <AnimatePresence mode="wait" initial={false}>
+                            <AnimatePresence mode="sync" initial={false}>
+                                <MotionPane key={activeTab} label={tabLabel(activeTab)} className="w-full">
+                                    {activeTab !== 'license' && <h3 className="mb-4 text-app-title font-semibold text-app-text">{tabLabel(activeTab)}</h3>}
 
                                 {activeTab === 'general' && (
                                     <GeneralSettingsTab>
 
+                            <section className="settings-group">
+                                <h3 className="flex items-center gap-2"><Languages className="h-3.5 w-3.5" aria-hidden="true" />{t('settings.language_region')}</h3>
+                                <SettingsRow icon={<Globe className="h-4 w-4" />} title={t('settings.app_language')} description={t('settings.choose_language')} control={(
+                                    <select value={settings.language} onChange={event => updateSetting('language', event.target.value as LanguagePreference)} aria-label={t('settings.app_language')} className="settings-select">
+                                        {LANGUAGES.map(lang => <option key={lang.code} value={lang.code}>{lang.nativeLabel}</option>)}
+                                    </select>
+                                )} />
+                            </section>
+                            <div className="settings-group p-4"><DesktopBehaviorSettings /></div>
+                            <section className="settings-group">
+                                <h3 className="flex items-center gap-2"><Zap className="h-3.5 w-3.5" aria-hidden="true" />{t('settings.performance_mode')}</h3>
+                                <SettingsRow icon={<Zap className="h-4 w-4 text-telegram-subtext" />} title={t('settings.performance_mode')} description={t('settings.performance_mode_desc')} control={<SettingsToggle checked={settings.performanceMode} label={t('settings.performance_mode')} onChange={() => updateSetting('performanceMode', !settings.performanceMode)} />} />
+                                <SettingsRow icon={<Monitor className="h-4 w-4 text-telegram-subtext" />} title={t('settings.linux_rendering_fix')} description={t('settings.linux_rendering_desc')} control={<SettingsToggle checked={settings.linuxRenderingFix} label={t('settings.linux_rendering_fix')} onChange={() => { updateSetting('linuxRenderingFix', !settings.linuxRenderingFix); toast.info(t('settings.restart_app_toast'), { duration: 5000 }); }} />} />
+                            </section>
                             {/* Transfers Section */}
                             <section className="settings-group">
                                 <h3 className="text-xs font-semibold text-telegram-subtext uppercase tracking-wider flex items-center gap-2">
@@ -806,45 +830,9 @@ function OwnedSettingsModal({ ownerId, isOpen, onClose, initialTab = 'general', 
 
                                 <SettingsRow icon={<Tag className="h-4 w-4 text-telegram-subtext" />} title={t('common.hide_groups')} description={t('common.hide_groups_desc')} control={<SettingsToggle checked={settings.hideGroups} label={t('common.hide_groups')} onChange={() => updateSetting('hideGroups', !settings.hideGroups)} />} />
 
-                                <SettingsRow icon={<Zap className="h-4 w-4 text-telegram-subtext" />} title={t('settings.performance_mode')} description={t('settings.performance_mode_desc')} control={<SettingsToggle checked={settings.performanceMode} label={t('settings.performance_mode')} onChange={() => updateSetting('performanceMode', !settings.performanceMode)} />} />
 
-                                <SettingsRow icon={<Monitor className="h-4 w-4 text-telegram-subtext" />} title={t('settings.linux_rendering_fix')} description={t('settings.linux_rendering_desc')} control={<SettingsToggle checked={settings.linuxRenderingFix} label={t('settings.linux_rendering_fix')} onChange={() => { updateSetting('linuxRenderingFix', !settings.linuxRenderingFix); toast.info(t('settings.restart_app_toast'), { duration: 5000 }); }} />} />
-                            </section>
 
-                            {/* Language & Region Section */}
-                            <DesktopBehaviorSettings />
 
-                            {/* Language & Region Section */}
-                            <section className="space-y-3">
-                                <h3 className="text-xs font-semibold text-telegram-subtext uppercase tracking-wider flex items-center gap-2">
-                                    <Languages className="w-3.5 h-3.5" />
-                                    {t('settings.language_region')}
-                                </h3>
-
-                                <div className="flex items-center justify-between p-3 rounded-lg bg-telegram-hover/50">
-                                    <div className="flex items-center gap-2">
-                                        <Globe className="w-4 h-4 text-telegram-subtext" />
-                                        <div>
-                                            <p className="text-sm text-telegram-text font-medium">{t('settings.app_language')}</p>
-                                            <p className="text-xs text-telegram-subtext">{t('settings.choose_language')}</p>
-                                        </div>
-                                    </div>
-                                    <div className="relative">
-                                        <select
-                                            value={settings.language}
-                                            onChange={event => updateSetting('language', event.target.value as LanguagePreference)}
-                                            aria-label={t('settings.app_language')}
-                                            className="appearance-none bg-telegram-bg border border-telegram-border rounded-md pl-3 pr-8 py-1.5 text-sm text-telegram-text focus:outline-none focus:border-telegram-primary/50 transition cursor-pointer"
-                                        >
-                                            {LANGUAGES.map(lang => (
-                                                <option key={lang.code} value={lang.code}>
-                                                    {lang.nativeLabel}
-                                                </option>
-                                            ))}
-                                        </select>
-                                        <ChevronDown className="w-4 h-4 text-telegram-subtext absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-                                    </div>
-                                </div>
                             </section>
 
                             {!showGeneralAdvanced && (
@@ -1244,7 +1232,7 @@ function OwnedSettingsModal({ ownerId, isOpen, onClose, initialTab = 'general', 
                                         {updateAvailable && !updateDownloading ? (
                                             <button
                                                 onClick={handleInstallUpdate}
-                                                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-telegram-primary text-white hover:bg-telegram-primary/90 transition"
+                                                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-app-accent text-app-accent-contrast hover:bg-app-accent-hover transition"
                                             >
                                                 <Download className="w-3 h-3" />
                                                 {managedByPackageManager ? t('files.open') : t('settings.update_restart')}
@@ -1268,8 +1256,8 @@ function OwnedSettingsModal({ ownerId, isOpen, onClose, initialTab = 'general', 
                                     {updateDownloading && (
                                         <div className="w-full h-1.5 bg-telegram-border rounded-full overflow-hidden">
                                             <div
-                                                className="h-full bg-telegram-primary rounded-full transition-all duration-300"
-                                                style={{ width: `${updateProgress}%` }}
+                                                className="h-full bg-app-accent rounded-full"
+                                                style={{ width: `${updateProgress}%`, transition: reducedMotion ? 'none' : 'width 120ms linear' }}
                                             />
                                         </div>
                                     )}
@@ -2031,12 +2019,13 @@ function OwnedSettingsModal({ ownerId, isOpen, onClose, initialTab = 'general', 
                                         }}
                                     />
                                 )}
+                                </MotionPane>
                             </AnimatePresence>
                         </div>
                         </div>
 
                         {/* Footer */}
-                        <div className="flex items-center justify-between border-t border-app-border-subtle px-6 py-3">
+                        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-app-border-subtle px-4 py-3 sm:px-6">
                             <button
                                 onClick={resetSettings}
                                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-telegram-subtext hover:text-red-400 hover:bg-red-500/10 transition font-medium"
@@ -2044,6 +2033,10 @@ function OwnedSettingsModal({ ownerId, isOpen, onClose, initialTab = 'general', 
                                 <RotateCcw className="w-3.5 h-3.5" />
                                 {t('settings.reset_defaults')}
                             </button>
+                            <span role="status" className="flex items-center gap-1.5 text-metadata text-app-text-secondary">
+                                {persistenceStatus === 'saved' && <Check className="h-3.5 w-3.5" aria-hidden="true" />}
+                                {t(persistenceStatus === 'saved' ? 'settings.saved' : persistenceStatus === 'saving' ? 'settings.saving' : persistenceStatus === 'error' ? 'common.operation_failed' : 'common.loading')}
+                            </span>
                             <button
                                 onClick={onClose}
                                 className="px-4 py-1.5 rounded-lg text-xs font-medium bg-telegram-primary text-app-accent-contrast hover:bg-telegram-primary/90 transition"
@@ -2052,7 +2045,7 @@ function OwnedSettingsModal({ ownerId, isOpen, onClose, initialTab = 'general', 
                             </button>
                         </div>
                     </motion.div>
-                </motion.div>
+                </MotionPane>
             )}
             {isOpen && accessTransparency && <AccessTransparencyDialog service={accessTransparency} onClose={() => setAccessTransparency(null)} />}
         </AnimatePresence>

@@ -432,7 +432,12 @@
     "encryption_experimental_inventory_many": "{{count}} fichiers chiffrés expérimentaux sont indexés localement. Leurs textes chiffrés ont été conservés.",
     "current_vault_passphrase": "Phrase secrète actuelle du coffre",
     "videoFilenameCaption": "Noms de fichier en légende",
-    "videoFilenameCaptionDesc": "Ajoutez le nom original aux messages vidéo. Les envois chiffrés gardent ce nom privé."
+    "videoFilenameCaptionDesc": "Ajoutez le nom original aux messages vidéo. Les envois chiffrés gardent ce nom privé.",
+    "find_category": "Rechercher une catégorie",
+    "no_categories": "Aucune catégorie correspondante",
+    "saved": "Paramètres enregistrés",
+    "color_border": "Bordure",
+    "color_hover": "Survol"
   },
   "files": {
     "download": "Télécharger",
@@ -1058,7 +1063,11 @@
     "copy_report": "Copier le rapport de diagnostic",
     "report_copied": "Rapport de diagnostic copié",
     "report_label": "Aperçu du diagnostic",
-    "desktop_only": "L’historique des transferts sur ordinateur est disponible dans l’application de bureau. Sur Android, la progression des sauvegardes et fichiers hors connexion apparaît dans leurs panneaux."
+    "desktop_only": "L’historique des transferts sur ordinateur est disponible dans l’application de bureau. Sur Android, la progression des sauvegardes et fichiers hors connexion apparaît dans leurs panneaux.",
+    "progress_unknown": "Progression inconnue",
+    "retry_all_failed": "Réessayer tous les échecs",
+    "retry_failed_summary": "En attente : {{queued}} · Ignorés : {{skipped}} · Échecs : {{failed}} · Non tentés : {{remaining}}",
+    "in_progress": "En cours"
   },
   "androidActivity": {
     "description": "Résultats de la sauvegarde de l’appareil photo et progression des transferts pour ce compte.",

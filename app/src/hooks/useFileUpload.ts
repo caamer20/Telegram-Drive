@@ -25,12 +25,22 @@ import {
     enqueueDesktopTransfers,
     listenToDesktopTransfers,
     listDesktopTransfers,
+    retryFailedUpload,
     supplyTransferPromptToken,
     transferBulkAction,
     transferItemAction,
     transferJobToUploadItem,
     uploadItemToTransferRequest,
 } from '../services/desktopTransferEngine';
+
+interface RetryFailedSummary {
+    queued: number;
+    skipped: number;
+    failed: number;
+    remaining: number;
+}
+
+type RetryOutcome = 'queued' | 'skipped' | 'stopped';
 
 interface ProgressPayload {
     id: string;
@@ -70,6 +80,9 @@ export function useFileUpload(
     const { confirm, promptSecret } = useConfirm();
     const [uploadQueue, setUploadQueue] = useState<QueueItem[]>([]);
     const [initialized, setInitialized] = useState(false);
+    const [retryingFailed, setRetryingFailed] = useState(false);
+    const retryingItemsRef = useRef(new Map<string, () => boolean>());
+    const retryBatchRef = useRef<{ ownerId: string; stopped: boolean; done: Promise<void> } | null>(null);
     const initializingRef = useRef(false);
     const cancelledRef = useRef<Set<string>>(new Set());
     const pausedRef = useRef<Set<string>>(new Set());
@@ -84,6 +97,17 @@ export function useFileUpload(
     const desktopStatusesRef = useRef<Map<string, string>>(new Map());
     uploadQueueRef.current = uploadQueue;
     androidNetworkAvailableRef.current = androidNetworkAvailable;
+
+    useEffect(() => {
+        setRetryingFailed(false);
+        return () => {
+            const batch = retryBatchRef.current;
+            if (batch && batch.ownerId === ownerId) {
+                batch.stopped = true;
+                retryBatchRef.current = null;
+            }
+        };
+    }, [ownerId]);
 
     // Listen for progress events from Rust
     useEffect(() => {
@@ -487,6 +511,7 @@ export function useFileUpload(
     const stageProtectionForFiles = async (
         count: number,
         requestedMode = settings.encryptionDefaultMode,
+        throwOnFailure = false,
     ): Promise<UploadProtectionIntent[] | null> => {
         requireCurrent();
         const mode = requestedMode;
@@ -523,6 +548,7 @@ export function useFileUpload(
             return tokens.map(promptToken => ({ ...base, promptToken }));
         } catch (error) {
             requireCurrent();
+            if (throwOnFailure) throw error;
             toast.error(`Could not prepare encrypted upload: ${String(error)}`);
             return null;
         }
@@ -727,7 +753,15 @@ export function useFileUpload(
         }
     };
 
-    const cancelAll = () => {
+    const stopRetryBatch = async () => {
+        const batch = retryBatchRef.current;
+        if (batch) batch.stopped = true;
+        if (batch) await batch.done;
+    };
+
+    const cancelAll = async () => {
+        if (!isCurrent()) return;
+        await stopRetryBatch();
         if (!isCurrent()) return;
         if (!isAndroidPlatform) {
             void transferBulkAction('cancel', 'upload', ownerId).catch(error => { if (isCurrent()) toast.error(userFacingError(error, t)); });
@@ -749,7 +783,9 @@ export function useFileUpload(
         toast.info(i18n.t('transfer_copy.uploads_cancelled'));
     };
 
-    const pauseAll = () => {
+    const pauseAll = async () => {
+        if (!isCurrent()) return;
+        await stopRetryBatch();
         if (!isCurrent()) return;
         if (!isAndroidPlatform) {
             void transferBulkAction('pause', 'upload', ownerId).catch(error => { if (isCurrent()) toast.error(userFacingError(error, t)); });
@@ -816,31 +852,57 @@ export function useFileUpload(
         });
     };
 
-    const retryItem = async (id: string) => {
-        if (!isCurrent()) return;
-        if (cancelledRef.current.has(id)) return;
-        const item = uploadQueue.find(candidate => ownsItem(candidate) && candidate.id === id);
-        if (!item || !['error', 'cancelled', 'waiting_for_unlock'].includes(item.status)) return;
-        let protection = item.protection;
-        if (protection?.mode === 'passphrase' || protection?.mode === 'vault_and_passphrase') {
-            const staged = await stageProtectionForFiles(1, protection.mode);
-            requireCurrent();
-            if (!staged) return;
-            protection = { ...staged[0], protectMetadata: protection.protectMetadata };
-        }
-        if (!isAndroidPlatform) {
-            if (protection?.promptToken) {
-                await supplyTransferPromptToken(id, protection.promptToken);
+    const runRetry = async (id: string, failedOnly = false, stopped?: () => boolean): Promise<RetryOutcome> => {
+        const retryable = (item: QueueItem) => failedOnly ? item.status === 'error' : ['error', 'cancelled', 'waiting_for_unlock'].includes(item.status);
+        const eligible = () => uploadQueueRef.current.find(item => ownsItem(item) && item.id === id && retryable(item));
+        if (!isCurrent() || stopped?.()) return 'stopped';
+        if (cancelledRef.current.has(id) || retryingItemsRef.current.get(id)?.()) return 'skipped';
+        const item = eligible();
+        if (!item) return 'skipped';
+        retryingItemsRef.current.set(id, isCurrent);
+        try {
+            let protection = item.protection;
+            let promptToken: number | undefined;
+            if (protection?.mode === 'passphrase' || protection?.mode === 'vault_and_passphrase') {
+                const staged = await stageProtectionForFiles(1, protection.mode, failedOnly);
                 requireCurrent();
+                if (!staged) return failedOnly ? 'stopped' : 'skipped';
+                protection = { ...staged[0], protectMetadata: protection.protectMetadata };
+                promptToken = protection.promptToken;
             }
-            await transferItemAction('retry', id, ownerId);
-            return;
+            requireCurrent();
+            if (stopped?.()) return 'stopped';
+            if (!eligible() || cancelledRef.current.has(id)) return 'skipped';
+            if (!isAndroidPlatform) {
+                if (failedOnly) {
+                    const result = await retryFailedUpload(id, ownerId!, promptToken);
+                    return result.retried ? 'queued' : 'skipped';
+                }
+                if (protection?.promptToken) {
+                    await supplyTransferPromptToken(id, protection.promptToken);
+                    requireCurrent();
+                }
+                await transferItemAction('retry', id, ownerId);
+                return 'queued';
+            }
+            setUploadQueue(q => q.map(i =>
+                ownsItem(i) && i.id === id
+                    ? { ...i, protection, status: 'pending' as const, error: undefined, progress: undefined, uploadedBytes: undefined, totalBytes: undefined, speedBytesPerSec: undefined }
+                    : i
+            ));
+            return 'queued';
+        } finally {
+            if (retryingItemsRef.current.get(id) === isCurrent) retryingItemsRef.current.delete(id);
         }
-        setUploadQueue(q => q.map(i =>
-            ownsItem(i) && i.id === id
-                ? { ...i, protection, status: 'pending' as const, error: undefined, progress: undefined, uploadedBytes: undefined, totalBytes: undefined, speedBytesPerSec: undefined }
-                : i
-        ));
+    };
+
+    const retryItem = async (id: string) => {
+        if (retryBatchRef.current) return;
+        try {
+            await runRetry(id);
+        } catch (error) {
+            if (isCurrent() && !String(error).includes('ACCOUNT_CHANGED')) toast.error(userFacingError(error, t));
+        }
     };
 
     const pauseItem = (id: string) => {
@@ -865,6 +927,41 @@ export function useFileUpload(
             : item));
     };
 
+
+    const retryFailed = async (): Promise<RetryFailedSummary | undefined> => {
+        if (isAndroidPlatform || !isCurrent() || !ownerId || retryBatchRef.current) return;
+        const ids = uploadQueueRef.current.filter(item => ownsItem(item) && item.status === 'error').map(item => item.id);
+        if (!ids.length) return;
+        let finish!: () => void;
+        const batch = { ownerId, stopped: false, done: new Promise<void>(resolve => { finish = resolve; }) };
+        const summary: RetryFailedSummary = { queued: 0, skipped: 0, failed: 0, remaining: ids.length };
+        retryBatchRef.current = batch;
+        setRetryingFailed(true);
+        let accountChanged = false;
+        try {
+            for (const id of ids) {
+                if (!isCurrent() || batch.stopped) break;
+                try {
+                    const result = await runRetry(id, true, () => batch.stopped);
+                    if (!isCurrent() || result === 'stopped') break;
+                    summary[result]++;
+                } catch (error) {
+                    if (!isCurrent() || String(error).includes('ACCOUNT_CHANGED')) { accountChanged = true; break; }
+                    if (String(error).includes('Transfer was not found') || !uploadQueueRef.current.some(item => ownsItem(item) && item.id === id && item.status === 'error')) summary.skipped++;
+                    else summary.failed++;
+                }
+                summary.remaining--;
+            }
+            if (isCurrent() && !accountChanged) toast.info(t('activity.retry_failed_summary', { ...summary }));
+            return summary;
+        } finally {
+            if (retryBatchRef.current === batch) {
+                retryBatchRef.current = null;
+                if (isCurrent()) setRetryingFailed(false);
+            }
+            finish();
+        }
+    };
 
     const handleUrlUpload = async (url: string, folderId: number | null) => {
         requireCurrent();
@@ -909,6 +1006,8 @@ export function useFileUpload(
         clearFinished,
         cancelItem,
         retryItem,
+        retryFailed,
+        retryingFailed,
         pauseItem,
         resumeItem,
     };

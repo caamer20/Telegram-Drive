@@ -431,7 +431,12 @@
     "hide_passphrase": "Sembunyikan frasa sandi",
     "current_vault_passphrase": "Frasa sandi brankas saat ini",
     "videoFilenameCaption": "Nama berkas sebagai keterangan",
-    "videoFilenameCaptionDesc": "Tambahkan nama berkas asli ke pesan video. Unggahan terenkripsi menjaga nama tetap pribadi."
+    "videoFilenameCaptionDesc": "Tambahkan nama berkas asli ke pesan video. Unggahan terenkripsi menjaga nama tetap pribadi.",
+    "find_category": "Cari kategori",
+    "no_categories": "Tidak ada kategori yang cocok",
+    "saved": "Pengaturan disimpan",
+    "color_border": "Batas",
+    "color_hover": "Sorot kursor"
   },
   "files": {
     "download": "Unduh",
@@ -1051,7 +1056,11 @@
     "copy_report": "Salin laporan diagnostik",
     "report_copied": "Laporan diagnostik disalin",
     "report_label": "Pratinjau laporan diagnostik",
-    "desktop_only": "Riwayat transfer desktop tersedia di aplikasi desktop. Progres cadangan dan offline Android ditampilkan di panel masing-masing."
+    "desktop_only": "Riwayat transfer desktop tersedia di aplikasi desktop. Progres cadangan dan offline Android ditampilkan di panel masing-masing.",
+    "progress_unknown": "Progres tidak diketahui",
+    "retry_all_failed": "Coba ulang semua yang gagal",
+    "retry_failed_summary": "Dalam antrean: {{queued}} · Dilewati: {{skipped}} · Gagal: {{failed}} · Belum dicoba: {{remaining}}",
+    "in_progress": "Sedang berlangsung"
   },
   "androidActivity": {
     "description": "Hasil pencadangan kamera dan progres transfer untuk akun ini.",

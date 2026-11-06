@@ -1,7 +1,7 @@
 import { createContext, useContext, useState, ReactNode, useLayoutEffect, useCallback } from 'react';
 import { CustomTheme, applyTheme as applyThemeToDOM, removeCustomTheme as removeCustomThemeFromDOM } from '../theme/themeEngine';
 import { BUILTIN_THEMES } from '../theme/presets';
-import { animateThemeChange, triggerHaptic } from '../services/feedback';
+import { triggerHaptic } from '../services/feedback';
 import {
     readActiveCustomTheme,
     readThemePreference,
@@ -102,7 +102,6 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     }, [activeCustomThemeId, allThemes, theme]);
 
     const toggleTheme = useCallback(() => {
-        animateThemeChange();
         triggerHaptic('selection');
         if (activeCustomThemeId) {
             const activeTheme = allThemes.find(t => t.id === activeCustomThemeId);
@@ -117,7 +116,6 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     }, [activeCustomThemeId, allThemes, theme]);
 
     const setTheme = useCallback((newTheme: Theme) => {
-        animateThemeChange();
         setActiveCustomThemeIdState(null);
         writeActiveCustomTheme(null);
         removeCustomThemeFromDOM();
@@ -125,7 +123,6 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     }, []);
 
     const setThemePreference = useCallback((newTheme: ThemePreference) => {
-        animateThemeChange();
         setActiveCustomThemeIdState(null);
         writeActiveCustomTheme(null);
         removeCustomThemeFromDOM();
@@ -133,7 +130,6 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     }, []);
 
     const setActiveCustomTheme = useCallback((id: string | null) => {
-        animateThemeChange();
         setActiveCustomThemeIdState(id);
         writeActiveCustomTheme(id);
         if (!id) {

@@ -170,7 +170,7 @@ export function Sidebar({
 
     return (
         <aside 
-            className="flex shrink-0 flex-col border-e border-app-border-subtle bg-app-sidebar transition-[width] duration-200"
+            className="flex shrink-0 flex-col border-e border-app-border-subtle bg-app-sidebar transition-[width] duration-[var(--motion-slow)]"
             style={{ width: settings.sidebarCollapsed ? quietMetrics.sidebarWidth.collapsed : quietMetrics.sidebarWidth.expanded }}
             onClick={e => e.stopPropagation()}
         >
@@ -222,7 +222,7 @@ export function Sidebar({
                         </div>
 
                         {!settings.hideGroups && showGroupEditor && (
-                            <div className="quiet-surface mx-3 mb-2.5 flex flex-col gap-2.5 p-2.5 animate-in fade-in duration-150">
+                            <div className="quiet-surface mx-3 mb-2.5 flex flex-col gap-2.5 p-2.5 ui-enter">
                                 <div>
                                     <label className="mb-1 block text-badge font-medium text-app-text-secondary">
                                         {editingGroup ? t('common.edit_group_name') : t('common.new_group_name')}

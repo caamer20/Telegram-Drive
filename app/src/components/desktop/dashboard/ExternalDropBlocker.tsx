@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { AnimatePresence, motion } from 'framer-motion';
+import { useModalFocus } from '../../../hooks/useModalFocus';
 import { Upload } from 'lucide-react';
 import { isTauri } from '@tauri-apps/api/core';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
@@ -30,6 +30,8 @@ export function ExternalDropBlocker({
     const [isDragging, setIsDragging] = useState(false);
     const [detectedCount, setDetectedCount] = useState(0);
     const [showFallback, setShowFallback] = useState(false);
+    const fallbackRef = useRef<HTMLDivElement>(null);
+    useModalFocus(fallbackRef, () => setShowFallback(false), showFallback && enabled);
     const onFilesDroppedRef = useRef(onFilesDropped);
     const lastDropRef = useRef<{ signature: string; timestamp: number } | null>(null);
 
@@ -37,6 +39,7 @@ export function ExternalDropBlocker({
 
     useEffect(() => {
         if (!enabled) {
+            setShowFallback(false);
             setIsDragging(false);
             setDetectedCount(0);
             return;
@@ -139,26 +142,24 @@ export function ExternalDropBlocker({
 
     return (
         <>
-            <AnimatePresence>
+            <>
                 {isDragging && (
                     <DragDropOverlay
                         currentFolderName={currentFolderName}
                         fileCount={detectedCount}
                     />
                 )}
-            </AnimatePresence>
+            </>
 
-            <AnimatePresence>
-                {showFallback && (
-                    <motion.div
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        exit={{ opacity: 0 }}
+            <>
+                {enabled && showFallback && (
+                    <div
                         className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
                         onClick={() => setShowFallback(false)}
                     >
                         <div
-                            className="glass max-w-md rounded-2xl border border-telegram-border bg-telegram-surface p-8 shadow-2xl"
+                            ref={fallbackRef} role="dialog" aria-modal="true" aria-labelledby="drop-fallback-title" tabIndex={-1} data-ui-motion
+                            className="ui-enter glass max-w-md rounded-2xl border border-telegram-border bg-telegram-surface p-8 shadow-2xl"
                             onClick={event => event.stopPropagation()}
                         >
                             <div className="flex flex-col items-center gap-4 text-center">
@@ -166,7 +167,7 @@ export function ExternalDropBlocker({
                                     <Upload className="h-8 w-8 text-telegram-primary" />
                                 </div>
                                 <div>
-                                    <h3 className="mb-2 text-lg font-semibold text-telegram-text">
+                                    <h3 id="drop-fallback-title" className="mb-2 text-lg font-semibold text-telegram-text">
                                         {t('files.drop_not_available')}
                                     </h3>
                                     <p className="text-sm text-telegram-subtext">
@@ -185,16 +186,16 @@ export function ExternalDropBlocker({
                                             setShowFallback(false);
                                             onUploadClick?.();
                                         }}
-                                        className="rounded-lg bg-telegram-primary px-6 py-2 text-sm font-medium text-white hover:bg-telegram-primary/90"
+                                        className="rounded-lg bg-telegram-primary px-6 py-2 text-sm font-medium text-app-accent-contrast hover:bg-telegram-primary/90"
                                     >
                                         {t('files.open_upload_dialog')}
                                     </button>
                                 </div>
                             </div>
                         </div>
-                    </motion.div>
+                    </div>
                 )}
-            </AnimatePresence>
+            </>
         </>
     );
 }

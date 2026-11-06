@@ -14,14 +14,3 @@ export function triggerHaptic(tone: HapticTone = 'selection') {
     // Optional device feedback must never prevent the requested action.
   }
 }
-
-export function animateThemeChange() {
-  if (typeof document === 'undefined' || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-  document.documentElement.animate(
-    [
-      { opacity: 0.96, transform: 'scale(0.997)' },
-      { opacity: 1, transform: 'scale(1)' },
-    ],
-    { duration: 260, easing: 'cubic-bezier(.34,1.56,.64,1)' },
-  );
-}

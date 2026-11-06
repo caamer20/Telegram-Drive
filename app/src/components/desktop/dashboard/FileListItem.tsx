@@ -1,6 +1,5 @@
-import {useTranslation} from 'react-i18next';
-import i18n from '../../../i18n';
 import { useCallback } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Folder, MoreVertical, Check } from 'lucide-react';
 import { useDraggable, useDroppable } from '@dnd-kit/core';
 import { TelegramFile } from '../../../types';
@@ -23,7 +22,9 @@ interface FileListItemProps {
 export function FileListItem({
     file, selectedIds, onFileClick, handleContextMenu, disableDrag = false
 }: FileListItemProps) {
-    useTranslation();
+    const { t, i18n } = useTranslation();
+    const timestamp = Date.parse(file.created_at || '');
+    const dateLabel = Number.isFinite(timestamp) ? new Date(timestamp).toLocaleDateString(i18n.resolvedLanguage, { month: 'short', day: 'numeric', year: 'numeric' }) : (file.created_at || '—');
     const { isFolder } = describeFileActions(file);
     const fileIds = selectedIds.includes(file.id) ? selectedIds : [file.id];
     const {
@@ -69,6 +70,7 @@ export function FileListItem({
     return (
         <div
             ref={setNodeRef}
+            data-file-row
             onClick={(e) => onFileClick(e, file)}
             onContextMenu={(e) => handleContextMenu(e, file)}
             style={{ opacity: isDragging ? 0.45 : undefined }}
@@ -101,7 +103,7 @@ export function FileListItem({
                 )}
             </div>
             <div className="hidden truncate text-end text-metadata text-app-text-secondary sm:block">{file.sizeStr}</div>
-            <div className="hidden truncate text-end font-mono text-metadata text-app-text-tertiary sm:block">{file.created_at || '-'}</div>
+            <div className="hidden truncate text-end text-metadata tabular-nums text-app-text-tertiary sm:block" title={file.created_at}>{dateLabel}</div>
 
             {/* 3-dot Menu Button — in grid flow, not absolutely positioned */}
             <div className="flex justify-end">
@@ -110,8 +112,8 @@ export function FileListItem({
                         e.stopPropagation();
                         handleContextMenu(e, file);
                     }}
-                    className="quiet-control flex h-7 w-7 items-center justify-center border border-transparent text-app-text-secondary opacity-0 group-hover:opacity-100 hover:text-app-text focus-visible:opacity-100"
-                    aria-label={i18n.t('ui_copy.file_actions')}
+                    className="quiet-control flex h-7 w-7 items-center justify-center border border-transparent text-app-text-secondary hover:border-app-border hover:text-app-text"
+                    aria-label={t('workspace.file_actions', { name: file.name })}
                 >
                     <MoreVertical className="h-3.5 w-3.5" />
                 </button>

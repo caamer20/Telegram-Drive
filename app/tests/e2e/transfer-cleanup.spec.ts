@@ -34,13 +34,13 @@ for (const direction of ['upload', 'download'] as const) {
     await expect(center.getByText(`clear-${direction}-persisting.bin`, { exact: true })).toBeVisible();
 
     await center.getByRole('button', {
-      name: direction === 'upload' ? `Cancel upload /fixture/${original}` : `Cancel download ${original}`,
+      name: `Cancel ${original}`,
       exact: true,
     }).click();
-    const cancelledRow = center.locator('div.border-t').filter({ has: page.getByText(original, { exact: true }) });
-    await expect(cancelledRow).toContainText('cancelled');
+    const cancelledRow = center.locator('article').filter({ has: page.getByText(original, { exact: true }) });
+    await expect(cancelledRow).toContainText('Cancelled');
     const section = center.locator('section').filter({ has: page.getByText(direction === 'upload' ? 'Uploads' : 'Downloads', { exact: true }) });
-    await section.getByRole('button', { name: 'Clear finished', exact: true }).click();
+    await section.getByRole('button', { name: 'Clear', exact: true }).click();
 
     for (const status of terminal) {
       await expect(center.getByText(`clear-${direction}-${status}.bin`, { exact: true })).toHaveCount(0);
@@ -65,7 +65,7 @@ for (const direction of ['upload', 'download'] as const) {
     for (const status of terminal) expect(remaining).not.toContain(`clear-${direction}-${status}`);
 
     // Repeated clearing keeps the same live, waiting and foreign-account records.
-    await section.getByRole('button', { name: 'Clear finished', exact: true }).click();
+    await section.getByRole('button', { name: 'Clear', exact: true }).click();
     await expect.poll(async () => (await nativeCalls(page, 'cmd_transfer_clear_terminal')).length).toBe(2);
     expect(await page.evaluate(() => (window as any).__desktopTest.jobs.map((job: any) => job.id))).toEqual(remaining);
   });

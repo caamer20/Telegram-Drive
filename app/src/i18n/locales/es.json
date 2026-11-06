@@ -432,7 +432,12 @@
     "encryption_experimental_inventory_many": "Hay {{count}} archivos cifrados experimentales indexados localmente. Sus textos cifrados se han conservado.",
     "current_vault_passphrase": "Contraseña actual de la bóveda",
     "videoFilenameCaption": "Nombres de archivo como subtítulos",
-    "videoFilenameCaptionDesc": "Añade el nombre original a los mensajes de vídeo. Las subidas cifradas lo mantienen privado."
+    "videoFilenameCaptionDesc": "Añade el nombre original a los mensajes de vídeo. Las subidas cifradas lo mantienen privado.",
+    "find_category": "Buscar categoría",
+    "no_categories": "No hay categorías coincidentes",
+    "saved": "Ajustes guardados",
+    "color_border": "Borde",
+    "color_hover": "Al pasar el cursor"
   },
   "files": {
     "download": "Descargar",
@@ -1058,7 +1063,11 @@
     "copy_report": "Copiar informe de diagnóstico",
     "report_copied": "Informe de diagnóstico copiado",
     "report_label": "Vista previa del diagnóstico",
-    "desktop_only": "El historial de transferencias de escritorio está disponible en la app de escritorio. En Android, el progreso de las copias y los archivos sin conexión aparece en sus paneles."
+    "desktop_only": "El historial de transferencias de escritorio está disponible en la app de escritorio. En Android, el progreso de las copias y los archivos sin conexión aparece en sus paneles.",
+    "progress_unknown": "Progreso desconocido",
+    "retry_all_failed": "Reintentar todos los fallidos",
+    "retry_failed_summary": "En cola: {{queued}} · Omitidos: {{skipped}} · Fallidos: {{failed}} · Sin intentar: {{remaining}}",
+    "in_progress": "En curso"
   },
   "androidActivity": {
     "description": "Resultados de la copia de seguridad de la cámara y progreso de las transferencias de esta cuenta.",

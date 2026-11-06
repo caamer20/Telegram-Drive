@@ -431,7 +431,12 @@
     "hide_passphrase": "Parola ifadesini gizle",
     "current_vault_passphrase": "Geçerli kasa parolası",
     "videoFilenameCaption": "Dosya adı açıklamaları",
-    "videoFilenameCaptionDesc": "Video mesajlarına özgün dosya adını ekleyin. Şifreli yüklemelerde ad gizli kalır."
+    "videoFilenameCaptionDesc": "Video mesajlarına özgün dosya adını ekleyin. Şifreli yüklemelerde ad gizli kalır.",
+    "find_category": "Bir kategori bulun",
+    "no_categories": "Eşleşen kategori yok",
+    "saved": "Ayarlar kaydedildi",
+    "color_border": "Kenarlık",
+    "color_hover": "Üzerine gelme"
   },
   "files": {
     "download": "İndir",
@@ -1051,7 +1056,11 @@
     "copy_report": "Tanılama raporunu kopyala",
     "report_copied": "Tanılama raporu kopyalandı",
     "report_label": "Tanılama raporu önizlemesi",
-    "desktop_only": "Masaüstü aktarım geçmişi masaüstü uygulamasında bulunur. Android yedekleme ve çevrimdışı ilerlemesi kendi panellerinde gösterilir."
+    "desktop_only": "Masaüstü aktarım geçmişi masaüstü uygulamasında bulunur. Android yedekleme ve çevrimdışı ilerlemesi kendi panellerinde gösterilir.",
+    "progress_unknown": "İlerleme bilinmiyor",
+    "retry_all_failed": "Başarısız olanların tümünü yeniden dene",
+    "retry_failed_summary": "Kuyruğa alındı: {{queued}} · Atlandı: {{skipped}} · Başarısız: {{failed}} · Denenmedi: {{remaining}}",
+    "in_progress": "Devam ediyor"
   },
   "androidActivity": {
     "description": "Bu hesabın kamera yedekleme sonuçları ve aktarım ilerlemesi.",

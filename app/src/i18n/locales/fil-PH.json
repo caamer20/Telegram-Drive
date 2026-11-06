@@ -431,7 +431,12 @@
     "hide_passphrase": "Itago ang passphrase",
     "current_vault_passphrase": "Kasalukuyang passphrase ng vault",
     "videoFilenameCaption": "Pangalan ng file sa caption",
-    "videoFilenameCaptionDesc": "Idagdag ang orihinal na pangalan ng file sa mga video message. Nananatili itong pribado sa mga naka-encrypt na upload."
+    "videoFilenameCaptionDesc": "Idagdag ang orihinal na pangalan ng file sa mga video message. Nananatili itong pribado sa mga naka-encrypt na upload.",
+    "find_category": "Maghanap ng kategorya",
+    "no_categories": "Walang tumutugmang kategorya",
+    "saved": "Nai-save ang mga setting",
+    "color_border": "Hangganan",
+    "color_hover": "Pag-hover"
   },
   "files": {
     "download": "I-download",
@@ -1051,7 +1056,11 @@
     "copy_report": "Kopyahin ang ulat ng diagnostic",
     "report_copied": "Nakopya ang ulat ng diagnostic",
     "report_label": "Preview ng ulat ng diagnostic",
-    "desktop_only": "Available ang kasaysayan ng desktop transfer sa desktop app. Ipinapakita sa kani-kanilang panel ang progreso ng Android backup at offline."
+    "desktop_only": "Available ang kasaysayan ng desktop transfer sa desktop app. Ipinapakita sa kani-kanilang panel ang progreso ng Android backup at offline.",
+    "progress_unknown": "Hindi alam ang progreso",
+    "retry_all_failed": "Subukang muli ang lahat ng nabigo",
+    "retry_failed_summary": "Nakapila: {{queued}} · Nilaktawan: {{skipped}} · Nabigo: {{failed}} · Hindi sinubukan: {{remaining}}",
+    "in_progress": "Kasalukuyang ginagawa"
   },
   "androidActivity": {
     "description": "Mga resulta ng camera backup at progreso ng transfer para sa account na ito.",

@@ -6,6 +6,10 @@ interface ProxyStatus {
   latency_ms: number;
 }
 
+export function stopControlShortcuts(event: KeyboardEvent) {
+  if ((event.target as HTMLElement).closest('button, select, summary') && !event.metaKey && !event.ctrlKey && !event.altKey) event.stopPropagation();
+}
+
 export function useTopBarController(proxyEnabled: boolean, proxyLiveStateEnabled: boolean) {
   const [proxyStatus, setProxyStatus] = useState<ProxyStatus | null>(null);
   const [showMore, setShowMore] = useState(false);
@@ -56,7 +60,7 @@ export function useTopBarController(proxyEnabled: boolean, proxyLiveStateEnabled
       const target = event.target as Node;
       if (!moreRef.current?.contains(target)) setShowMore(false);
       if (!viewRef.current?.contains(target)) setShowViewOptions(false);
-      if (!filterRef.current?.contains(target)) setShowSearchFilters(false);
+      if (!filterRef.current?.contains(target) && !(target instanceof Element && target.closest('[data-file-filter-trigger]'))) setShowSearchFilters(false);
     };
     window.addEventListener('pointerdown', closeOutside);
     window.addEventListener('focusin', closeOutside);

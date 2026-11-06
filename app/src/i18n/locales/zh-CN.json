@@ -431,7 +431,12 @@
     "hide_passphrase": "隐藏密码短语",
     "current_vault_passphrase": "当前保险库口令",
     "videoFilenameCaption": "文件名说明",
-    "videoFilenameCaptionDesc": "将原始文件名添加到视频消息说明中。加密上传会保护文件名隐私。"
+    "videoFilenameCaptionDesc": "将原始文件名添加到视频消息说明中。加密上传会保护文件名隐私。",
+    "find_category": "查找分类",
+    "no_categories": "没有匹配的分类",
+    "saved": "设置已保存",
+    "color_border": "边框",
+    "color_hover": "悬停"
   },
   "files": {
     "download": "下载",
@@ -1051,7 +1056,11 @@
     "copy_report": "复制诊断报告",
     "report_copied": "诊断报告已复制",
     "report_label": "诊断报告预览",
-    "desktop_only": "桌面传输历史可在桌面应用中查看。Android 备份和离线进度显示在各自的面板中。"
+    "desktop_only": "桌面传输历史可在桌面应用中查看。Android 备份和离线进度显示在各自的面板中。",
+    "progress_unknown": "进度未知",
+    "retry_all_failed": "重试所有失败项",
+    "retry_failed_summary": "已排队：{{queued}} · 已跳过：{{skipped}} · 失败：{{failed}} · 未尝试：{{remaining}}",
+    "in_progress": "进行中"
   },
   "androidActivity": {
     "description": "此账号的相机备份结果和文件传输进度。",

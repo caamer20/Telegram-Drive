@@ -12,6 +12,7 @@ use crate::crypto::{
     vault::FileVault,
 };
 use crate::sync_engine::{self, config as sync_config, policy::StoredPairPolicy};
+use crate::transfer_engine::{TransferJob, TransferStore};
 use crate::workspace::{store::Store, AccountGuard};
 use grammers_session::{storages::SqliteSession, types::PeerInfo, Session};
 use serde_json::{json, Value};
@@ -1066,7 +1067,15 @@ struct FixtureVideoUploadJourney {
     task: tokio::task::JoinHandle<Result<Value, String>>,
 }
 
+struct TransferRetryDriver {
+    store: TransferStore,
+    jobs: HashMap<String, TransferJob>,
+    pending: HashMap<String, TransferJob>,
+    prompt_tokens: HashMap<String, u64>,
+}
+
 struct Driver {
+    transfer_retry: Option<TransferRetryDriver>,
     video_upload: Option<FixtureVideoUploadJourney>,
     notifications: Option<FixtureNotifications>,
     proxy_update_task: Option<tokio::task::JoinHandle<Result<(), String>>>,
@@ -1112,6 +1121,19 @@ struct Driver {
 }
 
 impl Driver {
+    fn transfer_retry(&mut self) -> Result<&mut TransferRetryDriver, String> {
+        if self.transfer_retry.is_none() {
+            let (store, jobs) = TransferStore::open(&self.root.join("transfers.db"))?;
+            self.transfer_retry = Some(TransferRetryDriver {
+                store,
+                jobs: jobs.into_iter().map(|job| (job.id.clone(), job)).collect(),
+                pending: HashMap::new(),
+                prompt_tokens: HashMap::new(),
+            });
+        }
+        Ok(self.transfer_retry.as_mut().unwrap())
+    }
+
     async fn dispatch(&mut self, request: Value) -> Result<Value, String> {
         let command = text(&request, "command")?.to_owned();
         match command.as_str() {
@@ -1293,6 +1315,9 @@ impl Driver {
             | "publish_download"
             | "save_transfer"
             | "transfers"
+            | "retry_failed_upload"
+            | "transfer_retry_snapshot"
+            | "record_transfer_result"
             | "fail_transfer"
             | "remove_transfer" => self.dispatch_transfers(request).await,
             _ => Err("Unknown native E2E command".into()),
@@ -4767,6 +4792,48 @@ impl Driver {
                     .await?;
                 Ok(json!(true))
             }
+            "retry_failed_upload" => {
+                let account = if request["capturedAccount"].as_bool().unwrap_or(false) {
+                    self.guard.clone().ok_or("No captured account")?
+                } else {
+                    AccountGuard::open(&self.root, Some(text(&request, "owner")?))?
+                };
+                let id = text(&request, "id")?;
+                let state = self.transfer_retry()?;
+                let result = crate::transfer_engine::retry_failed_upload(
+                    &state.store,
+                    &mut state.jobs,
+                    &mut state.pending,
+                    &mut state.prompt_tokens,
+                    &account,
+                    id,
+                    request["promptToken"].as_u64(),
+                )
+                .await?;
+                Ok(
+                    json!({"job":result.job,"retried":result.retried,"hasPromptToken":state.prompt_tokens.contains_key(id)}),
+                )
+            }
+            "transfer_retry_snapshot" => {
+                let id = text(&request, "id")?;
+                let state = self.transfer_retry()?;
+                let job = state.jobs.get(id).ok_or("Transfer was not found")?;
+                Ok(json!({"job":job,"hasPromptToken":state.prompt_tokens.contains_key(id)}))
+            }
+            "record_transfer_result" => {
+                // The controlled Telegram boundary supplies a finished result;
+                // production SQLite checkpoint/recovery behavior remains real.
+                let job = serde_json::from_value(request["job"].clone()).map_err(error)?;
+                let state = self.transfer_retry()?;
+                let result = crate::transfer_engine::commit_result(
+                    &state.store,
+                    &mut state.jobs,
+                    &mut state.pending,
+                    job,
+                )
+                .await;
+                serde_json::to_value(result).map_err(error)
+            }
             _ => Err("Unknown transfers E2E command".into()),
         }
     }
@@ -5028,6 +5095,7 @@ pub async fn run() -> Result<(), String> {
     initial_network.proxy.password =
         std::fs::read_to_string(root.join("proxy-credential")).unwrap_or_default();
     let mut driver = Driver {
+        transfer_retry: None,
         video_upload: None,
         notifications: None,
         proxy_update_task: None,

@@ -431,7 +431,12 @@
     "hide_passphrase": "パスフレーズを隠す",
     "current_vault_passphrase": "現在の保管庫パスフレーズ",
     "videoFilenameCaption": "ファイル名のキャプション",
-    "videoFilenameCaptionDesc": "動画メッセージに元のファイル名を追加します。暗号化されたアップロードでは名前を公開しません。"
+    "videoFilenameCaptionDesc": "動画メッセージに元のファイル名を追加します。暗号化されたアップロードでは名前を公開しません。",
+    "find_category": "カテゴリを検索",
+    "no_categories": "一致するカテゴリはありません",
+    "saved": "設定を保存しました",
+    "color_border": "枠線",
+    "color_hover": "ホバー"
   },
   "files": {
     "download": "ダウンロード",
@@ -1051,7 +1056,11 @@
     "copy_report": "診断レポートをコピー",
     "report_copied": "診断レポートをコピーしました",
     "report_label": "診断のプレビュー",
-    "desktop_only": "デスクトップの転送履歴はデスクトップアプリで確認できます。Androidのバックアップとオフライン処理の進行状況は、それぞれのパネルに表示されます。"
+    "desktop_only": "デスクトップの転送履歴はデスクトップアプリで確認できます。Androidのバックアップとオフライン処理の進行状況は、それぞれのパネルに表示されます。",
+    "progress_unknown": "進行状況は不明",
+    "retry_all_failed": "失敗したすべての項目を再試行",
+    "retry_failed_summary": "待機中: {{queued}} · スキップ: {{skipped}} · 失敗: {{failed}} · 未試行: {{remaining}}",
+    "in_progress": "進行中"
   },
   "androidActivity": {
     "description": "このアカウントのカメラバックアップの結果と転送状況。",

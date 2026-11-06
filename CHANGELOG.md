@@ -1,3 +1,28 @@
+## [4.1.3] - 2026-11-06
+
+### Files, transfers and settings
+
+- Refine the desktop Files view with a clearer folder heading, filter shortcuts, compact list columns and a stable selection toolbar.
+- Show measured transfer progress, distinguish failed, skipped and completed work, and display an honest waiting state when progress cannot yet be measured.
+- Add searchable settings categories, consistent theme controls and motion that respects the system preference and the saved Performance Mode choice. Closing dialogs releases controls immediately and restores focus.
+
+### Retry failed uploads
+
+- Retry the current account's failed uploads with one action while preserving each file's destination, protection, video settings and queue position.
+- Prevent duplicate retry batches, stop remaining retries when the queue is paused or cancelled, and report queued, skipped, failed and unattempted counts. Queue acceptance does not mean upload completion.
+- Protected uploads retain their per-file credential confirmations. Account changes cancel the old batch; newly failing uploads wait for the next explicit action.
+
+### Dependency security
+
+- Update TLS, Tokio, Zstd and ZIP dependencies to patched versions. Align the native and JavaScript Tauri updater packages while preserving the existing signing configuration and application identity.
+- Update the local supporter-service HTTP tooling dependency without changing payment or entitlement behavior.
+
+### Compatibility and verification
+
+- Preserve the upload and streaming fixes shipped in 4.1.2, existing sessions, vaults, settings and lifetime supporter activations. The optional $5.00 USD one-time lifetime ad-free license and recovery rights are unchanged.
+- Browser, native process/storage, service, dependency, security, localization, packaged startup and provenance checks remain release gates. Automated Telegram and PayPal boundaries use controlled fixtures; live-service and manual installed-platform acceptance are separate.
+- Android remains a separate binary release. Android source and project changes are excluded.
+
 ## [4.1.2] - 2026-10-14
 
 ### Desktop video streaming metadata

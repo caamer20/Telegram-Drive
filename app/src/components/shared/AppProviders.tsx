@@ -2,6 +2,7 @@ import { useState, type ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ConfirmProvider } from '../../context/ConfirmContext';
 import { SettingsProvider } from '../../context/SettingsContext';
+import { MotionPolicyProvider } from '../../context/MotionContext';
 import { SupporterProvider } from '../../context/SupporterContext';
 import { SyncProvider } from '../../context/SyncContext';
 import { ThemeProvider } from '../../context/ThemeContext';
@@ -39,6 +40,7 @@ export function AppProviders({ children }: AppProvidersProps) {
         <QueryClientProvider client={queryClient}>
           <ConfirmProvider>
             <SettingsProvider>
+              <MotionPolicyProvider>
               <SupporterProvider>
                 <SyncProvider>
                   <EncryptionProvider>
@@ -48,6 +50,7 @@ export function AppProviders({ children }: AppProvidersProps) {
                   </EncryptionProvider>
                 </SyncProvider>
               </SupporterProvider>
+              </MotionPolicyProvider>
             </SettingsProvider>
           </ConfirmProvider>
         </QueryClientProvider>
