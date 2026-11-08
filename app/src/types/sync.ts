@@ -42,6 +42,7 @@ export interface SyncPreferences {
 export interface SyncPairStatus {
   pairId: number;
   phase: 'waiting' | 'scanning' | 'syncing' | 'paused' | 'ready';
+  waitReason?: 'telegram' | null;
   pendingOps: number;
   conflicts: number;
   lastError: string | null;

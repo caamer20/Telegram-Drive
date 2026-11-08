@@ -667,6 +667,7 @@
     "scanning": "ファイルを確認中",
     "syncing": "ファイルを転送中",
     "waiting": "次の確認を待機中",
+    "waiting_telegram": "Telegramへの接続を待機中",
     "pause": "対応を一時停止",
     "resume": "対応を再開",
     "checked_at": "最終確認: {{time}}",

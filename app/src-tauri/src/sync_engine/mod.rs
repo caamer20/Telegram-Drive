@@ -3,7 +3,11 @@ pub mod executor;
 pub mod planner;
 pub mod policy;
 pub mod preview;
+pub mod readiness;
 pub mod watcher;
+
+#[cfg(feature = "native-e2e")]
+pub(crate) mod native_fixture;
 
 use crate::{
     commands::{
@@ -99,6 +103,8 @@ pub struct SyncStatus {
 pub struct SyncPairStatus {
     pub pair_id: i64,
     pub phase: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub wait_reason: Option<&'static str>,
     pub pending_ops: usize,
     pub conflicts: usize,
     pub last_error: Option<String>,
@@ -308,11 +314,16 @@ pub(crate) fn pair_account(
         .account_owner
         .as_deref()
         .ok_or("Review this mapping before activating it for your current Telegram account")?;
-    let root = app
-        .path()
-        .app_data_dir()
-        .map_err(|error| error.to_string())?;
+    let root = sync_data_dir(app)?;
     crate::workspace::AccountGuard::open(&root, Some(expected))
+}
+
+fn sync_data_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    #[cfg(feature = "native-e2e")]
+    if let Some(fixture) = app.try_state::<Arc<native_fixture::NativeSyncFixture>>() {
+        return Ok(fixture.root.clone());
+    }
+    app.path().app_data_dir().map_err(|error| error.to_string())
 }
 
 async fn set_pair_status(
@@ -329,6 +340,39 @@ async fn set_pair_status(
         *existing = pair_status;
     } else {
         current.pairs.push(pair_status);
+    }
+    drop(current);
+    emit_status(app, status).await;
+}
+
+async fn set_waiting_status(
+    app: &tauri::AppHandle,
+    status: &Arc<RwLock<SyncStatus>>,
+    pairs: &[SyncPair],
+    error: Option<&str>,
+) {
+    let mut current = status.write().await;
+    current.running = false;
+    current.last_error = error.map(str::to_owned);
+    for pair in pairs {
+        if let Some(entry) = current
+            .pairs
+            .iter_mut()
+            .find(|entry| entry.pair_id == pair.id)
+        {
+            entry.phase = if pair.is_active && error.is_none() {
+                "waiting"
+            } else {
+                "paused"
+            }
+            .into();
+            entry.wait_reason = (pair.is_active && error.is_none()).then_some("telegram");
+            entry.last_error = if pair.is_active {
+                error.map(str::to_owned)
+            } else {
+                Some("Paused by you".into())
+            };
+        }
     }
     drop(current);
     emit_status(app, status).await;
@@ -400,34 +444,87 @@ async fn engine_loop(
         running: running.clone(),
     };
     let _ = trigger_tx.try_send(());
-    let mut interval = tokio::time::interval(FULL_SCANNER_POLL);
+    // The initial trigger handles startup. Avoid a second immediate timer pass.
+    let poll = FULL_SCANNER_POLL;
+    let mut interval = tokio::time::interval_at(tokio::time::Instant::now() + poll, poll);
+    let readiness = app.state::<TelegramState>().sync_readiness.clone();
+    // A retained watch snapshot covers both ready-before-start and readiness
+    // changing during a scan. No frontend event or engine restart is required.
+    let mut readiness_rx = readiness.subscribe();
+    let mut waiting = true;
+    let mut retry_delay = readiness::RETRY_MIN;
+    let mut retry_at = tokio::time::Instant::now() + retry_delay;
+    let mut readiness_error = None;
     let incremental = settings.uses_incremental_scanner();
     let mut last_reconcile: Option<Instant> = None;
     let mut last_full_verification: Option<Instant> = None;
 
     loop {
-        let triggered = tokio::select! {
-            changed = shutdown.changed() => {
-                if changed.is_err() || *shutdown.borrow() { break }
-                true
-            },
-            _ = interval.tick() => false,
-            event = trigger_rx.recv() => {
-                if event.is_none() { break }
-                true
-            },
+        let (triggered, retry, readiness_changed) = tokio::select! {
+            changed = shutdown.changed() => { if changed.is_err() || *shutdown.borrow() { break }; continue },
+            _ = interval.tick() => (false, false, false),
+            event = trigger_rx.recv() => { if event.is_none() { break }; (true, false, false) },
+            changed = readiness_rx.changed() => { if changed.is_err() { break }; (true, false, true) },
+            _ = tokio::time::sleep_until(retry_at), if waiting => (true, true, false),
         };
         if *shutdown.borrow() {
             break;
         }
-        // An idle mapping has nothing local to react to, so with the
-        // incremental scanner it only re-reads Telegram on the slower poll.
+        // Readiness changes and its targeted retry are forced triggers. Only
+        // ordinary idle ticks retain the incremental scanner's five-minute gate.
         if incremental
             && !triggered
+            && !waiting
             && last_reconcile.is_some_and(|at| at.elapsed() < INCREMENTAL_REMOTE_POLL)
         {
             continue;
         }
+        while trigger_rx.try_recv().is_ok() {}
+        let active = pairs.iter().any(|pair| pair.is_active);
+        if readiness_changed {
+            readiness_error = None;
+        }
+        // While waiting, only the backoff timer probes Telegram. Filesystem
+        // bursts cannot cause repeated hashing, remote scans or login attempts.
+        // Ordinary passes also verify a retained ready connection before work.
+        let probe_now =
+            active && (retry || (!readiness_changed && readiness.snapshot().owner.is_some()));
+        if probe_now {
+            let probe = tokio::select! {
+                changed = shutdown.changed() => {
+                    if changed.is_err() || *shutdown.borrow() { break; }
+                    continue;
+                },
+                probe = readiness::probe(&app) => probe,
+            };
+            readiness_error = probe.error;
+            retry_at = tokio::time::Instant::now() + probe.retry_after.unwrap_or(retry_delay);
+            retry_delay = (retry_delay * 2).min(readiness::RETRY_MAX);
+        }
+        let ready = readiness_rx.borrow_and_update().owner.is_some();
+        if !ready || readiness_error.is_some() || !active {
+            if !waiting {
+                retry_delay = readiness::RETRY_MIN;
+                if !probe_now {
+                    retry_at = tokio::time::Instant::now() + retry_delay;
+                }
+            }
+            waiting = active;
+            set_waiting_status(
+                &app,
+                &status,
+                &pairs,
+                if active {
+                    readiness_error.as_deref()
+                } else {
+                    None
+                },
+            )
+            .await;
+            continue;
+        }
+        waiting = false;
+        retry_delay = readiness::RETRY_MIN;
         let verify_every_file = !incremental
             || last_full_verification.is_none_or(|at| at.elapsed() >= FULL_VERIFICATION_INTERVAL);
         let scan_mode = if verify_every_file {
@@ -435,7 +532,6 @@ async fn engine_loop(
         } else {
             LocalScanMode::ReuseRecordedHashes
         };
-        while trigger_rx.try_recv().is_ok() {}
         {
             let mut current = status.write().await;
             current.running = true;
@@ -476,6 +572,13 @@ async fn engine_loop(
             .await;
             let engine = app.state::<SyncEngine>();
             let _operation = engine.operation_lock.lock().await;
+            // Recheck after the operation lock, before cleanup or local hashing.
+            if readiness.snapshot().owner.is_none() {
+                waiting = true;
+                retry_at = tokio::time::Instant::now() + readiness::RETRY_MIN;
+                set_waiting_status(&app, &status, &pairs, None).await;
+                break;
+            }
             match reconcile_pair(&app, &db, pair, &settings, shutdown.clone(), scan_mode).await {
                 Ok((pair_pending, pair_conflicts, pair_error)) => {
                     set_pair_status(
@@ -493,6 +596,7 @@ async fn engine_loop(
                             conflicts: pair_conflicts,
                             last_error: pair_error.clone(),
                             last_checked_at: Some(chrono::Utc::now().timestamp()),
+                            wait_reason: None,
                         },
                     )
                     .await;
@@ -503,6 +607,12 @@ async fn engine_loop(
                     }
                 }
                 Err(error) => {
+                    if readiness.snapshot().owner.is_none() {
+                        waiting = true;
+                        retry_at = tokio::time::Instant::now() + readiness::RETRY_MIN;
+                        set_waiting_status(&app, &status, &pairs, None).await;
+                        break;
+                    }
                     set_pair_status(
                         &app,
                         &status,
@@ -537,7 +647,9 @@ async fn engine_loop(
             current.last_error = last_error;
         }
         emit_status(&app, &status).await;
-        if !*shutdown.borrow() {
+        // An unavailable client did not reconcile or verify any files. Do not
+        // postpone the next incremental scan/full verification in that state.
+        if !*shutdown.borrow() && !waiting {
             last_reconcile = Some(Instant::now());
             if verify_every_file {
                 last_full_verification = last_reconcile;
@@ -1134,6 +1246,13 @@ async fn scan_remote_once(
     account: &crate::workspace::AccountGuard,
     shutdown: &tokio::sync::watch::Receiver<bool>,
 ) -> Result<FileTree, String> {
+    #[cfg(feature = "native-e2e")]
+    if let Some(fixture) = app.try_state::<Arc<native_fixture::NativeSyncFixture>>() {
+        if *shutdown.borrow() {
+            return Err("Folder sync shutdown requested".into());
+        }
+        return fixture.scan(pair, account).await;
+    }
     let telegram = app.state::<TelegramState>();
     let client = telegram.client.lock().await.clone().ok_or(
         "Telegram is offline; remote tree unavailable, so no reconciliation was attempted",

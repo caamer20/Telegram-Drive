@@ -1,6 +1,6 @@
 [package]
 name = "app"
-version = "4.1.3"
+version = "4.1.4"
 description = "A local-first file workspace for files stored in Telegram, built with Tauri, Rust, and React."
 authors = ["Cameron Amer"]
 edition = "2021"
@@ -46,9 +46,9 @@ image = { version = "0.25.10", default-features = false, features = ["bmp", "gif
 log = "0.4"
 env_logger = "0.11"
 tauri-plugin-updater = "2.14.1"
-actix-web = "4"
+actix-web = "4.18.2"
 actix-cors = "0.7"
-actix-files = "0.6"
+actix-files = "0.7.4"
 actix-multipart = "0.7"
 futures = "0.3"
 bytes = "1"

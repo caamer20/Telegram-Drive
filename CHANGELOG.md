@@ -1,3 +1,27 @@
+## [4.1.4] - 2026-11-07
+
+### Folder Sync recovery
+
+- Fix active folder mappings incorrectly reporting Telegram as offline after restarting the desktop app (#241).
+- Show Waiting for Telegram during connection startup and resume automatically when the authenticated session is ready, including with the incremental scanner. Retained readiness and bounded retries recover without toggling a mapping.
+- Reject stale connection replies and preserve manually paused mappings, account isolation, encryption restrictions and remote cleanup safeguards.
+
+### Files header sizing
+
+- Fit the folder heading and filter controls to their visible contents, removing the unused space reserved for selection actions.
+- Expand the header only when bulk actions are visible, while preserving filter shortcuts, layout switching and keyboard controls.
+
+### Dependency security
+
+- Update the HTTP server and file-response dependencies to address newly published request parsing, decompression and Windows file-disclosure advisories.
+- Preserve authenticated byte-range video streaming and account-revocation checks while adapting to the patched file-response API.
+
+### Compatibility and verification
+
+- Preserve existing Telegram sessions, vaults, settings, transfer behavior and lifetime supporter activations. The optional $5.00 USD one-time lifetime ad-free license and recovery rights remain unchanged.
+- Keep the existing desktop platform builds, packaged startup, dependency, E2E, signing, checksum, SBOM and provenance gates. Automated Telegram boundaries use controlled fixtures; live-service and manual installed-platform acceptance are separate.
+- This release updates desktop only. Android remains on its separate release line.
+
 ## [4.1.3] - 2026-11-06
 
 ### Files, transfers and settings

@@ -667,6 +667,7 @@
     "scanning": "파일 확인 중",
     "syncing": "파일 전송 중",
     "waiting": "다음 확인 대기 중",
+    "waiting_telegram": "Telegram 연결 대기 중",
     "pause": "연결 일시 중지",
     "resume": "연결 재개",
     "checked_at": "마지막 확인: {{time}}",

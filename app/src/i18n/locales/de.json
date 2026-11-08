@@ -667,6 +667,7 @@
     "scanning": "Dateien werden geprüft",
     "syncing": "Dateien werden übertragen",
     "waiting": "Warten auf die nächste Prüfung",
+    "waiting_telegram": "Warten auf Telegram",
     "pause": "Zuordnung pausieren",
     "resume": "Zuordnung fortsetzen",
     "checked_at": "Zuletzt geprüft: {{time}}",

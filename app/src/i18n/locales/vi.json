@@ -843,6 +843,7 @@
     "scanning": "Đang kiểm tra tệp",
     "syncing": "Đang truyền tệp",
     "waiting": "Đang chờ lần kiểm tra tiếp theo",
+    "waiting_telegram": "Đang chờ Telegram",
     "pause": "Tạm dừng ánh xạ",
     "resume": "Tiếp tục ánh xạ",
     "checked_at": "Kiểm tra gần nhất lúc {{time}}",

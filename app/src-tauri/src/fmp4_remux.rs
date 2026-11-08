@@ -493,7 +493,12 @@ async fn serve_fmp4(
 
     // Use NamedFile for automatic Range/Content-Range support and
     // streaming from disk (no full-file memory load).
-    match actix_files::NamedFile::open_async(&safe_path).await {
+    let opened = async {
+        let file = tokio::fs::File::open(&safe_path).await?;
+        actix_files::NamedFile::from_file(file.into_std().await, &safe_path)
+    }
+    .await;
+    match opened {
         Ok(f) => {
             if account.validate().is_err() {
                 return HttpResponse::Forbidden().body("Account changed");

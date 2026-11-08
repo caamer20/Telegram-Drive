@@ -7,6 +7,38 @@ test.beforeEach(async ({ page }) => {
   await expect(page.getByText('Holiday folder photo.jpg', { exact: true })).toBeVisible({ timeout: 30_000 });
 });
 
+for (const width of [1920, 1000]) {
+  test(`folder header fits its visible title and controls at ${width}px`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 900 });
+    const header = page.getByRole('region', { name: 'Files', exact: true });
+    await expect(header.getByRole('heading', { level: 1 })).toBeVisible();
+    const unusedHeight = () => header.evaluate(element => {
+      const style = getComputedStyle(element);
+      const content = element.firstElementChild!.getBoundingClientRect();
+      return element.getBoundingClientRect().height - content.height
+        - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom)
+        - parseFloat(style.borderTopWidth) - parseFloat(style.borderBottomWidth);
+    });
+    await expect.poll(unusedHeight).toBeCloseTo(0, 0);
+
+    // Active filters can wrap; the header must follow the new content height.
+    await header.getByRole('button', { name: 'File type', exact: true }).click();
+    await page.getByRole('combobox', { name: 'File type', exact: true }).selectOption('image');
+    await page.getByRole('combobox', { name: 'Date', exact: true }).selectOption('30d');
+    await page.getByRole('combobox', { name: 'Size', exact: true }).selectOption('small');
+    await page.getByRole('dialog', { name: 'Search filters', exact: true }).getByRole('button', { name: 'Close', exact: true }).click();
+    await expect.poll(unusedHeight).toBeCloseTo(0, 0);
+    const bounds = (await header.boundingBox())!;
+    for (const button of await header.getByRole('button').all()) {
+      const box = (await button.boundingBox())!;
+      expect(box.x).toBeGreaterThanOrEqual(bounds.x);
+      expect(box.x + box.width).toBeLessThanOrEqual(bounds.x + bounds.width);
+      expect(box.y + box.height).toBeLessThanOrEqual(bounds.y + bounds.height);
+    }
+    await header.screenshot({ path: testInfo.outputPath(`folder-header-${width}.png`) });
+  });
+}
+
 test('filters open on every click and support keyboard dismissal and menu switching', async ({ page }) => {
   const trigger = page.getByRole('button', { name: 'Search filters', exact: true });
   const scope = page.getByRole('combobox', { name: 'Search scope', exact: true });

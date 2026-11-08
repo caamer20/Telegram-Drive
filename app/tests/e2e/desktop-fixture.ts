@@ -1,10 +1,13 @@
 import type { Page } from '@playwright/test';
+import type { SyncPair, SyncStatus } from '../../src/types/sync';
 
 /** Real application entry point and providers; only the native/service boundary is simulated.
  * These browser journeys do not validate SQLite, Keychain, Telegram, or payment cryptography.
  */
 export async function desktopFixture(page: Page, options: {
   pickedUploadPaths?: string[];
+  syncPairs?: SyncPair[];
+  syncStatus?: SyncStatus;
   accountFailures?: number;
   holdFiles?: boolean;
   holdStartupHealth?: boolean;
@@ -74,7 +77,8 @@ export async function desktopFixture(page: Page, options: {
       supporterRefreshFails: options.supporterState === 'needs_refresh',
       logoutFails: false, remoteSignOutUnconfirmed: false, saveFails: false, installFails: true, incompleteDownload: false,
       update: options.update ?? false, stores, calls: (savedTransfers?.calls ?? []) as { command: string; args: any }[],
-      sync: { settings: { enabled: false, debounceMs: 2000, encryption: 'inherit', scanner: 'full' } as Record<string, unknown>, pairs: [] as any[] },
+      sync: { settings: { enabled: options.syncStatus?.enabled ?? false, debounceMs: 2000, encryption: 'inherit', scanner: 'full' } as Record<string, unknown>, pairs: options.syncPairs ?? [] as SyncPair[] },
+      syncStatus: options.syncStatus,
       holdThumbnails: options.holdThumbnails ?? false, thumbnailVersion: 0,
       releaseThumbnails: () => { state.holdThumbnails = false; releaseThumbnails?.(); },
       inventoryName: null as string | null, inventoryFailure: false, inventoryBuilding: 0, inventoryPresent: true, protectedInterrupted: false, vaultLocked: options.vaultState === 'locked',
@@ -153,7 +157,7 @@ export async function desktopFixture(page: Page, options: {
           if (command === 'cmd_get_sync_settings') return state.sync.settings;
           if (command === 'cmd_set_sync_scanner') { state.sync.settings = { ...state.sync.settings, scanner: args.scanner }; return state.sync.settings; }
           if (command === 'cmd_get_sync_pairs') return state.sync.pairs;
-          if (command === 'cmd_get_sync_status') return { enabled: state.sync.settings.enabled, running: false, activePairs: 0, pendingOps: 0, conflicts: 0, lastError: null, pairs: [] };
+          if (command === 'cmd_get_sync_status') return state.syncStatus ?? { enabled: state.sync.settings.enabled, running: false, activePairs: 0, pendingOps: 0, conflicts: 0, lastError: null, pairs: [] };
           if (command === 'plugin:dialog|save') return '/synthetic/Downloads/photo.jpg';
           if (command === 'plugin:dialog|open') return options.pickedUploadPaths ?? '/synthetic/Library';
           if (command === 'cmd_preview_sync_pair') return {

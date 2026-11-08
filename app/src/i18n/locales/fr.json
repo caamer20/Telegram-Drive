@@ -671,6 +671,7 @@
     "scanning": "Vérification des fichiers",
     "syncing": "Transfert des fichiers",
     "waiting": "En attente de la prochaine vérification",
+    "waiting_telegram": "En attente de Telegram",
     "pause": "Suspendre l’association",
     "resume": "Reprendre l’association",
     "checked_at": "Dernière vérification : {{time}}",

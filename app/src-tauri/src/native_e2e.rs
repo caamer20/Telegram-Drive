@@ -11,12 +11,15 @@ use crate::crypto::{
     state::CryptoState,
     vault::FileVault,
 };
-use crate::sync_engine::{self, config as sync_config, policy::StoredPairPolicy};
+use crate::sync_engine::{
+    self, config as sync_config, native_fixture::NativeSyncFixture, policy::StoredPairPolicy,
+    SyncEngine,
+};
 use crate::transfer_engine::{TransferJob, TransferStore};
 use crate::workspace::{store::Store, AccountGuard};
 use grammers_session::{storages::SqliteSession, types::PeerInfo, Session};
 use serde_json::{json, Value};
-use sha2::Digest;
+use sha2::{Digest, Sha256};
 use std::time::Duration;
 use std::{
     collections::{HashMap, HashSet},
@@ -27,6 +30,7 @@ use std::{
         Arc,
     },
 };
+use tauri::{Emitter, Manager};
 use tokio::sync::{Mutex, RwLock};
 
 // Allow bounded source work while lifecycle journeys exercise notifications and retention.
@@ -133,6 +137,7 @@ fn disconnected() -> Arc<TelegramState> {
         password_token: Arc::new(Mutex::new(None)),
         api_id: Arc::new(Mutex::new(None)),
         auth_attempt_counter: Arc::new(AtomicU64::new(0)),
+        sync_readiness: Default::default(),
         runner_shutdown: Arc::new(std::sync::Mutex::new(None)),
         runner_count: Arc::new(AtomicU32::new(0)),
         peer_cache: Arc::new(RwLock::new(HashMap::new())),
@@ -1075,6 +1080,7 @@ struct TransferRetryDriver {
 }
 
 struct Driver {
+    sync_app: Option<tauri::App>,
     transfer_retry: Option<TransferRetryDriver>,
     video_upload: Option<FixtureVideoUploadJourney>,
     notifications: Option<FixtureNotifications>,
@@ -1121,6 +1127,167 @@ struct Driver {
 }
 
 impl Driver {
+    fn sync_app(&mut self) -> Result<&tauri::App, String> {
+        if self.sync_app.is_none() {
+            let mut context = crate::application_context();
+            context.config_mut().app.windows.clear();
+            context.config_mut().app.tray_icon = None;
+            let app = tauri::Builder::default()
+                .enable_macos_default_menu(false)
+                .build(context)
+                .map_err(error)?;
+            let db = crate::db::init_db_at(&self.root)?;
+            app.manage(disconnected().as_ref().clone());
+            app.manage(db.clone());
+            app.manage(self.crypto.clone());
+            app.manage(Arc::new(NativeSyncFixture::new(self.root.clone())));
+            app.manage(SyncEngine::new(db, app.handle().clone()));
+            NativeSyncFixture::install_listener(app.handle());
+            self.sync_app = Some(app);
+        }
+        Ok(self.sync_app.as_ref().unwrap())
+    }
+
+    async fn dispatch_sync_lifecycle(&mut self, request: Value) -> Result<Value, String> {
+        match text(&request, "command")? {
+            "sync_seed" => {
+                let owner = text(&request, "owner")?.to_string();
+                let scanner = request["scanner"].as_str().unwrap_or("full").to_string();
+                if !matches!(scanner.as_str(), "full" | "incremental") {
+                    return Err("Unknown fixture scanner".into());
+                }
+                let db = crate::db::init_db_at(&self.root)?;
+                let root = self.root.clone();
+                crate::db::with_connection(db.clone(), move |connection| {
+                    connection.execute(concat!(
+                        "INSERT OR REPLACE INTO sync_settings(key,value) VALUES",
+                        "('sync_enabled','true'),('sync_debounce_ms','250')"
+                    )).map_err(error)?;
+                    let mut scanner_setting = connection.prepare(
+                        "INSERT OR REPLACE INTO sync_settings(key,value) VALUES('sync_scanner',?)"
+                    ).map_err(error)?;
+                    scanner_setting.bind((1,scanner.as_str())).map_err(error)?;
+                    scanner_setting.next().map_err(error)?;
+                    for id in 1..=3 {
+                        let path = root.join(format!("mapping-{id}"));
+                        std::fs::create_dir_all(&path).map_err(error)?;
+                        let mut insert = connection.prepare(concat!(
+                            "INSERT OR IGNORE INTO sync_pairs(",
+                            "id,local_path,channel_id,folder_key,label,sync_direction,is_active,created_at)",
+                            " VALUES(?,?,?,?,?,'bidirectional',?,1)"
+                        )).map_err(error)?;
+                        insert.bind((1,id)).map_err(error)?;
+                        insert.bind((2,path.to_str().ok_or("Invalid fixture path")?)).map_err(error)?;
+                        insert.bind((3,100+id)).map_err(error)?;
+                        insert.bind((4,format!("folder-{id}").as_str())).map_err(error)?;
+                        insert.bind((5,format!("Mapping {id}").as_str())).map_err(error)?;
+                        insert.bind((6,i64::from(id != 3))).map_err(error)?;
+                        insert.next().map_err(error)?;
+                        let policy = StoredPairPolicy {
+                            account_owner:Some(owner.clone()),
+                            ..Default::default()
+                        };
+                        sync_config::write_pair_policy(connection,id,&policy)?;
+                    }
+                    let data = b"Keep the existing synced file across startup and reconnect.\n";
+                    std::fs::write(root.join("mapping-1/keep.txt"),data).map_err(error)?;
+                    let hash = format!("{:x}",Sha256::digest(data));
+                    let mut insert = connection.prepare(concat!(
+                        "INSERT OR REPLACE INTO sync_state(",
+                        "pair_id,relative_path,local_hash,remote_hash,file_size,",
+                        "local_mtime,remote_date,message_id,sync_status)",
+                        " VALUES(1,'keep.txt',?,?,?,1,1,42,'synced')"
+                    )).map_err(error)?;
+                    insert.bind((1,hash.as_str())).map_err(error)?;
+                    insert.bind((2,hash.as_str())).map_err(error)?;
+                    insert.bind((3,data.len() as i64)).map_err(error)?;
+                    insert.next().map_err(error)?;
+                    let remote = json!({"1":{"keep.txt":{
+                        "relativePath":"keep.txt","hash":hash,"fileSize":data.len(),
+                        "modifiedAt":1,"messageId":42
+                    }}});
+                    std::fs::write(
+                        root.join("sync-fixture-remote.json"),
+                        serde_json::to_vec(&remote).map_err(error)?
+                    ).map_err(error)?;
+                    Ok(())
+                }).await?;
+                Ok(json!(true))
+            }
+            "sync_start" => {
+                let app = self.sync_app()?;
+                if let Some(owner) = request["readyOwner"].as_i64() {
+                    app.state::<Arc<NativeSyncFixture>>().set_owner(Some(owner));
+                    let readiness = &app.state::<TelegramState>().sync_readiness;
+                    readiness.mark_ready(readiness.generation(), owner);
+                }
+                app.state::<SyncEngine>().start().await?;
+                let settings =
+                    sync_config::load_settings(app.state::<SyncEngine>().db.clone()).await?;
+                Ok(json!({"scanner":settings.scanner}))
+            }
+            "sync_status" => {
+                let app = self.sync_app()?;
+                app.state::<Arc<NativeSyncFixture>>()
+                    .snapshot(app.handle(), request["waitFor"].as_str())
+                    .await
+            }
+            "sync_telegram" => {
+                let app = self.sync_app()?;
+                let fixture = app.state::<Arc<NativeSyncFixture>>();
+                let readiness = &app.state::<TelegramState>().sync_readiness;
+                let owner = request["owner"].as_i64();
+                fixture.set_owner(owner);
+                let Some(owner) = owner else {
+                    return Ok(json!({"generation":readiness.invalidate()}));
+                };
+                let accepted = request["silent"] != true
+                    && readiness.mark_ready(readiness.generation(), owner);
+                Ok(json!({"accepted":accepted,"generation":readiness.generation()}))
+            }
+            "sync_ready_reply" => {
+                let app = self.sync_app()?;
+                let readiness = &app.state::<TelegramState>().sync_readiness;
+                let generation = request["generation"]
+                    .as_u64()
+                    .ok_or("Missing reply generation")?;
+                let owner = request["owner"].as_i64().ok_or("Missing reply owner")?;
+                Ok(json!({"accepted":readiness.mark_ready(generation,owner)}))
+            }
+            "sync_wake" => {
+                self.sync_app()?.emit("vault-unlocked", ()).map_err(error)?;
+                Ok(json!(true))
+            }
+            "sync_seed_cleanup" => {
+                let db = crate::db::init_db_at(&self.root)?;
+                sync_config::save_pending_cleanup(
+                    db,
+                    2,
+                    &[sync_config::PendingCleanup {
+                        relative_path: "replacement.txt".into(),
+                        old_message_id: 41,
+                        new_message_id: 42,
+                        old_remote_hash: Some("preserve-the-existing-remote-version".into()),
+                    }],
+                )
+                .await?;
+                Ok(json!(true))
+            }
+            "sync_pending_cleanup" => {
+                let db = crate::db::init_db_at(&self.root)?;
+                serde_json::to_value(sync_config::load_pending_cleanup(db, 2).await?).map_err(error)
+            }
+            "sync_stop" => {
+                self.sync_app()?
+                    .state::<SyncEngine>()
+                    .shutdown_and_wait()
+                    .await?;
+                Ok(json!(true))
+            }
+            _ => Err("Unknown sync lifecycle fixture command".into()),
+        }
+    }
+
     fn transfer_retry(&mut self) -> Result<&mut TransferRetryDriver, String> {
         if self.transfer_retry.is_none() {
             let (store, jobs) = TransferStore::open(&self.root.join("transfers.db"))?;
@@ -1137,6 +1304,15 @@ impl Driver {
     async fn dispatch(&mut self, request: Value) -> Result<Value, String> {
         let command = text(&request, "command")?.to_owned();
         match command.as_str() {
+            "sync_seed"
+            | "sync_start"
+            | "sync_status"
+            | "sync_telegram"
+            | "sync_ready_reply"
+            | "sync_wake"
+            | "sync_seed_cleanup"
+            | "sync_pending_cleanup"
+            | "sync_stop" => self.dispatch_sync_lifecycle(request).await,
             "notifications_start"
             | "notification_language"
             | "notification_tray"
@@ -5095,6 +5271,7 @@ pub async fn run() -> Result<(), String> {
     initial_network.proxy.password =
         std::fs::read_to_string(root.join("proxy-credential")).unwrap_or_default();
     let mut driver = Driver {
+        sync_app: None,
         transfer_retry: None,
         video_upload: None,
         notifications: None,
@@ -5148,6 +5325,9 @@ pub async fn run() -> Result<(), String> {
         };
         println!("{response}");
         std::io::stdout().flush().map_err(error)?;
+    }
+    if let Some(app) = &driver.sync_app {
+        app.state::<SyncEngine>().shutdown_and_wait().await?;
     }
     for (handle, task) in driver.servers {
         handle.stop(true).await;

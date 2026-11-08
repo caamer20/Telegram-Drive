@@ -143,15 +143,16 @@ fn catalog_error(error: CatalogError) -> HttpResponse {
 
 /// The account this request acts for. Every endpoint checks it again before
 /// answering, so a response never crosses an account switch.
-fn api_account(root: &std::path::Path) -> Result<AccountGuard, HttpResponse> {
-    AccountGuard::open(root, None).map_err(|error| json_error("ACCOUNT_UNAVAILABLE", &error, 503))
+fn api_account(root: &std::path::Path) -> Result<AccountGuard, Box<HttpResponse>> {
+    AccountGuard::open(root, None)
+        .map_err(|error| Box::new(json_error("ACCOUNT_UNAVAILABLE", &error, 503)))
 }
 
 async fn api_session(
     root: &std::path::Path,
     state: &TelegramState,
 ) -> Result<(AccountGuard, grammers_client::Client), HttpResponse> {
-    let account = api_account(root)?;
+    let account = api_account(root).map_err(|response| *response)?;
     let client = api_catalog::client(&account, state)
         .await
         .map_err(catalog_error)?;
@@ -160,44 +161,44 @@ async fn api_session(
 
 /// File identifiers are Telegram message identifiers: positive and 32-bit.
 /// Anything else is rejected rather than truncated to a different file.
-fn message_id(value: i64) -> Result<i32, HttpResponse> {
+fn message_id(value: i64) -> Result<i32, Box<HttpResponse>> {
     i32::try_from(value)
         .ok()
         .filter(|id| *id > 0)
         .ok_or_else(|| {
-            json_error(
+            Box::new(json_error(
                 "INVALID_FILE_ID",
                 "File identifiers are positive 32-bit integers",
                 400,
-            )
+            ))
         })
 }
 
 /// `folder_id` as a query gives it: absent means every folder; an empty
 /// value, `null`, `none` or `home` means Saved Messages.
-fn folder_scope(value: Option<&str>) -> Result<Option<Option<i64>>, HttpResponse> {
+fn folder_scope(value: Option<&str>) -> Result<Option<Option<i64>>, Box<HttpResponse>> {
     match value.map(str::trim) {
         None => Ok(None),
         Some("" | "null" | "none" | "None" | "home") => Ok(Some(None)),
         Some(value) => value.parse::<i64>().map(|id| Some(Some(id))).map_err(|_| {
-            json_error(
+            Box::new(json_error(
                 "INVALID_FOLDER_ID",
                 "folder_id must be an integer, or null for Saved Messages",
                 400,
-            )
+            ))
         }),
     }
 }
 
-fn time_bound(value: Option<&str>, name: &str) -> Result<Option<i64>, HttpResponse> {
+fn time_bound(value: Option<&str>, name: &str) -> Result<Option<i64>, Box<HttpResponse>> {
     match value {
         None => Ok(None),
         Some(value) => api_catalog::parse_time(value).map(Some).ok_or_else(|| {
-            json_error(
+            Box::new(json_error(
                 "INVALID_TIMESTAMP",
                 &format!("{name} must be an RFC 3339 timestamp such as 2026-06-05T10:00:00Z"),
                 400,
-            )
+            ))
         }),
     }
 }
@@ -373,15 +374,15 @@ fn spawn_cache_cleanup(
 }
 
 /// Validate X-API-Key header against stored hash
-fn check_auth(req: &HttpRequest, api_state: &web::Data<ApiState>) -> Result<(), HttpResponse> {
+fn check_auth(req: &HttpRequest, api_state: &web::Data<ApiState>) -> Result<(), Box<HttpResponse>> {
     let key_hash = match &api_state.key_hash {
         Some(h) => h,
         None => {
-            return Err(json_error(
+            return Err(Box::new(json_error(
                 "NO_KEY_CONFIGURED",
                 "No API key has been configured. Generate one in Settings.",
                 401,
-            ))
+            )))
         }
     };
 
@@ -389,8 +390,12 @@ fn check_auth(req: &HttpRequest, api_state: &web::Data<ApiState>) -> Result<(), 
 
     match provided {
         Some(key) if crate::commands::api_settings::verify_key(key, key_hash) => Ok(()),
-        Some(_) => Err(json_error("UNAUTHORIZED", "Invalid API key", 401)),
-        None => Err(json_error("UNAUTHORIZED", "Missing X-API-Key header", 401)),
+        Some(_) => Err(Box::new(json_error("UNAUTHORIZED", "Invalid API key", 401))),
+        None => Err(Box::new(json_error(
+            "UNAUTHORIZED",
+            "Missing X-API-Key header",
+            401,
+        ))),
     }
 }
 
@@ -483,25 +488,25 @@ async fn api_list_files(
     cache_dirs: web::Data<CacheDirs>,
 ) -> impl Responder {
     if let Err(e) = check_auth(&req, &api_state) {
-        return e;
+        return *e;
     }
 
     let scope = match folder_scope(query.folder_id.as_deref()) {
         Ok(scope) => scope,
-        Err(error) => return error,
+        Err(error) => return *error,
     };
     let created_after = match time_bound(query.created_after.as_deref(), "created_after") {
         Ok(bound) => bound,
-        Err(error) => return error,
+        Err(error) => return *error,
     };
     let created_before = match time_bound(query.created_before.as_deref(), "created_before") {
         Ok(bound) => bound,
-        Err(error) => return error,
+        Err(error) => return *error,
     };
 
     let account = match api_account(&cache_dirs.account_root) {
         Ok(account) => account,
-        Err(error) => return error,
+        Err(error) => return *error,
     };
     if query.refresh == Some(true) {
         api_catalog::invalidate(account.owner);
@@ -608,11 +613,11 @@ async fn api_get_file(
     cache_dirs: web::Data<CacheDirs>,
 ) -> impl Responder {
     if let Err(e) = check_auth(&req, &api_state) {
-        return e;
+        return *e;
     }
     let message_id = match message_id(path.into_inner()) {
         Ok(id) => id,
-        Err(error) => return error,
+        Err(error) => return *error,
     };
     let (account, client) = match api_session(&cache_dirs.account_root, tg_state.get_ref()).await {
         Ok(session) => session,
@@ -650,12 +655,12 @@ async fn api_download_file(
     cache_dirs: web::Data<CacheDirs>,
 ) -> impl Responder {
     if let Err(e) = check_auth(&req, &api_state) {
-        return e;
+        return *e;
     }
 
     let message_id = match message_id(path.into_inner()) {
         Ok(id) => id,
-        Err(error) => return error,
+        Err(error) => return *error,
     };
     let (account, client) =
         match api_account_client(&cache_dirs.account_root, tg_state.get_ref()).await {
@@ -872,7 +877,7 @@ async fn api_bulk_files(
     cache_dirs: web::Data<CacheDirs>,
 ) -> impl Responder {
     if let Err(e) = check_auth(&req, &api_state) {
-        return e;
+        return *e;
     }
 
     let (account, client) =
@@ -1191,7 +1196,7 @@ async fn api_search_files(
     cache_dirs: web::Data<CacheDirs>,
 ) -> impl Responder {
     if let Err(e) = check_auth(&req, &api_state) {
-        return e;
+        return *e;
     }
 
     let search = match query.q.as_deref().map(str::trim) {
@@ -1206,12 +1211,12 @@ async fn api_search_files(
     };
     let scope = match folder_scope(query.folder_id.as_deref()) {
         Ok(scope) => scope,
-        Err(error) => return error,
+        Err(error) => return *error,
     };
 
     let account = match api_account(&cache_dirs.account_root) {
         Ok(account) => account,
-        Err(error) => return error,
+        Err(error) => return *error,
     };
     if query.refresh == Some(true) {
         api_catalog::invalidate(account.owner);
@@ -1238,11 +1243,11 @@ async fn api_delete_file(
     cache_dirs: web::Data<CacheDirs>,
 ) -> impl Responder {
     if let Err(e) = check_auth(&req, &api_state) {
-        return e;
+        return *e;
     }
     let message_id = match message_id(path.into_inner()) {
         Ok(id) => id,
-        Err(error) => return error,
+        Err(error) => return *error,
     };
     let folder_id = query.folder_id;
 
@@ -1299,11 +1304,11 @@ async fn api_copy_file(
     cache_dirs: web::Data<CacheDirs>,
 ) -> impl Responder {
     if let Err(e) = check_auth(&req, &api_state) {
-        return e;
+        return *e;
     }
     let message_id = match message_id(path.into_inner()) {
         Ok(id) => id,
-        Err(error) => return error,
+        Err(error) => return *error,
     };
 
     let (account, client) =
@@ -1412,11 +1417,11 @@ async fn api_update_file(
     cache_dirs: web::Data<CacheDirs>,
 ) -> impl Responder {
     if let Err(e) = check_auth(&req, &api_state) {
-        return e;
+        return *e;
     }
     let message_id = match message_id(path.into_inner()) {
         Ok(id) => id,
-        Err(error) => return error,
+        Err(error) => return *error,
     };
 
     let (account, client) =
@@ -1577,7 +1582,7 @@ async fn api_upload_file(
     cache_dirs: web::Data<CacheDirs>,
 ) -> impl Responder {
     if let Err(e) = check_auth(&req, &api_state) {
-        return e;
+        return *e;
     }
 
     let (account, client) = match api_session(&cache_dirs.account_root, tg_state.get_ref()).await {
@@ -1863,7 +1868,7 @@ async fn api_list_folders(
     cache_dirs: web::Data<CacheDirs>,
 ) -> impl Responder {
     if let Err(e) = check_auth(&req, &api_state) {
-        return e;
+        return *e;
     }
 
     let (account, client) = match api_session(&cache_dirs.account_root, tg_state.get_ref()).await {
@@ -1890,7 +1895,7 @@ async fn api_create_folder(
     cache_dirs: web::Data<CacheDirs>,
 ) -> impl Responder {
     if let Err(e) = check_auth(&req, &api_state) {
-        return e;
+        return *e;
     }
 
     let (account, client) = match api_session(&cache_dirs.account_root, tg_state.get_ref()).await {
@@ -1923,7 +1928,7 @@ async fn api_rename_folder(
     cache_dirs: web::Data<CacheDirs>,
 ) -> impl Responder {
     if let Err(e) = check_auth(&req, &api_state) {
-        return e;
+        return *e;
     }
     let folder_id = path.into_inner();
 
@@ -1952,7 +1957,7 @@ async fn api_delete_folder(
     cache_dirs: web::Data<CacheDirs>,
 ) -> impl Responder {
     if let Err(e) = check_auth(&req, &api_state) {
-        return e;
+        return *e;
     }
     let folder_id = path.into_inner();
 
@@ -2012,7 +2017,7 @@ async fn report_listings(
     ),
     HttpResponse,
 > {
-    let account = api_account(&cache_dirs.account_root)?;
+    let account = api_account(&cache_dirs.account_root).map_err(|response| *response)?;
     if refresh == Some(true) {
         api_catalog::invalidate(account.owner);
     }
@@ -2038,7 +2043,7 @@ async fn api_storage_stats(
     cache_dirs: web::Data<CacheDirs>,
 ) -> impl Responder {
     if let Err(e) = check_auth(&req, &api_state) {
-        return e;
+        return *e;
     }
     let (account, listings) =
         match report_listings(&cache_dirs, tg_state.get_ref(), query.refresh).await {
@@ -2115,7 +2120,7 @@ async fn api_storage_duplicates(
     cache_dirs: web::Data<CacheDirs>,
 ) -> impl Responder {
     if let Err(e) = check_auth(&req, &api_state) {
-        return e;
+        return *e;
     }
     let (account, listings) =
         match report_listings(&cache_dirs, tg_state.get_ref(), query.refresh).await {
@@ -2153,7 +2158,7 @@ async fn api_empty_folders(
     cache_dirs: web::Data<CacheDirs>,
 ) -> impl Responder {
     if let Err(e) = check_auth(&req, &api_state) {
-        return e;
+        return *e;
     }
     let (account, listings) =
         match report_listings(&cache_dirs, tg_state.get_ref(), query.refresh).await {
@@ -2196,15 +2201,15 @@ async fn api_get_file_thumbnail(
     ),
 ) -> impl Responder {
     if let Err(e) = check_auth(&req, &api_state) {
-        return e;
+        return *e;
     }
     let message = match message_id(path.into_inner()) {
         Ok(id) => id,
-        Err(e) => return e,
+        Err(e) => return *e,
     };
     let account = match api_account(&cache_dirs.account_root) {
         Ok(a) => a,
-        Err(e) => return e,
+        Err(e) => return *e,
     };
     let cache = match cache_dirs.preview_dir.parent() {
         Some(p) => p.to_path_buf(),
@@ -2254,11 +2259,11 @@ async fn api_media_info(
     cache_dirs: web::Data<CacheDirs>,
 ) -> impl Responder {
     if let Err(e) = check_auth(&req, &api_state) {
-        return e;
+        return *e;
     }
     let message_id = match message_id(path.into_inner()) {
         Ok(id) => id,
-        Err(error) => return error,
+        Err(error) => return *error,
     };
 
     let (account, client) =
@@ -2377,7 +2382,9 @@ pub fn serve(
                     None
                 } else {
                     match request.app_data::<web::Data<ApiState>>() {
-                        Some(state) => check_auth(request.request(), state).err(),
+                        Some(state) => check_auth(request.request(), state)
+                            .err()
+                            .map(|response| *response),
                         None => Some(json_error("UNAUTHORIZED", "Invalid API key", 401)),
                     }
                 };

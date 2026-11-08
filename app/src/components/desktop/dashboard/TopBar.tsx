@@ -275,14 +275,14 @@ export function TopBar({
                         )}
                     </div>
                 </div>
-                <div className={`flex flex-wrap items-center gap-2 rounded-control border border-app-accent/20 bg-app-selected/60 px-3 py-2 ${hasSelection ? '' : 'invisible'}`} inert={!hasSelection} aria-hidden={!hasSelection} aria-label={t('workspace.selected_count', { count: selectedIds.length })}>
+                {hasSelection && <div className="flex flex-wrap items-center gap-2 rounded-control border border-app-accent/20 bg-app-selected/60 px-3 py-2" aria-label={t('workspace.selected_count', { count: selectedIds.length })}>
                         <span className="me-auto min-w-0 truncate text-ui font-semibold text-app-accent">{t('workspace.selected_count', { count: selectedIds.length })}</span>
                         <Button size="sm" onClick={onBulkDownload} leadingIcon={<Download className={toolbarIcon} />}>{t('files.download')}</Button>
                         <Button size="sm" onClick={onShowMoveModal} leadingIcon={<FolderInput className={toolbarIcon} />}>{t('files.move_to')}</Button>
                         <Button size="sm" onClick={onBulkShare} leadingIcon={<Share2 className={toolbarIcon} />}>{t('files.share')}</Button>
                         <Button size="sm" variant="ghost" onClick={onClearSelection}>{t('files.clear_selection')}</Button>
                         <Button size="sm" variant="danger" onClick={onBulkDelete} leadingIcon={<Trash2 className={toolbarIcon} />}>{t('files.delete')}</Button>
-                </div>
+                </div>}
             </section>
         </>
     );

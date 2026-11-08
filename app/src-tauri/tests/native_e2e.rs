@@ -10005,3 +10005,199 @@ fn retry_failed_uploads_keeps_a_hundred_item_batch_durable_across_process_restar
         .all(|job| job["status"] == "pending" && job["revision"] == 8));
     app.stop();
 }
+
+fn folder_sync_restart_waits_for_telegram_without_pausing_active_mappings_journey(scanner: &str) {
+    let fixture = Fixture::new();
+    let mut app = Backend::start(&fixture.0);
+    app.ok(json!({"command":"seed_account","owner":101}));
+    app.ok(json!({"command":"sync_seed","owner":"101","scanner":scanner}));
+    app.stop();
+
+    // A new native process restores actual persisted mappings before the
+    // controlled Telegram boundary becomes usable. No user toggles a mapping.
+    let mut app = Backend::start(&fixture.0);
+    assert_eq!(app.ok(json!({"command":"sync_start"}))["scanner"], scanner);
+    let state = app.ok(json!({"command":"sync_status","waitFor":"waiting"}));
+    for pair in state["status"]["pairs"].as_array().unwrap() {
+        if pair["pairId"] == 3 {
+            assert_eq!(pair["phase"], "paused", "{state}");
+            assert_eq!(pair["lastError"], "Paused by you", "{state}");
+        } else {
+            assert_eq!(pair["phase"], "waiting", "{state}");
+            assert_eq!(pair["waitReason"], "telegram", "{state}");
+            assert!(pair["lastError"].is_null(), "{state}");
+        }
+    }
+    assert_eq!(state["scans"], 0, "Waiting must not read remote trees");
+    assert!(app.ok(json!({"command":"sync_telegram","owner":101}))["accepted"] == true);
+    let ready = app.ok(json!({"command":"sync_status","waitFor":"ready"}));
+    assert_eq!(ready["status"]["activePairs"], 2, "{ready}");
+    assert!(
+        ready["scans"].as_u64().unwrap() >= 2,
+        "Both active mappings reconcile after readiness: {ready}"
+    );
+    assert_eq!(ready["status"]["pairs"][2]["phase"], "paused", "{ready}");
+    assert_eq!(
+        fixture.read("mapping-1/keep.txt"),
+        b"Keep the existing synced file across startup and reconnect.\n"
+    );
+
+    let disconnected = app.ok(json!({"command":"sync_telegram"}));
+    let waiting = app.ok(json!({"command":"sync_status","waitFor":"waiting"}));
+    assert_eq!(
+        waiting["scans"], ready["scans"],
+        "Disconnect must not scan remote trees"
+    );
+    let old_generation = disconnected["generation"].as_u64().unwrap() - 1;
+    assert_eq!(
+        app.ok(json!({"command":"sync_ready_reply","generation":old_generation,"owner":101}))
+            ["accepted"],
+        false
+    );
+    let stale = app.ok(json!({"command":"sync_status","waitFor":"waiting"}));
+    assert_eq!(
+        stale["scans"], ready["scans"],
+        "A stale login reply must not resume sync"
+    );
+    app.ok(json!({"command":"sync_telegram","owner":101}));
+    let reconnected = app.ok(json!({"command":"sync_status","waitFor":"ready"}));
+    assert_eq!(
+        reconnected["status"]["pairs"][2]["phase"], "paused",
+        "{reconnected}"
+    );
+    for status in reconnected["history"].as_array().unwrap() {
+        for pair in status["pairs"].as_array().unwrap() {
+            if pair["pairId"] != 3 {
+                assert_ne!(
+                    pair["phase"], "paused",
+                    "Startup and reconnect must never mislabel active mappings: {status}"
+                );
+            }
+        }
+    }
+    app.ok(json!({"command":"sync_stop"}));
+    app.stop();
+}
+
+fn folder_sync_accepts_ready_before_start_and_rejects_account_replacement_journey(scanner: &str) {
+    let fixture = Fixture::new();
+    let mut app = Backend::start(&fixture.0);
+    app.ok(json!({"command":"seed_account","owner":101}));
+    app.ok(json!({"command":"sync_seed","owner":"101","scanner":scanner}));
+    assert_eq!(
+        app.ok(json!({"command":"sync_start","readyOwner":101}))["scanner"],
+        scanner
+    );
+    let ready = app.ok(json!({"command":"sync_status","waitFor":"ready"}));
+    assert_eq!(ready["status"]["pairs"][0]["phase"], "ready", "{ready}");
+    app.ok(json!({"command":"seed_account","owner":202}));
+    app.ok(json!({"command":"sync_wake"}));
+    let switched = app.ok(json!({"command":"sync_status","waitFor":"error"}));
+    assert!(
+        switched["status"]["lastError"]
+            .as_str()
+            .unwrap()
+            .starts_with("ACCOUNT_CHANGED:"),
+        "{switched}"
+    );
+    assert_eq!(
+        switched["scans"], ready["scans"],
+        "Old mappings must not read the new account"
+    );
+    assert_eq!(
+        fixture.read("mapping-1/keep.txt"),
+        b"Keep the existing synced file across startup and reconnect.\n"
+    );
+    app.stop();
+}
+
+fn folder_sync_recovers_via_readiness_probe_and_stops_while_waiting_journey(scanner: &str) {
+    let fixture = Fixture::new();
+    let mut app = Backend::start(&fixture.0);
+    app.ok(json!({"command":"seed_account","owner":101}));
+    app.ok(json!({"command":"sync_seed","owner":"101","scanner":scanner}));
+    assert_eq!(app.ok(json!({"command":"sync_start"}))["scanner"], scanner);
+    let waiting = app.ok(json!({"command":"sync_status","waitFor":"waiting"}));
+    assert_eq!(waiting["scans"], 0, "{waiting}");
+    // The fixture becomes available without publishing a ready notification.
+    // Only the production readiness retry can recover before the 30s poll.
+    app.ok(json!({"command":"sync_telegram","owner":101,"silent":true}));
+    let ready = app.ok(json!({"command":"sync_status","waitFor":"ready"}));
+    assert!(ready["probes"].as_u64().unwrap() > 0, "{ready}");
+    app.ok(json!({"command":"sync_telegram"}));
+    app.ok(json!({"command":"sync_status","waitFor":"waiting"}));
+    // A successful incremental pass already set its five-minute idle deadline.
+    // A missed reconnect notification must still recover on the short retry.
+    app.ok(json!({"command":"sync_telegram","owner":101,"silent":true}));
+    let recovered = app.ok(json!({"command":"sync_status","waitFor":"ready"}));
+    assert!(
+        recovered["scans"].as_u64().unwrap() > ready["scans"].as_u64().unwrap(),
+        "{recovered}"
+    );
+    app.ok(json!({"command":"sync_telegram"}));
+    app.ok(json!({"command":"sync_status","waitFor":"waiting"}));
+    app.ok(json!({"command":"sync_stop"}));
+    app.stop();
+}
+
+fn folder_sync_waiting_preserves_pending_remote_cleanup_journal_journey(scanner: &str) {
+    let fixture = Fixture::new();
+    let mut app = Backend::start(&fixture.0);
+    app.ok(json!({"command":"seed_account","owner":101}));
+    app.ok(json!({"command":"sync_seed","owner":"101","scanner":scanner}));
+    app.ok(json!({"command":"sync_seed_cleanup"}));
+    let before = app.ok(json!({"command":"sync_pending_cleanup"}));
+    assert_eq!(app.ok(json!({"command":"sync_start"}))["scanner"], scanner);
+    let waiting = app.ok(json!({"command":"sync_status","waitFor":"waiting"}));
+    assert_eq!(
+        waiting["status"]["pairs"][1]["phase"], "waiting",
+        "{waiting}"
+    );
+    assert!(
+        waiting["status"]["pairs"][1]["lastError"].is_null(),
+        "{waiting}"
+    );
+    assert_eq!(app.ok(json!({"command":"sync_pending_cleanup"})), before);
+    assert_eq!(waiting["scans"], 0, "{waiting}");
+    app.stop();
+}
+
+#[test]
+fn folder_sync_full_restart_waits_for_telegram_without_pausing_active_mappings() {
+    folder_sync_restart_waits_for_telegram_without_pausing_active_mappings_journey("full");
+}
+
+#[test]
+fn folder_sync_incremental_restart_waits_for_telegram_without_pausing_active_mappings() {
+    folder_sync_restart_waits_for_telegram_without_pausing_active_mappings_journey("incremental");
+}
+
+#[test]
+fn folder_sync_full_accepts_ready_before_start_and_rejects_account_replacement() {
+    folder_sync_accepts_ready_before_start_and_rejects_account_replacement_journey("full");
+}
+
+#[test]
+fn folder_sync_incremental_accepts_ready_before_start_and_rejects_account_replacement() {
+    folder_sync_accepts_ready_before_start_and_rejects_account_replacement_journey("incremental");
+}
+
+#[test]
+fn folder_sync_full_recovers_via_readiness_probe_and_stops_while_waiting() {
+    folder_sync_recovers_via_readiness_probe_and_stops_while_waiting_journey("full");
+}
+
+#[test]
+fn folder_sync_incremental_recovers_via_readiness_probe_and_stops_while_waiting() {
+    folder_sync_recovers_via_readiness_probe_and_stops_while_waiting_journey("incremental");
+}
+
+#[test]
+fn folder_sync_full_waiting_preserves_pending_remote_cleanup_journal() {
+    folder_sync_waiting_preserves_pending_remote_cleanup_journal_journey("full");
+}
+
+#[test]
+fn folder_sync_incremental_waiting_preserves_pending_remote_cleanup_journal() {
+    folder_sync_waiting_preserves_pending_remote_cleanup_journal_journey("incremental");
+}

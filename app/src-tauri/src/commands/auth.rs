@@ -116,6 +116,10 @@ pub async fn ensure_client_initialized(
         return Ok(client.clone());
     }
 
+    // A client object is available before authentication. Keep sync waiting
+    // until a response from this exact connection verifies its account.
+    let connection_generation = state.sync_readiness.invalidate();
+
     // CRITICAL: Shutdown existing runner before creating a new one
     // This prevents runner task accumulation which causes stack overflow
     let did_shutdown_old_runner = {
@@ -226,6 +230,7 @@ pub async fn ensure_client_initialized(
 
     // Spawn the network runner with shutdown support
     let SenderPool { runner, .. } = pool;
+    let sync_readiness = state.sync_readiness.clone();
     tauri::async_runtime::spawn(async move {
         tokio::select! {
             // Normal runner operation
@@ -237,6 +242,8 @@ pub async fn ensure_client_initialized(
                 log::info!("Runner #{} shutdown requested, exiting", runner_num);
             }
         }
+        // A replaced runner may finish after its successor is already ready.
+        sync_readiness.invalidate_if_generation(connection_generation);
     });
 
     *client_guard = Some(client.clone());
@@ -262,16 +269,18 @@ pub async fn cmd_check_connection(
     state: State<'_, TelegramState>,
 ) -> Result<bool, String> {
     // 1. Check if client exists and is responsive
-    let client_msg_opt = {
+    let (client_msg_opt, checked_generation) = {
         let guard = state.client.lock().await;
-        guard.as_ref().cloned()
+        (guard.as_ref().cloned(), state.sync_readiness.generation())
     };
 
     if let Some(client) = client_msg_opt {
         // Ping (e.g., get_me)
-        if client.get_me().await.is_ok() {
+        if let Ok(user) = client.get_me().await {
+            publish_connection_ready(&app_handle, &state, checked_generation, user.bare_id());
             return Ok(true);
         }
+        state.sync_readiness.mark_waiting(checked_generation);
         log::warn!("Connection check failed (get_me). Attempting reconnect...");
     } else {
         log::warn!("Connection check: No client found. Checking for saved API ID...");
@@ -280,13 +289,23 @@ pub async fn cmd_check_connection(
     // 2. Reconnect Logic
     let api_id_opt = *state.api_id.lock().await;
     if let Some(api_id) = api_id_opt {
-        // Force re-init: Clear old client first to ensure fresh pool
-        *state.client.lock().await = None;
+        // Do not let an older failed check discard a replacement connection.
+        {
+            let mut clients = state.client.lock().await;
+            if state.sync_readiness.generation() == checked_generation {
+                state.sync_readiness.invalidate();
+                *clients = None;
+            } else if clients.is_none() {
+                return Ok(false);
+            }
+        }
 
         match ensure_client_initialized(&app_handle, &state, api_id).await {
-            Ok(c) => {
+            Ok(_) => {
+                let (client, generation) = current_connection(&state).await?;
                 // Double check
-                if c.get_me().await.is_ok() {
+                if let Ok(user) = client.get_me().await {
+                    publish_connection_ready(&app_handle, &state, generation, user.bare_id());
                     log::info!("Auto-reconnect successful.");
                     return Ok(true);
                 } else {
@@ -313,25 +332,28 @@ pub async fn cmd_reconnect_with_network_settings(
 
     log::info!("Reconnecting with updated network settings...");
 
-    // 1. Shutdown existing runner
+    // Invalidate before waiting for the old runner, so in-flight verification
+    // cannot wake sync for a connection that is being replaced.
     {
+        let mut clients = state.client.lock().await;
+        state.sync_readiness.invalidate();
         let mut shutdown_guard = state.runner_shutdown.lock().unwrap();
         if let Some(shutdown_tx) = shutdown_guard.take() {
             log::info!("Signaling runner shutdown for reconnect...");
             let _ = shutdown_tx.send(());
         }
+        *clients = None;
     }
     tokio::time::sleep(Duration::from_millis(100)).await;
 
-    // 2. Clear old client
-    *state.client.lock().await = None;
+    // 2. Reinitialize with current network config (reads from NetworkConfig state)
+    ensure_client_initialized(&app_handle, &state, api_id).await?;
+    let (client, generation) = current_connection(&state).await?;
 
-    // 3. Reinitialize with current network config (reads from NetworkConfig state)
-    let client = ensure_client_initialized(&app_handle, &state, api_id).await?;
-
-    // 4. Verify the new connection works
+    // 3. Verify the new connection works
     match client.get_me().await {
-        Ok(_me) => {
+        Ok(user) => {
+            publish_connection_ready(&app_handle, &state, generation, user.bare_id());
             log::info!("Reconnect successful — verified via get_me().");
             Ok(true)
         }
@@ -369,6 +391,7 @@ pub async fn cmd_logout(
         .ok()
         .and_then(|root| crate::workspace::current_owner(&root).ok());
     crate::workspace::suspend();
+    state.sync_readiness.invalidate();
     if let (Some(owner), Ok(root)) = (signing_out, app_handle.path().app_data_dir()) {
         if let Err(error) = crate::external_files::invalidate_account(&root, owner) {
             log::warn!("External hash reuse disabled at sign-out: {error}");
@@ -407,7 +430,11 @@ pub async fn cmd_logout(
     }
 
     // 3. Clear State
-    *state.client.lock().await = None;
+    {
+        let mut clients = state.client.lock().await;
+        state.sync_readiness.invalidate();
+        *clients = None;
+    }
     state.auth_attempt_counter.fetch_add(1, Ordering::SeqCst);
     *state.phone_login.lock().await = None;
     *state.password_token.lock().await = None;
@@ -625,17 +652,69 @@ fn map_auth_error(error: InvocationError) -> String {
 }
 
 async fn current_client(state: &TelegramState) -> Result<Client, String> {
-    state
-        .client
-        .lock()
-        .await
+    current_connection(state).await.map(|(client, _)| client)
+}
+
+/// Capture the connection and its generation together, before any network await.
+async fn current_connection(state: &TelegramState) -> Result<(Client, u64), String> {
+    let clients = state.client.lock().await;
+    let client = clients
         .as_ref()
         .cloned()
-        .ok_or_else(|| "Telegram client is not initialized.".to_string())
+        .ok_or_else(|| "Telegram client is not initialized.".to_string())?;
+    Ok((client, state.sync_readiness.generation()))
+}
+
+/// Existing account guards stay authoritative. Readiness publication is only
+/// a best-effort wakeup and must never make a successful health check fail.
+fn publish_connection_ready(
+    app: &tauri::AppHandle,
+    state: &TelegramState,
+    generation: u64,
+    owner: i64,
+) {
+    if state.sync_readiness.generation() != generation {
+        return;
+    }
+    let verified_account = || -> Result<(), String> {
+        let root = app
+            .path()
+            .app_data_dir()
+            .map_err(|error| error.to_string())?;
+        let account = crate::workspace::AccountGuard::open(&root, Some(&owner.to_string()))?;
+        account.validate()
+    };
+    match verified_account() {
+        Ok(()) => {
+            state.sync_readiness.mark_ready(generation, owner);
+        }
+        Err(error) => log::debug!("Folder sync is waiting for the verified account: {error}"),
+    }
 }
 
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
-type CapturedAuthentication = crate::workspace::AuthenticationSession;
+struct CapturedAuthentication {
+    generation: u64,
+    session: crate::workspace::AuthenticationSession,
+}
+
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+impl CapturedAuthentication {
+    fn capture(session: &Arc<SqliteSession>, generation: u64) -> Result<Self, String> {
+        Ok(Self {
+            generation,
+            session: crate::workspace::AuthenticationSession::capture(session)?,
+        })
+    }
+
+    fn complete_verified(
+        &self,
+        peer: &PeerInfo,
+        updates: Option<UpdatesState>,
+    ) -> Result<(), String> {
+        self.session.complete_verified(peer, updates)
+    }
+}
 #[cfg(any(target_os = "android", target_os = "ios"))]
 struct CapturedAuthentication;
 
@@ -655,7 +734,10 @@ async fn authentication_client(
         let session = sessions
             .as_ref()
             .ok_or("Telegram session is not initialized.")?;
-        Ok((client, CapturedAuthentication::capture(session)?))
+        Ok((
+            client,
+            CapturedAuthentication::capture(session, state.sync_readiness.generation())?,
+        ))
     }
     #[cfg(any(target_os = "android", target_os = "ios"))]
     {
@@ -724,8 +806,6 @@ async fn complete_raw_login(
     authorization: tl::types::auth::Authorization,
     captured: &CapturedAuthentication,
 ) -> Result<(), String> {
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
-    let _ = state;
     #[cfg(any(target_os = "android", target_os = "ios"))]
     let _ = captured;
     #[cfg(any(target_os = "android", target_os = "ios"))]
@@ -779,6 +859,11 @@ async fn complete_raw_login(
     #[cfg(any(target_os = "android", target_os = "ios"))]
     if let Some(updates) = updates {
         session.set_update_state(UpdateState::All(updates));
+    }
+
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    if let PeerInfo::User { id, .. } = &peer {
+        state.sync_readiness.mark_ready(captured.generation, *id);
     }
 
     Ok(())
@@ -1122,6 +1207,10 @@ pub async fn cmd_auth_check_password(
             *state.phone_login.lock().await = None;
             #[cfg(not(any(target_os = "android", target_os = "ios")))]
             captured.complete_verified(&authenticated_peer(&user), None)?;
+            #[cfg(not(any(target_os = "android", target_os = "ios")))]
+            state
+                .sync_readiness
+                .mark_ready(captured.generation, user.bare_id());
             #[cfg(any(target_os = "android", target_os = "ios"))]
             let _ = (&captured, user);
             Ok(AuthResult {
@@ -1236,6 +1325,10 @@ pub async fn cmd_auth_qr_poll(state: State<'_, TelegramState>) -> Result<AuthRes
             *state.phone_login.lock().await = None;
             #[cfg(not(any(target_os = "android", target_os = "ios")))]
             captured.complete_verified(&authenticated_peer(&user), None)?;
+            #[cfg(not(any(target_os = "android", target_os = "ios")))]
+            state
+                .sync_readiness
+                .mark_ready(captured.generation, user.bare_id());
             #[cfg(any(target_os = "android", target_os = "ios"))]
             let _ = &captured;
             Ok(AuthResult {

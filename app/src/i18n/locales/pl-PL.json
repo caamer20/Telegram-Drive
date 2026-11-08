@@ -857,6 +857,7 @@
     "scanning": "Sprawdzanie plików",
     "syncing": "Przesyłanie plików",
     "waiting": "Oczekiwanie na następne sprawdzenie",
+    "waiting_telegram": "Oczekiwanie na Telegram",
     "pause": "Wstrzymaj mapowanie",
     "resume": "Wznów mapowanie",
     "checked_at": "Ostatnio sprawdzono {{time}}",

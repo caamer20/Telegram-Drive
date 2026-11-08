@@ -844,6 +844,7 @@
     "scanning": "Dosyalar kontrol ediliyor",
     "syncing": "Dosyalar aktarılıyor",
     "waiting": "Sonraki kontrol bekleniyor",
+    "waiting_telegram": "Telegram bekleniyor",
     "pause": "Eşlemeyi duraklat",
     "resume": "Eşlemeyi sürdür",
     "checked_at": "Son kontrol: {{time}}",

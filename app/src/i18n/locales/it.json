@@ -671,6 +671,7 @@
     "scanning": "Controllo dei file",
     "syncing": "Trasferimento dei file",
     "waiting": "In attesa del prossimo controllo",
+    "waiting_telegram": "In attesa di Telegram",
     "pause": "Sospendi collegamento",
     "resume": "Riprendi collegamento",
     "checked_at": "Ultimo controllo: {{time}}",

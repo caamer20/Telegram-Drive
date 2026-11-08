@@ -668,6 +668,7 @@
     "scanning": "Checking files",
     "syncing": "Transferring files",
     "waiting": "Waiting for the next check",
+    "waiting_telegram": "Waiting for Telegram",
     "pause": "Pause mapping",
     "resume": "Resume mapping",
     "checked_at": "Last checked {{time}}",

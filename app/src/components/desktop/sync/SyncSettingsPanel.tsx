@@ -121,6 +121,7 @@ export function SyncSettingsPanel() {
     if (!enabled || !pair.isActive || current?.phase === 'paused') return t('syncPreview.paused');
     if (current?.phase === 'scanning') return t('syncPreview.scanning');
     if (current?.phase === 'syncing') return t('syncPreview.syncing');
+    if (current?.phase === 'waiting' && current.waitReason === 'telegram') return t('syncPreview.waiting_telegram');
     return current?.phase === 'ready' ? t('syncPreview.ready') : t('syncPreview.waiting');
   };
 

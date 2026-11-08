@@ -843,6 +843,7 @@
     "scanning": "正在檢查檔案",
     "syncing": "正在傳輸檔案",
     "waiting": "等待下次檢查",
+    "waiting_telegram": "正在等待 Telegram",
     "pause": "暫停映射",
     "resume": "恢復映射",
     "checked_at": "上次檢查：{{time}}",

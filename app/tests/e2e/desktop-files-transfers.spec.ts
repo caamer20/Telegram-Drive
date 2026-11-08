@@ -98,18 +98,26 @@ test('desktop transfer controls preserve queue direction, per-file cancellation,
   expect((await nativeCalls(page, 'cmd_transfer_clear_terminal')).at(-1)?.args).toEqual({ direction: 'upload', includeFailedAndCancelled: true, ownerId: '101' });
 });
 
-test('file selection keeps row positions stable and existing view, sort, search and picker actions work', async ({ page }) => {
+test('the folder header grows only for visible selection actions and existing view, sort, search and picker actions work', async ({ page }) => {
   await desktopFixture(page, { pickedUploadPaths: ['/fixtures/New file.txt'] });
   await ready(page);
   await page.getByRole('group', { name: 'Photos', exact: true }).getByText('Photos', { exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Photos', exact: true })).toBeVisible();
   const file = page.getByText('Holiday folder photo.jpg', { exact: true });
+  const header = page.getByRole('region', { name: 'Files', exact: true });
+  const compact = (await header.boundingBox())!.height;
   const before = (await file.boundingBox())!.y;
   await file.click();
   await expect(page.getByText('1 file selected', { exact: true })).toBeVisible();
-  expect((await file.boundingBox())!.y).toBeCloseTo(before, 0);
+  const expanded = (await header.boundingBox())!.height;
+  expect(expanded).toBeGreaterThan(compact);
+  expect((await file.boundingBox())!.y - before).toBeCloseTo(expanded - compact, 0);
+  for (const name of ['Download', 'Move to...', 'Share', 'Clear', 'Delete']) {
+    await expect(header.getByRole('button', { name, exact: true })).toBeVisible();
+  }
   await page.getByRole('button', { name: 'Clear', exact: true }).click();
   await expect(page.getByText('1 file selected', { exact: true })).toBeHidden();
+  expect((await header.boundingBox())!.height).toBeCloseTo(compact, 0);
   expect((await file.boundingBox())!.y).toBeCloseTo(before, 0);
   await expect(page.getByRole('button', { name: 'Actions for Holiday folder photo.jpg', exact: true })).toBeVisible();
   await page.locator('[data-file-search]').fill('Holiday');

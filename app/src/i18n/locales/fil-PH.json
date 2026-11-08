@@ -843,6 +843,7 @@
     "scanning": "Sinusuri ang mga file",
     "syncing": "Naglilipat ng mga file",
     "waiting": "Naghihintay ng susunod na pagsusuri",
+    "waiting_telegram": "Naghihintay sa Telegram",
     "pause": "I-pause ang pagmamapa",
     "resume": "Ipagpatuloy ang pagmamapa",
     "checked_at": "Huling sinuri noong {{time}}",

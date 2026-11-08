@@ -15,6 +15,8 @@ cd ..
 node scripts/run-e2e.cjs
 ```
 
+Native folder-sync lifecycle journeys also run the real Tauri engine without creating a window, with a controlled Telegram readiness and remote-tree boundary. They preserve the actual local scanner, planner, SQLite mappings and shutdown behavior. On Linux, these journeys require a display; install `xvfb` and `xauth` and run the native command under `xvfb-run -a` on a headless host. The host runner does this automatically when `DISPLAY` is absent. This is not live Telegram or installed GUI acceptance.
+
 On Linux CI, install the browser system dependencies with `npx playwright install --with-deps chromium`. The top-level runner stops on the first failing suite. It never deploys the Worker, uses a real PayPal purchase, or signs in to a personal Telegram account.
 
 Individual suites:

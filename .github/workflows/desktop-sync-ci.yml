@@ -103,8 +103,14 @@ jobs:
         run: npm run build:verify
 
       - name: Run native process and HTTP end-to-end journeys
+        if: runner.os != 'Linux'
         working-directory: app/src-tauri
         run: cargo test --locked --features native-e2e --test native_e2e
+
+      - name: Run native process and HTTP end-to-end journeys with a virtual display
+        if: runner.os == 'Linux'
+        working-directory: app/src-tauri
+        run: xvfb-run -a cargo test --locked --features native-e2e --test native_e2e
 
       - name: Verify Rust formatting
         if: runner.os == 'Linux'

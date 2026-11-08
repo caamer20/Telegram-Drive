@@ -45,7 +45,7 @@ jobs:
       - name: Install Linux desktop dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libssl-dev libdbus-1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev ffmpeg
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libssl-dev libdbus-1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev ffmpeg xvfb xauth
 
       - name: Install application dependencies
         working-directory: app
@@ -89,7 +89,7 @@ jobs:
 
       - name: Run native process and HTTP end-to-end journeys
         working-directory: app/src-tauri
-        run: cargo test --locked --features native-e2e --test native_e2e
+        run: xvfb-run -a cargo test --locked --features native-e2e --test native_e2e
 
       - name: Verify desktop package excludes test executables
         run: node scripts/e2e/desktop-package.e2e.cjs

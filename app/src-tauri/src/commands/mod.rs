@@ -26,6 +26,8 @@ pub struct PhoneLoginState {
 #[derive(Clone)]
 pub struct TelegramState {
     pub client: Arc<Mutex<Option<Client>>>,
+    /// Retained authenticated readiness for folder-sync startup and reconnects.
+    pub sync_readiness: crate::sync_engine::readiness::SyncReadiness,
     pub session: Arc<Mutex<Option<Arc<SqliteSession>>>>,
     pub phone_login: Arc<Mutex<Option<PhoneLoginState>>>,
     pub password_token: Arc<Mutex<Option<PasswordToken>>>,

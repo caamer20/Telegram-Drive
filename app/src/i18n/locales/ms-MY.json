@@ -843,6 +843,7 @@
     "scanning": "Menyemak fail",
     "syncing": "Memindahkan fail",
     "waiting": "Menunggu semakan seterusnya",
+    "waiting_telegram": "Menunggu Telegram",
     "pause": "Jeda pemetaan",
     "resume": "Sambung semula pemetaan",
     "checked_at": "Semakan terakhir {{time}}",
