@@ -138,3 +138,20 @@ release.
 - The read-only production supporter health and unchanged release public-key
   comparison passed. Packaged-platform and final GitHub artifact/provenance
   verification remain distinct gates.
+
+## CI follow-up after the immutable v4.1.5 tag
+
+The first GitHub release attempt on tagged commit
+`225c884f46d50e42b441bbb198d333a873535ce3` passed 200 browser journeys and reported
+one flaky existing system-motion journey. Its initial attempt missed the short
+General-pane animation; the test retry passed. The unchanged `failOnFlakyTests`
+gate correctly stopped release creation. The failed release job was rerun once
+on the same immutable tag with all checks retained.
+
+A separate main-branch follow-up stabilizes that E2E precondition by capturing
+and slowing the real General-pane browser animation when it is created. The
+original browser method is restored in `finally`; the active-animation,
+reduced-motion, saved-preference, and stale-pane assertions remain in place.
+Both system/manual cases passed ten repeats each (**20 passed**) and the full
+motion file passed (**7 passed**), with retries disabled. This test-only follow-up
+is not part of the v4.1.5 tagged source and does not change the shipped runtime.

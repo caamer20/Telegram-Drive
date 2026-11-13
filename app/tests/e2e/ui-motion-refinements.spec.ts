@@ -41,17 +41,38 @@ for (const source of ['system', 'manual'] as const) {
     await dialog.getByRole('button', { name: 'Themes', exact: true }).click();
     await expect(dialog.getByRole('button', { name: 'Create New Theme', exact: true })).toBeVisible();
     const active = await dialog.evaluate(async element => {
-      (Array.from(element.querySelectorAll('button')).find(button => button.textContent === 'General') as HTMLButtonElement).click();
-      // Slow an actual application animation so a busy runner cannot finish it
-      // before the preference changes. No component or app state is mocked.
-      for (let frame = 0; frame < 30; frame++) {
-        await new Promise(requestAnimationFrame);
-        const animations = Array.from(document.querySelectorAll('[data-ui-motion]')).flatMap(node => node.getAnimations()).filter(animation => animation.playState === 'running');
-        if (animations.length) { animations.forEach(animation => animation.updatePlaybackRate(0.01)); return animations.length; }
+      const originalAnimate = Element.prototype.animate;
+      const animations: Animation[] = [];
+      let started!: (animation: Animation) => void;
+      const created = new Promise<Animation>(resolve => { started = resolve; });
+      // Slow the real General-pane animation at creation. Polling after a frame
+      // can miss its entire 120 ms lifetime when a CI runner is busy.
+      Element.prototype.animate = function (this: Element, ...args: Parameters<Element['animate']>) {
+        const animation = originalAnimate.apply(this, args);
+        if (element.contains(this) && this.matches('[data-ui-motion][aria-label="General"]')) {
+          animation.playbackRate = 0.01;
+          animations.push(animation);
+          started(animation);
+        }
+        return animation;
+      };
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+      try {
+        (Array.from(element.querySelectorAll('button')).find(button => button.textContent === 'General') as HTMLButtonElement).click();
+        await Promise.race([
+          created.then(animation => animation.ready),
+          new Promise<never>((_, reject) => {
+            timeout = setTimeout(() => reject(new Error('The General pane did not start an animation')), 10_000);
+          }),
+        ]);
+        return animations.filter(animation => animation.playState === 'running').length;
+      } finally {
+        clearTimeout(timeout);
+        Element.prototype.animate = originalAnimate;
       }
-      return 0;
     });
     expect(active).toBeGreaterThan(0);
+    await expect(dialog.getByRole('switch', { name: 'Performance Mode', exact: true })).toBeVisible();
     if (source === 'system') await page.emulateMedia({ reducedMotion: 'reduce' });
     else await dialog.getByRole('switch', { name: 'Performance Mode', exact: true }).click();
     await expect(page.locator('html')).toHaveClass(/motion-reduced/);
