@@ -43,6 +43,20 @@ struct RegisteredSession {
 static LIVE_SESSIONS: LazyLock<Mutex<HashMap<PathBuf, RegisteredSession>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
+/// Synthetic logins replace the whole session file. Serialize that fixture-only
+/// swap with fallback identity readers, whose SQLite handles deny replacement
+/// on Windows. This does not suspend accounts or close retained live sessions.
+#[cfg(all(
+    feature = "native-e2e",
+    not(any(target_os = "android", target_os = "ios"))
+))]
+pub(crate) fn with_fixture_session_file_replacement<T>(replace: impl FnOnce() -> T) -> T {
+    let _sessions = LIVE_SESSIONS
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    replace()
+}
+
 /// Opening the library's storage can migrate its schema. Serialize that work
 /// against pre-registration readers too; no runner writes until registration.
 #[cfg(not(any(target_os = "android", target_os = "ios")))]

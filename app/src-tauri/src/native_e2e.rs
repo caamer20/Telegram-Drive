@@ -1740,7 +1740,9 @@ impl Driver {
                     let session = SqliteSession::open(&staged).map_err(error)?;
                     session.cache_peer(&PeerInfo::User {id:owner,auth:None,bot:Some(false),is_self:Some(true)});
                     drop(session);
-                    crate::desktop_preferences::atomic_replace(&staged,&path).map_err(error)?;
+                    crate::workspace::with_fixture_session_file_replacement(|| {
+                        crate::desktop_preferences::atomic_replace(&staged,&path)
+                    }).map_err(error)?;
                     // Fence any registered old session before reporting the new owner.
                     let session=crate::workspace::open_session(&root).map_err(error)?;
                     crate::workspace::register_session(&root,&session)?;

@@ -1,6 +1,11 @@
 mod account;
 #[cfg(feature = "native-e2e")]
 pub(crate) use account::test_account_validation_counts;
+#[cfg(all(
+    feature = "native-e2e",
+    not(any(target_os = "android", target_os = "ios"))
+))]
+pub(crate) use account::with_fixture_session_file_replacement;
 pub mod assets;
 pub(crate) mod cache_core;
 pub mod cleanup;

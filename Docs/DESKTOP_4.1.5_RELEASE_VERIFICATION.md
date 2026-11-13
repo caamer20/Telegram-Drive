@@ -155,3 +155,20 @@ reduced-motion, saved-preference, and stale-pane assertions remain in place.
 Both system/manual cases passed ten repeats each (**20 passed**) and the full
 motion file passed (**7 passed**), with retries disabled. This test-only follow-up
 is not part of the v4.1.5 tagged source and does not change the shipped runtime.
+
+The initial Windows native CI run also reported **219 passed, 1 failed**: the
+synthetic `seed_account` fixture hit a sharing violation while an inventory
+identity check briefly held a read-only SQLite session handle. The fixture was
+replacing its entire synthetic session file without the reader serialization
+used by the application lifecycle. This is not evidence of a production logout
+failure.
+
+A subsequent native-E2E-only follow-up holds the existing session-reader mutex
+around that file replacement and releases it before reopening/registering the
+session. It does not change account generations, sign-out state, retained session
+handles, retries, or assertions. The intentional Windows retained-handle refusal
+checks remain unchanged. Three focused account/isolation journeys and the full
+native suite (**228 passed, 0 failed, 0 ignored**) passed on macOS. Windows-specific
+assertions still require Windows CI; macOS results are not presented as Windows
+acceptance. This fixture correction is also outside the immutable v4.1.5 tag and
+is excluded from normal application binaries.
