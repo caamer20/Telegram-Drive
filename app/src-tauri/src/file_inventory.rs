@@ -969,6 +969,24 @@ impl<R: Row + 'static> InventoryCache<R> {
                 })
         }))
     }
+    #[cfg(feature = "native-e2e")]
+    pub fn test_last_consumer_touch(
+        &self,
+        account: &AccountGuard,
+        folder: Option<i64>,
+    ) -> Option<Instant> {
+        self.entries
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .get(&Self::key(account, folder))
+            .filter(|entry| entry.account.same_session(account))
+            .map(|entry| {
+                *entry
+                    .touched
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner())
+            })
+    }
     pub fn touch(&self, account: &AccountGuard, folder: Option<i64>) -> Result<bool, String> {
         account.validate()?;
         let entry = self

@@ -3457,7 +3457,9 @@ fn inventory_background_polling_detects_external_renames_emits_only_changes_and_
     assert_eq!(result["unchangedEvents"], 0);
     assert_eq!(result["changedEvents"], 1);
     assert_eq!(result["changedName"], "Outside rename");
+    assert_eq!(result["backgroundTouchUnchanged"], true);
     assert_eq!(result["coldName"], "After idle");
+    assert_eq!(result["coldHistoryWalks"], 1);
     assert_eq!(
         result["coldLookupBatches"], 0,
         "idle slot uses one cold history walk without redundant identifier hydration"
@@ -3603,6 +3605,10 @@ fn an_api_consumer_cannot_consume_the_desktop_inventory_change_notification() {
         "API read consumed the broadcast serial"
     );
     assert_eq!(result["changedName"], "Renamed elsewhere");
+    assert_eq!(result["backgroundTouchUnchanged"], true);
+    assert_eq!(result["coldName"], "Idle");
+    assert_eq!(result["coldHistoryWalks"], 1);
+    assert_eq!(result["coldLookupBatches"], 0);
     app.stop();
 }
 
@@ -3637,7 +3643,9 @@ fn slow_api_inventory_reconciliation_preserves_desktop_change_notifications() {
     assert_eq!(result["unchangedEvents"], 0);
     assert_eq!(result["changedEvents"], 1);
     assert_eq!(result["changedName"], "Renamed elsewhere");
+    assert_eq!(result["backgroundTouchUnchanged"], true);
     assert_eq!(result["coldName"], "Idle");
+    assert_eq!(result["coldHistoryWalks"], 1);
     assert_eq!(result["coldLookupBatches"], 0);
     app.stop();
 }

@@ -172,3 +172,22 @@ native suite (**228 passed, 0 failed, 0 ignored**) passed on macOS. Windows-spec
 assertions still require Windows CI; macOS results are not presented as Windows
 acceptance. This fixture correction is also outside the immutable v4.1.5 tag and
 is excluded from normal application binaries.
+
+Two intermediate CI runs also exposed the existing inventory-notification
+fixture's short retention window: **227 native journeys passed and one failed**
+when the active entry expired before its API-consumer read. An isolated native
+child-process reproduction confirmed that a 2.5-second process pause changed the
+same journey from one notification to none. The fixture's fast-consumer idle
+phase could also end before actual expiry. These were fixture phase assumptions,
+not evidence that an API consumer consumed another consumer's notification.
+
+A separate native-E2E-only follow-up uses real consumer touches for the active
+phase, observes the last-touch timestamp through a read-only accessor, proves the
+background poll does not renew it, and waits for that actual retention deadline
+before the cold read. Existing assertions remain; all three timer journeys now
+also require exactly one cold history walk, correct cold data, and no redundant
+lookups. Four focused journeys, three controlled pause scenarios, and the full
+native suite (**228 passed, 0 failed, 0 ignored**) passed locally, along with
+formatting, Clippy, test-policy, and whitespace checks. Production cache timing
+and notification behavior are unchanged, and this follow-up is outside the
+immutable v4.1.5 tag.

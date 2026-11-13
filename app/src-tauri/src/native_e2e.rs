@@ -2664,23 +2664,44 @@ impl Driver {
                 tokio::fs::copy(child(&self.root, text(&request, "changed")?)?, &live)
                     .await
                     .map_err(error)?;
+                // File I/O or a stalled host must not turn this active-consumer
+                // phase into a cold cache before its notification is observed.
+                if !cache.touch(&account, None)? {
+                    return Err("Active inventory disappeared before the consumer read".into());
+                }
                 if request["consumerBeforePoll"].as_bool().unwrap_or(false) {
                     cache
                         .read(&account, None, &source(live.clone()), false, false)
                         .await?;
                 }
+                if !cache.touch(&account, None)? {
+                    return Err("Active inventory disappeared before the desktop poll".into());
+                }
+                let last_consumer_touch = cache
+                    .test_last_consumer_touch(&account, None)
+                    .ok_or("Active inventory has no consumer touch")?;
                 let changed = cache
                     .poll_recent(|_, _| {
                         let source = source(live.clone());
                         async move { Ok(source) }
                     })
                     .await;
-                tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+                let background_touch_unchanged =
+                    cache.test_last_consumer_touch(&account, None) == Some(last_consumer_touch);
+                // Observe real idle expiry from the last consumer boundary,
+                // separately from the completed desktop notification poll.
+                tokio::time::sleep_until(tokio::time::Instant::from_std(
+                    last_consumer_touch + timing.retention + Duration::from_millis(20),
+                ))
+                .await;
                 tokio::fs::copy(child(&self.root, text(&request, "cold")?)?, &live)
                     .await
                     .map_err(error)?;
                 let before = self
                     .inventory_lookups
+                    .load(std::sync::atomic::Ordering::SeqCst);
+                let history_before = self
+                    .inventory_history
                     .load(std::sync::atomic::Ordering::SeqCst);
                 let cold = cache
                     .read(&account, None, &source(live), false, false)
@@ -2693,6 +2714,8 @@ impl Driver {
                         _,
                         listing)|listing.rows.first()).map(|row|row.name.clone()),
                         "coldName":cold.first().map(|row|row.name.clone()),
+                        "backgroundTouchUnchanged":background_touch_unchanged,
+                        "coldHistoryWalks":self.inventory_history.load(std::sync::atomic::Ordering::SeqCst)-history_before,
                         "coldLookupBatches":self.inventory_lookups.load(std::sync::atomic::Ordering::SeqCst)-before
                     }
                 ))
