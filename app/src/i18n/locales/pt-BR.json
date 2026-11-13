@@ -322,6 +322,12 @@
     "encryption_disclaimer_body": "O Telegram Drive não pode recuperar nem redefinir frases secretas, chaves de criptografia ou materiais de recuperação esquecidos. Se você perder todas as credenciais que desbloqueiam um arquivo, ele poderá ficar permanentemente inacessível. Guarde o material de recuperação com segurança, mantenha um backup verificado e nunca compartilhe credenciais com pessoas em quem não confia.",
     "encryption_disclaimer_acknowledgement": "Entendo que sou responsável por proteger minhas credenciais de criptografia e que perder todas as credenciais válidas pode impedir permanentemente o acesso aos meus arquivos criptografados.",
     "encryption_ack_required": "Confirme o aviso sobre perda de chaves antes de criar um cofre.",
+    "default_upload_mode": "Modo de envio padrão",
+    "default_upload_mode_desc": "Escolha se deseja perguntar antes de cada envio neste dispositivo. Envios criptografados ainda podem precisar de configuração ou desbloqueio do cofre, ou de uma frase secreta do arquivo.",
+    "upload_mode_ask": "Perguntar sempre",
+    "upload_mode_standard": "Sempre padrão",
+    "upload_mode_encrypted": "Sempre criptografado",
+    "protection_method_desc": "Os envios protegidos usam este método. Se Padrão estiver selecionado aqui, eles usarão a criptografia do cofre.",
     "default_upload_protection": "Proteção padrão de uploads",
     "default_upload_protection_desc": "Escolha como novos arquivos serão protegidos por padrão",
     "encryption_mode_standard": "Sem criptografia",
@@ -1469,6 +1475,8 @@
     "rest_open": "Entenda as permissões do REST"
   },
   "upload_choice_copy": {
+    "prepare_title": "Preparar envio criptografado",
+    "unavailable": "Os envios criptografados não estão disponíveis. Verifique a criptografia novamente ou cancele.",
     "question": "Como deseja armazenar a seleção? Arquivos: {{count}}",
     "description": "Você pode manter o arquivo original ou protegê-lo com a criptografia do Telegram Drive antes do envio.",
     "store": "Armazenar",

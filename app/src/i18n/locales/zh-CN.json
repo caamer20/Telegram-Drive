@@ -322,6 +322,12 @@
     "encryption_disclaimer_body": "Telegram Drive无法找回或重置遗忘的口令、加密密钥或恢复资料。如果丢失所有可解锁文件的凭据，该文件可能永久无法访问。请安全保存恢复资料，保留经过验证的备份，并且不要与不信任的人分享凭据。",
     "encryption_disclaimer_acknowledgement": "我明白自己有责任保护加密凭据，并且丢失所有有效凭据可能导致永久无法访问加密文件。",
     "encryption_ack_required": "创建保管库前，请确认密钥丢失警告。",
+    "default_upload_mode": "默认上传模式",
+    "default_upload_mode_desc": "选择是否在此设备上每次上传前询问。加密上传仍可能需要设置或解锁保险库，或输入文件口令。",
+    "upload_mode_ask": "每次询问",
+    "upload_mode_standard": "始终标准上传",
+    "upload_mode_encrypted": "始终加密上传",
+    "protection_method_desc": "受保护的上传使用此方式。如果此处选择标准，则使用保险库加密。",
     "default_upload_protection": "默认上传保护",
     "default_upload_protection_desc": "选择新文件的默认保护方式",
     "encryption_mode_standard": "不加密",
@@ -1462,6 +1468,8 @@
     "rest_open": "了解 REST 权限"
   },
   "upload_choice_copy": {
+    "prepare_title": "准备加密上传",
+    "unavailable": "加密上传不可用。请重试加密检查或取消。",
     "question": "如何存储所选内容？文件数：{{count}}",
     "description": "你可以保留原始文件，也可以在上传前使用 Telegram Drive 加密来保护它。",
     "store": "存储",

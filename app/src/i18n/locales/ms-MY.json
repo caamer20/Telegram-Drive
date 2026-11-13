@@ -355,6 +355,12 @@
     "encryption_disclaimer_body": "Telegram Drive tidak boleh memulihkan atau menetapkan semula frasa laluan, kunci penyulitan atau bahan pemulihan yang terlupa. Jika anda kehilangan setiap bukti kelayakan yang boleh membuka kunci fail, fail itu mungkin menjadi tidak boleh diakses secara kekal. Simpan bahan pemulihan dengan selamat, simpan sandaran yang disahkan dan jangan sekali-kali berkongsi bukti kelayakan dengan sesiapa yang anda tidak percayai.",
     "encryption_disclaimer_acknowledgement": "Saya faham bahawa saya bertanggungjawab untuk melindungi bukti kelayakan penyulitan saya, dan kehilangan setiap bukti kelayakan yang sah boleh menghalang akses kepada fail saya yang disulitkan secara kekal.",
     "encryption_ack_required": "Sila maklumkan amaran kehilangan kunci penyulitan sebelum membuat peti besi.",
+    "default_upload_mode": "Mod muat naik lalai",
+    "default_upload_mode_desc": "Pilih sama ada perlu bertanya sebelum setiap muat naik pada peranti ini. Muat naik disulitkan mungkin masih memerlukan persediaan atau membuka kunci peti besi, atau frasa laluan fail.",
+    "upload_mode_ask": "Tanya setiap kali",
+    "upload_mode_standard": "Sentiasa standard",
+    "upload_mode_encrypted": "Sentiasa disulitkan",
+    "protection_method_desc": "Muat naik dilindungi menggunakan kaedah ini. Jika Standard dipilih di sini, ia menggunakan penyulitan peti besi.",
     "default_upload_protection": "Perlindungan Muat Naik Lalai",
     "default_upload_protection_desc": "Pilih cara fail baharu dilindungi secara lalai",
     "encryption_mode_standard": "Standard",
@@ -1462,6 +1468,8 @@
     "rest_open": "Fahami kebenaran REST"
   },
   "upload_choice_copy": {
+    "prepare_title": "Sediakan muat naik disulitkan",
+    "unavailable": "Muat naik disulitkan tidak tersedia. Cuba semula pemeriksaan penyulitan atau batalkan.",
     "question": "Bagaimana pilihan anda disimpan? Fail: {{count}}",
     "description": "Anda boleh menyimpan fail asal atau melindunginya dengan penyulitan Telegram Drive sebelum muat naik.",
     "store": "Simpan",

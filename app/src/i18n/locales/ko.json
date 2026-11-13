@@ -322,6 +322,12 @@
     "encryption_disclaimer_body": "Telegram Drive는 잊어버린 암호문구, 암호화 키 또는 복구 자료를 복구하거나 재설정할 수 없습니다. 파일을 열 수 있는 모든 자격 증명을 잃으면 해당 파일에 영구적으로 접근하지 못할 수 있습니다. 복구 자료를 안전하게 보관하고 검증된 백업을 유지하며 신뢰하지 않는 사람과 자격 증명을 공유하지 마세요.",
     "encryption_disclaimer_acknowledgement": "암호화 자격 증명을 보호할 책임이 본인에게 있으며, 유효한 자격 증명을 모두 잃으면 암호화 파일에 영구적으로 접근하지 못할 수 있음을 이해합니다.",
     "encryption_ack_required": "보관함을 만들기 전에 키 분실 경고를 확인하세요.",
+    "default_upload_mode": "기본 업로드 모드",
+    "default_upload_mode_desc": "이 기기에서 업로드할 때마다 물어볼지 선택하세요. 암호화 업로드에는 여전히 보관함 설정, 잠금 해제 또는 파일 암호문이 필요할 수 있습니다.",
+    "upload_mode_ask": "매번 묻기",
+    "upload_mode_standard": "항상 일반",
+    "upload_mode_encrypted": "항상 암호화",
+    "protection_method_desc": "보호된 업로드는 이 방식을 사용합니다. 여기에서 일반을 선택하면 보관함 암호화를 사용합니다.",
     "default_upload_protection": "기본 업로드 보호",
     "default_upload_protection_desc": "새 파일을 기본적으로 보호할 방법을 선택하세요",
     "encryption_mode_standard": "암호화 안 함",
@@ -1462,6 +1468,8 @@
     "rest_open": "REST 권한 이해하기"
   },
   "upload_choice_copy": {
+    "prepare_title": "암호화 업로드 준비",
+    "unavailable": "암호화 업로드를 사용할 수 없습니다. 암호화 확인을 다시 시도하거나 취소하세요.",
     "question": "선택한 파일을 어떻게 저장할까요? 파일 수: {{count}}",
     "description": "원본 파일을 유지하거나 업로드 전에 Telegram Drive 암호화로 보호할 수 있습니다.",
     "store": "저장",

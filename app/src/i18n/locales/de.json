@@ -322,6 +322,12 @@
     "encryption_disclaimer_body": "Telegram Drive kann vergessene Passphrasen, Verschlüsselungsschlüssel oder Wiederherstellungsdaten weder wiederherstellen noch zurücksetzen. Wenn Sie alle Zugangsdaten verlieren, die eine Datei entsperren können, kann sie dauerhaft unzugänglich werden. Bewahren Sie Wiederherstellungsdaten sicher auf, halten Sie eine geprüfte Sicherung bereit und teilen Sie Zugangsdaten nur mit vertrauenswürdigen Personen.",
     "encryption_disclaimer_acknowledgement": "Ich verstehe, dass ich für den Schutz meiner Verschlüsselungsdaten verantwortlich bin und der Verlust aller gültigen Zugangsdaten den Zugriff auf meine verschlüsselten Dateien dauerhaft verhindern kann.",
     "encryption_ack_required": "Bestätigen Sie den Hinweis zum möglichen Schlüsselverlust, bevor Sie einen Tresor erstellen.",
+    "default_upload_mode": "Standardmodus für Uploads",
+    "default_upload_mode_desc": "Wähle, ob vor jedem Upload auf diesem Gerät gefragt werden soll. Verschlüsselte Uploads können weiterhin die Einrichtung oder Entsperrung des Tresors oder eine Datei-Passphrase erfordern.",
+    "upload_mode_ask": "Jedes Mal fragen",
+    "upload_mode_standard": "Immer Standard",
+    "upload_mode_encrypted": "Immer verschlüsselt",
+    "protection_method_desc": "Geschützte Uploads verwenden diese Methode. Ist hier Standard ausgewählt, werden sie mit dem Tresor verschlüsselt.",
     "default_upload_protection": "Standardmäßiger Upload-Schutz",
     "default_upload_protection_desc": "Legen Sie fest, wie neue Dateien standardmäßig geschützt werden",
     "encryption_mode_standard": "Unverschlüsselt",
@@ -1462,6 +1468,8 @@
     "rest_open": "REST-Berechtigungen verstehen"
   },
   "upload_choice_copy": {
+    "prepare_title": "Verschlüsselten Upload vorbereiten",
+    "unavailable": "Verschlüsselte Uploads sind nicht verfügbar. Prüfe die Verschlüsselung erneut oder brich ab.",
     "question": "Wie sollen wir deine Auswahl speichern? Dateien: {{count}}",
     "description": "Du kannst die Originaldatei behalten oder sie vor dem Upload mit Telegram Drive verschlüsseln.",
     "store": "Speichern",

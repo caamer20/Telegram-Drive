@@ -9,6 +9,7 @@ import { useEncryption } from '../../hooks/useEncryption';
 import { EncryptionTransparencyDialog } from './EncryptionTransparencyDialog';
 import { requireAndroidReauthentication } from '../../services/androidReauthentication';
 import { useConfirm } from '../../context/ConfirmContext';
+import type { UploadProtectionPreference } from '../../types/settings';
 
 function RecoveryDrillPanel({ encryption, onComplete }: { encryption: ReturnType<typeof useEncryption>; onComplete: () => void }) {
     const { t } = useTranslation();
@@ -406,6 +407,18 @@ export function EncryptionSettingsSection({ vaultOnly = false }: { vaultOnly?: b
                 )}
             </h3>
 
+            {!vaultOnly && (
+                <section className="settings-group" aria-label={t('settings.default_upload_mode')}>
+                    <SettingsRow icon={<Upload className="h-4 w-4" />} title={t('settings.default_upload_mode')} description={t('settings.default_upload_mode_desc')} control={
+                        <select aria-label={t('settings.default_upload_mode')} value={settings.uploadProtectionPreference} onChange={event => updateSetting('uploadProtectionPreference', event.target.value as UploadProtectionPreference)} className="settings-select">
+                            <option value="ask">{t('settings.upload_mode_ask')}</option>
+                            <option value="standard">{t('settings.upload_mode_standard')}</option>
+                            <option value="encrypted">{t('settings.upload_mode_encrypted')}</option>
+                        </select>
+                    } />
+                </section>
+            )}
+
             <div className="p-3 rounded-lg border border-amber-500/20 bg-amber-500/5 space-y-1.5" role="note">
                 <p className="text-xs font-semibold text-app-text flex items-center gap-1.5">
                     <AlertTriangle className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
@@ -481,7 +494,7 @@ export function EncryptionSettingsSection({ vaultOnly = false }: { vaultOnly?: b
 
             {cryptoReady && !vaultOnly && (
                 <section className="settings-group" aria-label={t('settings.encryption_privacy')}>
-                    <SettingsRow icon={<Upload className="h-4 w-4" />} title={t('settings.default_upload_protection')} description={t('settings.default_upload_protection_desc')} control={
+                    <SettingsRow icon={<Upload className="h-4 w-4" />} title={t('settings.default_upload_protection')} description={t('settings.protection_method_desc')} control={
                         <select aria-label={t('settings.default_upload_protection')} value={settings.encryptionDefaultMode} onChange={event => updateSetting('encryptionDefaultMode', event.target.value as 'standard' | 'vault' | 'passphrase' | 'vault_and_passphrase')} className="settings-select">
                             <option value="standard">{t('settings.encryption_mode_standard')}</option>
                             <option value="vault">{t('settings.encryption_mode_vault')}</option>

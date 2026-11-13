@@ -355,6 +355,12 @@
     "encryption_disclaimer_body": "Telegram Drive cannot recover or reset forgotten passphrases, encryption keys, or recovery material. If you lose every credential that can unlock a file, that file may become permanently inaccessible. Store recovery material securely, keep a verified backup, and never share credentials with anyone you do not trust.",
     "encryption_disclaimer_acknowledgement": "I understand that I am responsible for safeguarding my encryption credentials, and that losing every valid credential may permanently prevent access to my encrypted files.",
     "encryption_ack_required": "Please acknowledge the encryption key-loss warning before creating a vault.",
+    "default_upload_mode": "Default upload mode",
+    "default_upload_mode_desc": "Choose whether to ask before each upload on this device. Encrypted uploads may still need vault setup, unlock, or a file passphrase.",
+    "upload_mode_ask": "Ask every time",
+    "upload_mode_standard": "Always Standard",
+    "upload_mode_encrypted": "Always Encrypted",
+    "protection_method_desc": "Protected uploads use this method. If Standard is selected here, they use Vault encryption.",
     "default_upload_protection": "Default Upload Protection",
     "default_upload_protection_desc": "Choose how new files are protected by default",
     "encryption_mode_standard": "Standard",
@@ -1462,6 +1468,8 @@
     "rest_open": "Understand REST permissions"
   },
   "upload_choice_copy": {
+    "prepare_title": "Prepare encrypted upload",
+    "unavailable": "Encrypted uploads are unavailable. Retry the encryption check or cancel.",
     "question": "How should we store your selection? Files: {{count}}",
     "description": "You can keep the original file, or protect it with Telegram Drive encryption before upload.",
     "store": "Store",

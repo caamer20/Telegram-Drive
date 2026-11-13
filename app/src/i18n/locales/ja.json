@@ -322,6 +322,12 @@
     "encryption_disclaimer_body": "Telegram Driveは、忘れたパスフレーズ、暗号化キー、復旧情報を復元またはリセットできません。ファイルを解除できるすべての認証情報を失うと、そのファイルには永久にアクセスできなくなる場合があります。復旧情報を安全に保管し、検証済みのバックアップを用意し、信頼できない相手とは認証情報を共有しないでください。",
     "encryption_disclaimer_acknowledgement": "暗号化認証情報の保護は自分の責任であり、有効な認証情報をすべて失うと暗号化ファイルへ永久にアクセスできなくなる可能性があることを理解しました。",
     "encryption_ack_required": "保管庫を作成する前に、キー紛失に関する警告を確認してください。",
+    "default_upload_mode": "アップロードの既定モード",
+    "default_upload_mode_desc": "このデバイスでアップロードのたびに確認するかを選択します。暗号化アップロードでは、保管庫の設定やロック解除、ファイルのパスフレーズが引き続き必要になる場合があります。",
+    "upload_mode_ask": "毎回確認する",
+    "upload_mode_standard": "常に標準",
+    "upload_mode_encrypted": "常に暗号化",
+    "protection_method_desc": "保護されたアップロードにはこの方式を使用します。ここで標準を選択した場合は、保管庫で暗号化します。",
     "default_upload_protection": "既定のアップロード保護",
     "default_upload_protection_desc": "新しいファイルの既定の保護方法を選択します",
     "encryption_mode_standard": "暗号化なし",
@@ -1462,6 +1468,8 @@
     "rest_open": "REST の権限を確認"
   },
   "upload_choice_copy": {
+    "prepare_title": "暗号化アップロードの準備",
+    "unavailable": "暗号化アップロードは利用できません。暗号化の確認を再試行するか、キャンセルしてください。",
     "question": "選択したファイルの保存方法を選んでください。ファイル数：{{count}}",
     "description": "元のファイルをそのまま保存するか、アップロード前に Telegram Drive の暗号化で保護できます。",
     "store": "保存",

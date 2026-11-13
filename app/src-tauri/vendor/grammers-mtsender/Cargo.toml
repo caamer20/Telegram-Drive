@@ -1,0 +1,38 @@
+[package]
+name = "grammers-mtsender"
+version = "0.8.1"
+authors = ["Lonami Exo <totufals@hotmail.com>"]
+license = "MIT OR Apache-2.0"
+description = """
+A sender implementation using the Mobile Transport Protocol.
+"""
+homepage = "https://github.com/Lonami/grammers"
+documentation = "https://docs.rs/grammers-mtsender"
+repository = "https://github.com/Lonami/grammers"
+keywords = ["api", "mtproto", "telegram", "tl"]
+categories = ["api-bindings", "network-programming"]
+edition = "2024"
+autotests = false
+
+[lib]
+doctest = false
+
+[features]
+proxy = ["tokio-socks", "hickory-resolver", "url", "dep:resolv-conf"]
+
+[dependencies]
+bytes = "1.10.1"
+grammers-crypto = { git = "https://github.com/Lonami/grammers", rev = "d07f96f", version = "0.8.0" }
+grammers-mtproto = { git = "https://github.com/Lonami/grammers", rev = "d07f96f", version = "0.8.0" }
+grammers-session = { git = "https://github.com/Lonami/grammers", rev = "d07f96f", version = "0.8.0" }
+grammers-tl-types = { git = "https://github.com/Lonami/grammers", rev = "d07f96f", version = "0.8.0", features = [ "tl-mtproto" ] }
+locate-locale = "0.2.0"
+os_info = { version = "3.12.0", default-features = false }
+log = "0.4.28"
+tokio = { version = "1.47.1", default-features = false, features = ["io-util", "sync", "time", "net", "macros", "rt"] }
+tokio-socks = { version = "0.5.2", optional = true }
+hickory-resolver = { version = "0.26.3", optional = true }
+url = { version = "2.5.7", optional = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+resolv-conf = { version = "0.7", optional = true }

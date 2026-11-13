@@ -322,6 +322,12 @@
     "encryption_disclaimer_body": "Telegram Drive tidak dapat memulihkan atau mengatur ulang frasa sandi, kunci enkripsi, atau materi pemulihan yang terlupa. Jika Anda kehilangan semua kredensial yang dapat membuka file, file itu mungkin tidak dapat diakses secara permanen. Simpan materi pemulihan dengan aman, pertahankan cadangan yang telah diverifikasi, dan jangan bagikan kredensial kepada orang yang tidak Anda percayai.",
     "encryption_disclaimer_acknowledgement": "Saya memahami bahwa saya bertanggung jawab melindungi kredensial enkripsi dan kehilangan semua kredensial yang valid dapat menghalangi akses ke file terenkripsi saya secara permanen.",
     "encryption_ack_required": "Konfirmasikan peringatan kehilangan kunci sebelum membuat brankas.",
+    "default_upload_mode": "Mode unggahan bawaan",
+    "default_upload_mode_desc": "Pilih apakah akan bertanya sebelum setiap unggahan di perangkat ini. Unggahan terenkripsi mungkin tetap memerlukan penyiapan atau pembukaan brankas, atau frasa sandi file.",
+    "upload_mode_ask": "Selalu tanya",
+    "upload_mode_standard": "Selalu standar",
+    "upload_mode_encrypted": "Selalu terenkripsi",
+    "protection_method_desc": "Unggahan terlindungi menggunakan metode ini. Jika Standar dipilih di sini, unggahan tersebut menggunakan enkripsi brankas.",
     "default_upload_protection": "Perlindungan unggahan bawaan",
     "default_upload_protection_desc": "Pilih cara file baru dilindungi secara bawaan",
     "encryption_mode_standard": "Tanpa enkripsi",
@@ -1462,6 +1468,8 @@
     "rest_open": "Pahami izin REST"
   },
   "upload_choice_copy": {
+    "prepare_title": "Siapkan unggahan terenkripsi",
+    "unavailable": "Unggahan terenkripsi tidak tersedia. Ulangi pemeriksaan enkripsi atau batalkan.",
     "question": "Bagaimana pilihan Anda disimpan? File: {{count}}",
     "description": "Anda dapat menyimpan file asli atau melindunginya dengan enkripsi Telegram Drive sebelum diunggah.",
     "store": "Simpan",

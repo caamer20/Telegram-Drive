@@ -349,6 +349,12 @@
     "encryption_disclaimer_body": "Telegram Drive non può recuperare o reimpostare frasi password, chiavi di crittografia o materiale di recupero dimenticati. Se perdi tutte le credenziali che possono sbloccare un file, quel file potrebbe diventare permanentemente inaccessibile. Conserva il materiale di recupero in modo sicuro, mantieni un backup verificato e non condividere mai le credenziali con persone di cui non ti fidi.",
     "encryption_disclaimer_acknowledgement": "Comprendo di essere responsabile della protezione delle mie credenziali di crittografia e che la perdita di ogni credenziale valida può impedire definitivamente l'accesso ai miei file crittografati.",
     "encryption_ack_required": "Conferma l'avviso sulla perdita della chiave di crittografia prima di creare un vault.",
+    "default_upload_mode": "Modalità di caricamento predefinita",
+    "default_upload_mode_desc": "Scegli se chiedere prima di ogni caricamento su questo dispositivo. I caricamenti crittografati possono richiedere comunque la configurazione o lo sblocco della cassaforte, oppure una passphrase del file.",
+    "upload_mode_ask": "Chiedi ogni volta",
+    "upload_mode_standard": "Sempre standard",
+    "upload_mode_encrypted": "Sempre crittografato",
+    "protection_method_desc": "I caricamenti protetti usano questo metodo. Se qui è selezionato Standard, vengono crittografati con la cassaforte.",
     "default_upload_protection": "Protezione predefinita dei caricamenti",
     "default_upload_protection_desc": "Scegli come proteggere i nuovi file per impostazione predefinita",
     "encryption_mode_standard": "Standard",
@@ -1469,6 +1475,8 @@
     "rest_open": "Comprendi i permessi REST"
   },
   "upload_choice_copy": {
+    "prepare_title": "Prepara il caricamento crittografato",
+    "unavailable": "I caricamenti crittografati non sono disponibili. Ripeti la verifica della crittografia o annulla.",
     "question": "Come vuoi conservare la selezione? File: {{count}}",
     "description": "Puoi conservare il file originale o proteggerlo con la cifratura Telegram Drive prima del caricamento.",
     "store": "Conserva",

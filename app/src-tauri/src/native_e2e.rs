@@ -1354,6 +1354,7 @@ impl Driver {
             | "external_file_status"
             | "external_file_open"
             | "proxy_transport_fixture"
+            | "grammers_proxy_connect"
             | "inventory_refresh_overlap"
             | "inventory_detection_bound"
             | "inventory_audit_rounds"
@@ -2081,6 +2082,52 @@ impl Driver {
                 )
                 .map_err(error)?;
                 Ok(json!(true))
+            }
+            "grammers_proxy_connect" => {
+                let address: std::net::SocketAddr = text(&request, "address")?
+                    .parse()
+                    .map_err(|_| "Invalid proxy fixture target address")?;
+                if !address.ip().is_loopback() {
+                    return Err("Proxy fixture targets must be loopback addresses".into());
+                }
+                let proxy = text(&request, "proxy")?.to_string();
+                let parsed =
+                    reqwest::Url::parse(&proxy).map_err(|_| "Invalid proxy fixture URL")?;
+                let local_proxy = parsed.host_str().is_some_and(|host| {
+                    host == "localhost"
+                        || host.ends_with(".localhost")
+                        || host
+                            .trim_start_matches('[')
+                            .trim_end_matches(']')
+                            .parse::<std::net::IpAddr>()
+                            .is_ok_and(|address| address.is_loopback())
+                });
+                if !local_proxy {
+                    return Err("Proxy fixture endpoints must be loopback addresses".into());
+                }
+                // Exercise the same Grammers transport as production without
+                // contacting Telegram or starting an authorization handshake.
+                let connected = tokio::time::timeout(
+                    std::time::Duration::from_secs(5),
+                    grammers_mtsender::Sender::connect(
+                        grammers_mtproto::transport::Full::new(),
+                        grammers_mtproto::mtp::Plain::new(),
+                        grammers_mtsender::ServerAddr::Proxied { address, proxy },
+                    ),
+                )
+                .await;
+                Ok(match connected {
+                    Ok(Ok(sender)) => {
+                        drop(sender);
+                        json!({"connected":true})
+                    }
+                    Ok(Err(error)) => json!({
+                        "connected":false,
+                        "error":error.to_string(),
+                        "kind":format!("{:?}", error.kind()),
+                    }),
+                    Err(_) => json!({"connected":false,"error":"Proxy connection timed out"}),
+                })
             }
             "proxy_transport_fixture" => {
                 let url = text(&request, "url")?.to_string();

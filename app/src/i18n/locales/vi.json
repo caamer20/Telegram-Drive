@@ -349,6 +349,12 @@
     "encryption_disclaimer_body": "Telegram Drive không thể khôi phục hoặc đặt lại cụm mật khẩu, khóa mã hóa hay dữ liệu khôi phục bị quên. Nếu bạn mất mọi thông tin xác thực có thể mở khóa một tệp, tệp đó có thể vĩnh viễn không truy cập được. Hãy lưu dữ liệu khôi phục an toàn, giữ một bản sao lưu đã xác minh và không bao giờ chia sẻ thông tin xác thực với người bạn không tin tưởng.",
     "encryption_disclaimer_acknowledgement": "Tôi hiểu rằng tôi chịu trách nhiệm bảo vệ thông tin xác thực mã hóa của mình và việc mất mọi thông tin xác thực hợp lệ có thể khiến tôi vĩnh viễn không thể truy cập các tệp mã hóa.",
     "encryption_ack_required": "Vui lòng xác nhận cảnh báo mất khóa mã hóa trước khi tạo kho khóa.",
+    "default_upload_mode": "Chế độ tải lên mặc định",
+    "default_upload_mode_desc": "Chọn có hỏi trước mỗi lần tải lên trên thiết bị này hay không. Tải lên được mã hóa vẫn có thể cần thiết lập hoặc mở khóa kho, hay cụm mật khẩu của tệp.",
+    "upload_mode_ask": "Hỏi mỗi lần",
+    "upload_mode_standard": "Luôn thông thường",
+    "upload_mode_encrypted": "Luôn mã hóa",
+    "protection_method_desc": "Tải lên được bảo vệ sử dụng phương thức này. Nếu chọn Thông thường ở đây, chúng sẽ được mã hóa bằng kho.",
     "default_upload_protection": "Bảo vệ tải lên mặc định",
     "default_upload_protection_desc": "Chọn cách bảo vệ tệp mới theo mặc định",
     "encryption_mode_standard": "Tiêu chuẩn",
@@ -1462,6 +1468,8 @@
     "rest_open": "Hiểu quyền REST"
   },
   "upload_choice_copy": {
+    "prepare_title": "Chuẩn bị tải lên được mã hóa",
+    "unavailable": "Không thể tải lên được mã hóa. Hãy kiểm tra lại mã hóa hoặc hủy.",
     "question": "Bạn muốn lưu lựa chọn thế nào? Tệp: {{count}}",
     "description": "Bạn có thể giữ tệp gốc hoặc bảo vệ bằng mã hóa Telegram Drive trước khi tải lên.",
     "store": "Lưu",

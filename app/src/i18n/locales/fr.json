@@ -322,6 +322,12 @@
     "encryption_disclaimer_body": "Telegram Drive ne peut ni récupérer ni réinitialiser les phrases secrètes, clés de chiffrement ou données de récupération oubliées. Si vous perdez tous les identifiants permettant de déverrouiller un fichier, celui-ci peut devenir définitivement inaccessible. Conservez les données de récupération en lieu sûr, gardez une sauvegarde vérifiée et ne partagez vos identifiants qu’avec des personnes de confiance.",
     "encryption_disclaimer_acknowledgement": "Je comprends que je suis responsable de la protection de mes identifiants de chiffrement et que la perte de tous les identifiants valides peut empêcher définitivement l’accès à mes fichiers chiffrés.",
     "encryption_ack_required": "Confirmez l’avertissement concernant la perte des clés avant de créer un coffre.",
+    "default_upload_mode": "Mode de téléversement par défaut",
+    "default_upload_mode_desc": "Choisissez si une question doit précéder chaque téléversement sur cet appareil. Les téléversements chiffrés peuvent toujours nécessiter la configuration ou le déverrouillage du coffre, ou une phrase secrète de fichier.",
+    "upload_mode_ask": "Toujours demander",
+    "upload_mode_standard": "Toujours standard",
+    "upload_mode_encrypted": "Toujours chiffré",
+    "protection_method_desc": "Les téléversements protégés utilisent cette méthode. Si Standard est sélectionné ici, ils utilisent le chiffrement du coffre.",
     "default_upload_protection": "Protection par défaut des téléversements",
     "default_upload_protection_desc": "Choisissez la protection appliquée par défaut aux nouveaux fichiers",
     "encryption_mode_standard": "Non chiffré",
@@ -1469,6 +1475,8 @@
     "rest_open": "Comprendre les permissions REST"
   },
   "upload_choice_copy": {
+    "prepare_title": "Préparer le téléversement chiffré",
+    "unavailable": "Les téléversements chiffrés sont indisponibles. Relancez la vérification du chiffrement ou annulez.",
     "question": "Comment conserver votre sélection ? Fichiers : {{count}}",
     "description": "Vous pouvez conserver le fichier d’origine ou le protéger avec le chiffrement Telegram Drive avant l’envoi.",
     "store": "Conserver",

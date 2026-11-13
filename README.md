@@ -55,14 +55,14 @@ Telegram Drive turns Telegram's familiar file storage into a focused, desktop-st
 
 ## Download and install
 
-Desktop **4.1.4** and Android / Google TV **4.1.0** use separate version lines. The desktop release does not update or include Android or Google TV. Downloads are listed below.
+Desktop **4.1.5** and Android / Google TV **4.1.0** use separate version lines. The desktop release does not update or include Android or Google TV. Downloads are listed below.
 
 | Platform | Download | Notes |
 | --- | --- | --- |
-| **Windows x64** | [Installer](https://github.com/caamer20/Telegram-Drive/releases/download/v4.1.4/Telegram.Drive_4.1.4_x64-setup.exe) | Includes the required Microsoft Visual C++ runtime setup |
-| **macOS — Apple Silicon** | [DMG](https://github.com/caamer20/Telegram-Drive/releases/download/v4.1.4/Telegram.Drive_4.1.4_aarch64.dmg) | For M-series Macs |
-| **macOS — Intel** | [DMG](https://github.com/caamer20/Telegram-Drive/releases/download/v4.1.4/Telegram.Drive_4.1.4_x64.dmg) | For Intel-based Macs |
-| **Linux x64** | [AppImage](https://github.com/caamer20/Telegram-Drive/releases/download/v4.1.4/Telegram.Drive_4.1.4_amd64.AppImage) · [Debian](https://github.com/caamer20/Telegram-Drive/releases/download/v4.1.4/Telegram.Drive_4.1.4_amd64.deb) · [RPM](https://github.com/caamer20/Telegram-Drive/releases/download/v4.1.4/Telegram.Drive-4.1.4-1.x86_64.rpm) · [Arch](https://github.com/caamer20/Telegram-Drive/releases/download/v4.1.4/telegram-drive-bin-4.1.4-1-x86_64.pkg.tar.zst) | Choose your distribution; Arch updates remain managed by pacman |
+| **Windows x64** | [Installer](https://github.com/caamer20/Telegram-Drive/releases/download/v4.1.5/Telegram.Drive_4.1.5_x64-setup.exe) | Includes the required Microsoft Visual C++ runtime setup |
+| **macOS — Apple Silicon** | [DMG](https://github.com/caamer20/Telegram-Drive/releases/download/v4.1.5/Telegram.Drive_4.1.5_aarch64.dmg) | For M-series Macs |
+| **macOS — Intel** | [DMG](https://github.com/caamer20/Telegram-Drive/releases/download/v4.1.5/Telegram.Drive_4.1.5_x64.dmg) | For Intel-based Macs |
+| **Linux x64** | [AppImage](https://github.com/caamer20/Telegram-Drive/releases/download/v4.1.5/Telegram.Drive_4.1.5_amd64.AppImage) · [Debian](https://github.com/caamer20/Telegram-Drive/releases/download/v4.1.5/Telegram.Drive_4.1.5_amd64.deb) · [RPM](https://github.com/caamer20/Telegram-Drive/releases/download/v4.1.5/Telegram.Drive-4.1.5-1.x86_64.rpm) · [Arch](https://github.com/caamer20/Telegram-Drive/releases/download/v4.1.5/telegram-drive-bin-4.1.5-1-x86_64.pkg.tar.zst) | Choose your distribution; Arch updates remain managed by pacman |
 | **Android phones and tablets** | [Signed universal APK](https://github.com/caamer20/Telegram-Drive/releases/download/Androidv4.1.0/Telegram-Drive-v4.1.0-android-universal.apk) | Android 7.0 or newer; supports ARM64, ARMv7, x86, and x86_64 |
 | **Android TV / Google TV** | [Signed TV-compatible APK](https://github.com/caamer20/Telegram-Drive/releases/download/Androidv4.1.0/Telegram-Drive-v4.1.0-android-universal.apk) | The same universal package includes the TV launcher and remote navigation |
 

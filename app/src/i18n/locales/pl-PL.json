@@ -355,6 +355,12 @@
     "encryption_disclaimer_body": "Telegram Drive nie może odzyskać ani zresetować zapomnianych haseł, kluczy szyfrujących ani materiałów do odzyskiwania. Jeśli utracisz wszystkie dane umożliwiające odblokowanie pliku, plik ten może stać się trwale niedostępny. Bezpiecznie przechowuj materiały do ​​odzyskiwania, prowadź zweryfikowaną kopię zapasową i nigdy nie udostępniaj danych uwierzytelniających osobom, którym nie ufasz.",
     "encryption_disclaimer_acknowledgement": "Rozumiem, że jestem odpowiedzialny za ochronę moich danych uwierzytelniających oraz że utrata wszystkich ważnych danych uwierzytelniających może trwale uniemożliwić dostęp do moich zaszyfrowanych plików.",
     "encryption_ack_required": "Przed utworzeniem skarbca potwierdź ostrzeżenie o utracie klucza szyfrowania.",
+    "default_upload_mode": "Domyślny tryb przesyłania",
+    "default_upload_mode_desc": "Wybierz, czy pytać przed każdym przesłaniem na tym urządzeniu. Szyfrowane przesyłanie może nadal wymagać skonfigurowania lub odblokowania sejfu albo hasła do pliku.",
+    "upload_mode_ask": "Pytaj za każdym razem",
+    "upload_mode_standard": "Zawsze standardowy",
+    "upload_mode_encrypted": "Zawsze szyfrowany",
+    "protection_method_desc": "Chronione przesyłanie używa tej metody. Jeśli wybrano tutaj tryb standardowy, używane jest szyfrowanie sejfu.",
     "default_upload_protection": "Domyślna ochrona przesyłania",
     "default_upload_protection_desc": "Wybierz domyślny sposób ochrony nowych plików",
     "encryption_mode_standard": "Standard",
@@ -1476,6 +1482,8 @@
     "rest_open": "Poznaj uprawnienia REST"
   },
   "upload_choice_copy": {
+    "prepare_title": "Przygotuj szyfrowane przesyłanie",
+    "unavailable": "Szyfrowane przesyłanie jest niedostępne. Sprawdź szyfrowanie ponownie lub anuluj.",
     "question": "Jak zapisać wybrane pliki? Liczba plików: {{count}}",
     "description": "Możesz zachować oryginalny plik lub zabezpieczyć go szyfrowaniem Telegram Drive przed wysłaniem.",
     "store": "Zapisz",

@@ -7883,6 +7883,213 @@ fn release_small_external_open_requires_an_app_produced_file_and_survives_restar
     }
 }
 
+// A real SOCKS peer observes the native child's production Grammers connection.
+// "localhost" exercises system/hosts resolution; it does not claim DNS-wire coverage.
+fn grammers_socks_peer(
+    host: &str,
+    authenticated: bool,
+) -> (String, Receiver<Value>, std::thread::JoinHandle<()>) {
+    use std::net::TcpListener;
+    let listener = TcpListener::bind(if host == "::1" {
+        "[::1]:0"
+    } else {
+        "127.0.0.1:0"
+    })
+    .expect("Native proxy acceptance requires IPv4 and IPv6 loopback");
+    let port = listener.local_addr().unwrap().port();
+    let mut listeners = vec![listener];
+    // Accept either system-configured localhost address without assuming the
+    // machine's hosts-file order or changing its resolver configuration.
+    if host == "localhost" {
+        listeners.push(TcpListener::bind((std::net::Ipv6Addr::LOCALHOST, port)).unwrap());
+    }
+    for listener in &listeners {
+        listener.set_nonblocking(true).unwrap();
+    }
+    let (send, receive) = mpsc::channel();
+    let worker = std::thread::spawn(move || {
+        use std::io::Read;
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut connection = loop {
+            let accepted = listeners
+                .iter()
+                .find_map(|listener| match listener.accept() {
+                    Ok((stream, _)) => Some(stream),
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => None,
+                    Err(error) => panic!("SOCKS fixture accept failed: {error}"),
+                });
+            if let Some(stream) = accepted {
+                break stream;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "SOCKS fixture received no connection"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        };
+        // macOS accepted sockets inherit O_NONBLOCK from the listener.
+        connection.set_nonblocking(false).unwrap();
+        connection
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        connection
+            .set_write_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let mut greeting = [0; 2];
+        connection.read_exact(&mut greeting).unwrap();
+        assert_eq!(greeting[0], 5);
+        let mut methods = vec![0; greeting[1] as usize];
+        connection.read_exact(&mut methods).unwrap();
+        let method = if authenticated { 2 } else { 0 };
+        assert!(methods.contains(&method));
+        connection.write_all(&[5, method]).unwrap();
+        if authenticated {
+            let mut header = [0; 2];
+            connection.read_exact(&mut header).unwrap();
+            assert_eq!(header[0], 1);
+            let mut username = vec![0; header[1] as usize];
+            connection.read_exact(&mut username).unwrap();
+            let mut length = [0];
+            connection.read_exact(&mut length).unwrap();
+            let mut password = vec![0; length[0] as usize];
+            connection.read_exact(&mut password).unwrap();
+            let accepted = username == b"proxy-user" && password == b"proxy-secret";
+            connection
+                .write_all(&[1, if accepted { 0 } else { 1 }])
+                .unwrap();
+            if !accepted {
+                send.send(json!({"authenticated":false})).unwrap();
+                return;
+            }
+        }
+        let mut header = [0; 4];
+        connection.read_exact(&mut header).unwrap();
+        assert_eq!(&header[..3], &[5, 1, 0]);
+        let target_ip = match header[3] {
+            1 => {
+                let mut bytes = [0; 4];
+                connection.read_exact(&mut bytes).unwrap();
+                std::net::IpAddr::V4(std::net::Ipv4Addr::from(bytes))
+            }
+            4 => {
+                let mut bytes = [0; 16];
+                connection.read_exact(&mut bytes).unwrap();
+                std::net::IpAddr::V6(std::net::Ipv6Addr::from(bytes))
+            }
+            other => panic!("Expected a pinned literal target, got SOCKS address type {other}"),
+        };
+        let mut target_port = [0; 2];
+        connection.read_exact(&mut target_port).unwrap();
+        let target = std::net::SocketAddr::new(target_ip, u16::from_be_bytes(target_port));
+        assert!(target.ip().is_loopback());
+        let upstream =
+            std::net::TcpStream::connect_timeout(&target, Duration::from_secs(5)).unwrap();
+        connection
+            .write_all(&[5, 0, 0, 1, 127, 0, 0, 1, 0, 0])
+            .unwrap();
+        // Sender::connect returns without creating a Telegram authorization key;
+        // dropping it must close the SOCKS stream without sending API data.
+        let mut byte = [0];
+        assert_eq!(connection.read(&mut byte).unwrap(), 0);
+        drop(upstream);
+        send.send(json!({"authenticated":authenticated,"target":target.to_string()}))
+            .unwrap();
+    });
+    let host = if host == "::1" { "[::1]" } else { host };
+    let credentials = if authenticated {
+        "proxy-user:proxy-secret@"
+    } else {
+        ""
+    };
+    (
+        format!("socks5://{credentials}{host}:{port}"),
+        receive,
+        worker,
+    )
+}
+
+fn grammers_proxy_success(app: &mut Backend, host: &str, authenticated: bool, ipv6_target: bool) {
+    use std::io::Read;
+    let target = std::net::TcpListener::bind(if ipv6_target {
+        "[::1]:0"
+    } else {
+        "127.0.0.1:0"
+    })
+    .unwrap();
+    let address = target.local_addr().unwrap();
+    let (proxy, observed, worker) = grammers_socks_peer(host, authenticated);
+    let reply = app.ok(
+        json!({"command":"grammers_proxy_connect","address":address.to_string(),"proxy":proxy}),
+    );
+    assert_eq!(reply, json!({"connected":true}));
+    assert_eq!(
+        observed.recv_timeout(Duration::from_secs(10)).unwrap(),
+        json!({"authenticated":authenticated,"target":address.to_string()})
+    );
+    worker.join().unwrap();
+    let (mut socket, _) = target.accept().unwrap();
+    socket
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    assert_eq!(socket.read(&mut [0]).unwrap(), 0);
+}
+
+#[test]
+fn release_grammers_proxy_resolves_named_hosts_and_preserves_ipv4_ipv6_auth_and_restart() {
+    let fixture = Fixture::new();
+    let mut app = Backend::start(&fixture.0);
+    grammers_proxy_success(&mut app, "localhost", false, false);
+    grammers_proxy_success(&mut app, "127.0.0.1", true, false);
+    grammers_proxy_success(&mut app, "::1", false, true);
+    drop(app);
+    let mut app = Backend::start(&fixture.0);
+    grammers_proxy_success(&mut app, "localhost", true, false);
+}
+
+#[test]
+fn release_grammers_proxy_failures_are_bounded_private_and_leave_native_transport_usable() {
+    let fixture = Fixture::new();
+    let mut app = Backend::start(&fixture.0);
+    let address = "127.0.0.1:443";
+    let (proxy, observed, worker) = grammers_socks_peer("localhost", true);
+    let rejected = proxy.replace("proxy-secret", "wrong-proxy-secret");
+    let reply =
+        app.ok(json!({"command":"grammers_proxy_connect","address":address,"proxy":rejected}));
+    assert_eq!(reply["connected"], false);
+    let error = reply["error"].as_str().unwrap();
+    assert!(!error.contains("proxy-user") && !error.contains("proxy-secret"));
+    assert_ne!(error, "Proxy connection timed out");
+    assert_eq!(
+        observed.recv_timeout(Duration::from_secs(10)).unwrap(),
+        json!({"authenticated":false})
+    );
+    worker.join().unwrap();
+
+    let reserved = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let refused = reserved.local_addr().unwrap();
+    drop(reserved);
+    let proxy = format!("socks5://proxy-user:proxy-secret@{refused}");
+    let reply = app.ok(json!({"command":"grammers_proxy_connect","address":address,"proxy":proxy}));
+    assert_eq!(reply["connected"], false);
+    let error = reply["error"].as_str().unwrap();
+    assert!(!error.contains("proxy-user") && !error.contains("proxy-secret"));
+    assert_ne!(error, "Proxy connection timed out");
+
+    // URL permits this hostname, but its 64-byte label is invalid DNS syntax.
+    // Hickory rejects it locally, with no external DNS or machine config change.
+    let proxy = format!(
+        "socks5://proxy-user:proxy-secret@{}.localhost:443",
+        "x".repeat(64)
+    );
+    let reply = app.ok(json!({"command":"grammers_proxy_connect","address":address,"proxy":proxy}));
+    assert_eq!(reply["connected"], false);
+    let error = reply["error"].as_str().unwrap();
+    assert!(!error.contains("proxy-user") && !error.contains("proxy-secret"));
+    assert_ne!(error, "Proxy connection timed out");
+
+    grammers_proxy_success(&mut app, "localhost", false, false);
+}
+
 #[test]
 fn release_small_proxy_rpc_response_proves_transport_but_disconnect_does_not() {
     let fixture = Fixture::new();

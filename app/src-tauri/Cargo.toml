@@ -1,6 +1,6 @@
 [package]
 name = "app"
-version = "4.1.4"
+version = "4.1.5"
 description = "A local-first file workspace for files stored in Telegram, built with Tauri, Rust, and React."
 authors = ["Cameron Amer"]
 edition = "2021"
@@ -32,6 +32,7 @@ libc = "0.2"
 grammers-client = { git = "https://github.com/Lonami/grammers", rev = "d07f96f", features = ["proxy"] }
 grammers-session = { git = "https://github.com/Lonami/grammers", rev = "d07f96f" }
 grammers-mtsender = { git = "https://github.com/Lonami/grammers", rev = "d07f96f", features = ["proxy"] }
+grammers-mtproto = { git = "https://github.com/Lonami/grammers", rev = "d07f96f", optional = true }
 grammers-tl-types = { git = "https://github.com/Lonami/grammers", rev = "d07f96f" }
 tokio = { version = "1", features = ["full"] }
 
@@ -111,7 +112,12 @@ ed25519-dalek = "2.2"
 
 # This backend driver is opt-in and excluded from normal builds.
 [features]
-native-e2e = []
+native-e2e = ["dep:grammers-mtproto"]
+
+# Keep the established Telegram protocol/session revision while backporting the
+# patched proxy resolver. See vendor/grammers-mtsender/PROVENANCE.md.
+[patch."https://github.com/Lonami/grammers"]
+grammers-mtsender = { path = "vendor/grammers-mtsender" }
 
 [[bin]]
 name = "native-e2e-driver"

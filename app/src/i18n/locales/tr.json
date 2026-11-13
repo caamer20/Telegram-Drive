@@ -322,6 +322,12 @@
     "encryption_disclaimer_body": "Telegram Drive unutulan parola ifadelerini, şifreleme anahtarlarını veya kurtarma materyalini geri getiremez ya da sıfırlayamaz. Bir dosyanın kilidini açabilen tüm kimlik bilgilerini kaybederseniz dosya kalıcı olarak erişilemez olabilir. Kurtarma materyalini güvenle saklayın, doğrulanmış bir yedek bulundurun ve kimlik bilgilerini güvenmediğiniz kişilerle paylaşmayın.",
     "encryption_disclaimer_acknowledgement": "Şifreleme kimlik bilgilerimi korumaktan sorumlu olduğumu ve tüm geçerli bilgileri kaybetmenin şifreli dosyalarıma erişimi kalıcı olarak engelleyebileceğini anlıyorum.",
     "encryption_ack_required": "Kasa oluşturmadan önce anahtar kaybı uyarısını onaylayın.",
+    "default_upload_mode": "Varsayılan yükleme modu",
+    "default_upload_mode_desc": "Bu cihazda her yüklemeden önce sorulup sorulmayacağını seçin. Şifreli yüklemeler yine de kasa kurulumu, kilit açma veya dosya parolası gerektirebilir.",
+    "upload_mode_ask": "Her seferinde sor",
+    "upload_mode_standard": "Her zaman standart",
+    "upload_mode_encrypted": "Her zaman şifreli",
+    "protection_method_desc": "Korumalı yüklemeler bu yöntemi kullanır. Burada Standart seçilirse kasa şifrelemesi kullanılır.",
     "default_upload_protection": "Varsayılan yükleme koruması",
     "default_upload_protection_desc": "Yeni dosyaların varsayılan olarak nasıl korunacağını seçin",
     "encryption_mode_standard": "Şifrelenmemiş",
@@ -1462,6 +1468,8 @@
     "rest_open": "REST izinlerini anla"
   },
   "upload_choice_copy": {
+    "prepare_title": "Şifreli yüklemeyi hazırla",
+    "unavailable": "Şifreli yüklemeler kullanılamıyor. Şifreleme denetimini yeniden deneyin veya iptal edin.",
     "question": "Seçiminizi nasıl saklayalım? Dosyalar: {{count}}",
     "description": "Özgün dosyayı koruyabilir veya yüklemeden önce Telegram Drive şifrelemesiyle koruyabilirsiniz.",
     "store": "Sakla",

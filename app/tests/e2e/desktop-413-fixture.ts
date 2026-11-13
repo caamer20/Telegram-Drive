@@ -13,8 +13,15 @@ export async function desktopFixture(page: Page, options: {
   signedOut?: boolean;
   gatewaySeen?: boolean;
   pickedUploadPaths?: string[];
+  pickedUploadFolder?: string;
   settings?: Record<string, unknown>;
   holdSettings?: boolean;
+  settingsReadFails?: boolean;
+  encryptionCapabilities?: Record<string, unknown>;
+  encryptionCapabilityFails?: boolean;
+  holdEncryptionCapabilities?: boolean;
+  holdPassphraseStaging?: boolean;
+  vault?: { exists: boolean; is_unlocked: boolean };
   failNativeDrop?: boolean;
   nativeDrag?: boolean;
   holdRetry?: boolean;
@@ -40,11 +47,30 @@ export async function desktopFixture(page: Page, options: {
     const fileGate = new Promise<void>(resolve => { releaseFiles = resolve; });
     const supporterGate = new Promise<void>(resolve => { releaseSupporter = resolve; });
     const settingsGate = new Promise<void>(resolve => { releaseSettings = resolve; });
+    let releasePassphrases: (() => void) | undefined;
+    const passphraseGate = new Promise<void>(resolve => { releasePassphrases = resolve; });
+    let releaseEncryptionCapabilities: (() => void) | undefined;
+    const encryptionCapabilitiesGate = new Promise<void>(resolve => { releaseEncryptionCapabilities = resolve; });
     const state = {
       holdRetry: options.holdRetry ?? false, failRetryIds: options.failRetryIds ?? [], nextPromptToken: 700,
       releaseRetry: () => { state.holdRetry = false; releaseRetry?.(); },
       owner: '101', accountFailures: options.accountFailures ?? 0, holdFiles: options.holdFiles ?? false,
       holdSupporter: options.holdSupporter ?? false, holdSettings: options.holdSettings ?? false,
+      settingsReadFails: options.settingsReadFails ?? false,
+      holdPassphraseStaging: options.holdPassphraseStaging ?? false,
+      releasePassphrases: () => { state.holdPassphraseStaging = false; releasePassphrases?.(); },
+      encryptionCapabilityFails: options.encryptionCapabilityFails ?? false,
+      holdEncryptionCapabilities: options.holdEncryptionCapabilities ?? false,
+      releaseEncryptionCapabilities: () => { state.holdEncryptionCapabilities = false; releaseEncryptionCapabilities?.(); },
+      encryptionCapabilities: {
+        contract_version: 2, app_version: 'fixture', backend_build_id: 'fixture',
+        availability: 'ready', blockers: [], vault_backend: 'persistent_file', readable_formats: [2], writable_formats: [2],
+        core_available: true, mode_alpha: false, upload_enabled: true, read_enabled: true,
+        share_enabled: false, migration_enabled: false, supported_suites: [1], envelope_version: 2,
+        features: { upload: true, read: true, recovery: true, per_file_passphrase: true, share: false, migration: false },
+        ...options.encryptionCapabilities,
+      },
+      vault: { exists: false, is_unlocked: false, session_id: (options.vault?.is_unlocked ? 1 : null) as number | null, has_recovery: false, created_at: null, vault_id: 'fixture-vault', ...options.vault },
       supporterState: options.supporterState ?? 'active',
       supporterRefreshFails: options.supporterState === 'needs_refresh',
       logoutFails: false, saveFails: false, installFails: true, incompleteDownload: false,
@@ -100,12 +126,14 @@ export async function desktopFixture(page: Page, options: {
           const store = stores[args.rid];
           if (command === 'plugin:store|get') {
             if (state.holdSettings && args.key === 'settings' && args.rid === 'settings.json') await settingsGate;
+            if (state.settingsReadFails && args.key === 'settings' && args.rid === 'settings.json') throw new Error('Settings unavailable');
             return [store?.[args.key], args.key in (store ?? {})];
           }
           if (command === 'plugin:store|set') { store[args.key] = args.value; return; }
           if (command === 'plugin:store|delete') { delete store[args.key]; return true; }
           if (command === 'plugin:store|save') { if (state.saveFails) throw new Error('Storage unavailable'); persist(); return; }
-          if (command === 'plugin:dialog|open') return options.pickedUploadPaths ?? null;
+          if (command === 'plugin:dialog|open') return args.options?.directory ? options.pickedUploadFolder ?? null : options.pickedUploadPaths ?? null;
+          if (command === 'cmd_zip_folder') return '/fixtures/Archive.zip';
           if (command === 'cmd_transfer_list') return state.transfers;
           if (command === 'cmd_validate_dropped_paths') return { accepted: args.paths, rejected: [] };
           if (command === 'cmd_transfer_enqueue_many') {
@@ -117,7 +145,7 @@ export async function desktopFixture(page: Page, options: {
             jobs.forEach((job: any) => state.emit('transfer-upserted', job));
             return jobs;
           }
-          if (command === 'cmd_stage_file_passphrase') return ++state.nextPromptToken;
+          if (command === 'cmd_stage_file_passphrase') { if (state.holdPassphraseStaging) await passphraseGate; return ++state.nextPromptToken; }
           if (command === 'cmd_transfer_retry_failed_upload') {
             if (state.holdRetry) await retryGate;
             if (args.ownerId !== state.owner) throw new Error('ACCOUNT_CHANGED');
@@ -184,8 +212,18 @@ export async function desktopFixture(page: Page, options: {
           if (command === 'cmd_begin_supporter_checkout') throw new Error('Checkout forbidden in browser fixtures');
           if (command === 'cmd_activate_supporter') { state.supporterState = 'active'; return status(); }
           if (command === 'cmd_logout') { if (state.logoutFails) throw new Error('Private native diagnostic'); return true; }
-          if (command === 'cmd_get_encryption_capabilities') return { contract_version: 2, availability: 'ready', vault: true, per_file: true };
-          if (command === 'cmd_get_vault_status') return { exists: false, is_unlocked: false };
+          if (command === 'cmd_get_encryption_capabilities') {
+            if (state.holdEncryptionCapabilities) await encryptionCapabilitiesGate;
+            if (state.encryptionCapabilityFails) throw new Error('Security service unavailable');
+            return structuredClone(state.encryptionCapabilities);
+          }
+          if (command === 'cmd_get_vault_status') return structuredClone(state.vault);
+          if (command === 'cmd_create_vault') { state.vault.exists = true; state.vault.is_unlocked = true; state.vault.session_id = 1; return; }
+          if (command === 'cmd_unlock_vault') {
+            if (args.passphrase !== 'fixture-vault-passphrase') throw new Error('Wrong passphrase');
+            state.vault.is_unlocked = true; state.vault.session_id = 2; return 2;
+          }
+          if (command === 'cmd_lock_vault') { state.vault.is_unlocked = false; state.emit('vault-locked', {}); return; }
           if (command === 'cmd_get_encryption_settings' || command === 'cmd_update_encryption_settings') return args.settings ?? { default_mode: 'none' };
           if (command === 'cmd_get_file_encryption_info') return { state: 'plain', protection_mode: 'none' };
           if (command === 'cmd_get_api_settings') return { enabled: false, running: false, port: 14201 };

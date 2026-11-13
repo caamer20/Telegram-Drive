@@ -17,8 +17,6 @@ ignore = [
   { crate = "glass_pumpkin@1.10.0", reason = "Yanked transitive grammers dependency; changing the Telegram protocol stack requires a separate compatibility migration." },
   { id = "RUSTSEC-2024-0429", reason = "Transitive Linux GTK stack; the affected VariantStrIter API is not used by Telegram Drive and a compatible Tauri replacement is not available." },
   { id = "RUSTSEC-2026-0258", reason = "Actix 4 selects the older h2 line; Telegram Drive's local servers do not expose an upstream HTTP/2 service and dependency upgrades are monitored." },
-  { id = "RUSTSEC-2026-0118", reason = "Transitive grammers resolver without Telegram Drive DNSSEC validation; the vulnerable DNSSEC closest-encloser path is not enabled." },
-  { id = "RUSTSEC-2026-0119", reason = "Transitive grammers resolver; migration to Hickory 0.26 requires an upstream grammers compatibility update." },
   { id = "RUSTSEC-2026-0253", reason = "Transitive dav-server cache uses non-panicking key types and does not wrap key destruction in catch_unwind; major upgrade is tracked separately." },
   { id = "RUSTSEC-2026-0194", reason = "Transitive Tauri plist build/config parser receives repository-controlled application metadata, not uploaded or remote XML." },
   { id = "RUSTSEC-2026-0195", reason = "Transitive Tauri plist build/config parser receives repository-controlled application metadata, not uploaded or remote XML." },

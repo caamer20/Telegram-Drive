@@ -1,6 +1,7 @@
 import type { LanguagePreference } from '../i18n/languages';
 
 export type VideoUploadMode = 'file' | 'media';
+export type UploadProtectionPreference = 'ask' | 'standard' | 'encrypted';
 
 export interface BandwidthWindow {
   days: number[];
@@ -66,6 +67,7 @@ export interface Settings {
   performanceMode: boolean;
   linuxRenderingFix: boolean;
   transcodeCacheMaxGb: number;
+  uploadProtectionPreference: UploadProtectionPreference;
   encryptionDefaultMode: 'standard' | 'vault' | 'passphrase' | 'vault_and_passphrase';
   encryptionProtectMetadata: boolean;
   encryptionAutoLockMinutes: number;

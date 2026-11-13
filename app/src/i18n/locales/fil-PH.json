@@ -355,6 +355,12 @@
     "encryption_disclaimer_body": "Telegram Drive ay hindi ma-recover o ma-reset ang mga nakalimutang passphrase, encryption key, o recovery material. Kung nawala mo ang bawat kredensyal na maaaring mag-unlock ng isang file, maaaring maging permanenteng hindi naa-access ang file na iyon. Ligtas na iimbak ang materyal sa pagbawi, panatilihin ang isang na-verify na backup, at huwag kailanman magbahagi ng mga kredensyal sa sinumang hindi mo pinagkakatiwalaan.",
     "encryption_disclaimer_acknowledgement": "Naiintindihan ko na responsable ako sa pag-iingat sa aking mga kredensyal sa pag-encrypt, at ang pagkawala ng bawat wastong kredensyal ay maaaring permanenteng makapigil sa pag-access sa aking mga naka-encrypt na file.",
     "encryption_ack_required": "Mangyaring kilalanin ang encryption key-loss warning bago gumawa ng vault.",
+    "default_upload_mode": "Default na mode ng pag-upload",
+    "default_upload_mode_desc": "Piliin kung magtatanong bago ang bawat pag-upload sa device na ito. Maaaring kailangan pa rin ng mga naka-encrypt na upload ang pag-set up o pag-unlock ng vault, o passphrase ng file.",
+    "upload_mode_ask": "Magtanong sa bawat pagkakataon",
+    "upload_mode_standard": "Palaging karaniwan",
+    "upload_mode_encrypted": "Palaging naka-encrypt",
+    "protection_method_desc": "Ginagamit ng mga protektadong upload ang paraang ito. Kung Karaniwan ang napili rito, gagamit sila ng vault encryption.",
     "default_upload_protection": "Default na Proteksyon sa Pag-upload",
     "default_upload_protection_desc": "Piliin kung paano pinoprotektahan ang mga bagong file bilang default",
     "encryption_mode_standard": "Karaniwan",
@@ -1462,6 +1468,8 @@
     "rest_open": "Unawain ang mga pahintulot ng REST"
   },
   "upload_choice_copy": {
+    "prepare_title": "Ihanda ang naka-encrypt na upload",
+    "unavailable": "Hindi available ang mga naka-encrypt na upload. Ulitin ang pagsusuri ng encryption o kanselahin.",
     "question": "Paano natin iimbak ang iyong pinili? Mga file: {{count}}",
     "description": "Maaari mong panatilihin ang orihinal na file o protektahan ito gamit ang encryption ng Telegram Drive bago mag-upload.",
     "store": "Iimbak",

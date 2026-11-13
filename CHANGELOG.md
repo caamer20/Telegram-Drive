@@ -1,3 +1,23 @@
+## [4.1.5] - 2026-11-13
+
+### Default upload mode
+
+- Add Ask every time, Always Standard, and Always Encrypted under Preferences → Encryption (#247). The selected preference persists on this installation; existing installations keep Ask every time.
+- Apply the default to file selection, drag-and-drop, zipped folders, and URL uploads. Protected uploads retain their encryption checks, vault setup/unlock, recovery guidance, and masked per-file passphrase prompts.
+- Keep the selected encryption method and metadata protection consistent through preparation, cancel pending choices when accounts change, and preserve the original protection on queued uploads and retries.
+- Translate the new preference and preparation messages in all supported languages.
+
+### Dependency security
+
+- Update the proxy DNS resolver and filesystem dependencies to address newly published security advisories.
+- Backport resolver compatibility within the existing Telegram transport package, preserving the current protocol/session versions, IPv4-first proxy selection, system DNS settings, and SOCKS authentication behavior.
+
+### Compatibility and verification
+
+- Preserve existing Telegram sessions, vaults, settings, transfer behavior, and lifetime supporter activations. The optional $5.00 USD one-time lifetime ad-free license and recovery rights remain unchanged.
+- Keep desktop platform builds, packaged startup, dependency, E2E, signing, checksum, SBOM, and provenance gates. Automated Telegram boundaries use controlled fixtures; live-service and manual installed-platform acceptance are separate.
+- This release updates desktop only. Android remains on its separate release line.
+
 ## [4.1.4] - 2026-11-07
 
 ### Folder Sync recovery

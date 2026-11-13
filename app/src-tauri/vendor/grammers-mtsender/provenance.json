@@ -1,0 +1,57 @@
+{
+  "format": "telegram-drive-vendored-dependency-v1",
+  "package": "grammers-mtsender",
+  "version": "0.8.1",
+  "upstream_repository": "https://github.com/Lonami/grammers",
+  "current_upstream_repository": "https://codeberg.org/Lonami/grammers",
+  "upstream_revision": "d07f96f6bee22a3a850a1f3067834686a08b396c",
+  "hickory_security_version": "0.26.3",
+  "hickory_compatibility_source": {
+    "package": "hickory-resolver",
+    "version": "0.25.2",
+    "upstream_revision": "527c9f470a418cf6b92da902ea0aaa5749963d59",
+    "path": "crates/resolver/src/system_conf/unix.rs",
+    "sha256": "1fc22460691e0e9f32f41a5aa97b6158778bde87b6e5fbc72fdf804ea20bd24b"
+  },
+  "omitted": [
+    "grammers-mtsender/tests/deps.rs",
+    "grammers-mtsender/tests/lib.rs",
+    "grammers-mtsender/src/errors.rs:315-334 inline #[cfg(test)] module",
+    "grammers-mtsender/Cargo.toml [dev-dependencies]"
+  ],
+  "original_files_sha256": {
+    "Cargo.toml": "f6e872c977d4a6a7eeb43877687e3ff0a13e3761f5c34bac7c538fb5bcbf3c11",
+    "DEPS.md": "0ffaedaed7361edf657a76b8ccb166563b26db47c32b07e3c8743bc423b0d3f8",
+    "LICENSE-APACHE": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+    "LICENSE-HICKORY-APACHE": "6b9522191b8cb7126b2d214edd7f782d2ccd83c467e9c03b8af9e0bf903b49b4",
+    "LICENSE-HICKORY-MIT": "dc470946f0a127507a9e577a20da1eb19eae0abc383b2be1f786f6427944f06c",
+    "LICENSE-MIT": "3dfe4aab7aa5676496afeee00d802d84c2bc44dfb7f3ba2338a7a8b65dfc9d9a",
+    "README.md": "865863a2c4404c590c111ce5a3c2a2cf9d39a2b518159590306f9313cce75aea",
+    "src/configuration.rs": "b865a4b92ca15028ca54e39da3dfede218dcf127bdf6640e9cd85ffdcb0bc0c3",
+    "src/errors.rs": "387af47c83cbdaa5920b77952c9230a412169f5df882b3478f8984bb4a3bb408",
+    "src/lib.rs": "38202166e1b31039d0abd5d8e0caf0d20f166acc90bbbcabbffcda457c35352c",
+    "src/net/mod.rs": "9eb4838443950482773ad180844916f6861c776f3bfd3fe3180166934d54dda7",
+    "src/net/tcp.rs": "4014ee9f33866182483f996ed2b99332d318c2caad427d594a29611c366350f2",
+    "src/sender.rs": "66f9f0f482560c7352e860d38f4272a1ad3b8eefec4007c6b0b933771e29ad7d",
+    "src/sender_pool.rs": "69f7af2e8617746aca84d865654ea08efdbb40b04f07a1b3324cd864ac46db85"
+  },
+  "vendored_files_sha256": {
+    "Cargo.toml": "1ea19f3a86aa05a5e768babc52299c8f60492e87d89d62180f30b1cc57bd7a9f",
+    "DEPS.md": "0ffaedaed7361edf657a76b8ccb166563b26db47c32b07e3c8743bc423b0d3f8",
+    "LICENSE-APACHE": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+    "LICENSE-HICKORY-APACHE": "6b9522191b8cb7126b2d214edd7f782d2ccd83c467e9c03b8af9e0bf903b49b4",
+    "LICENSE-HICKORY-MIT": "dc470946f0a127507a9e577a20da1eb19eae0abc383b2be1f786f6427944f06c",
+    "LICENSE-MIT": "3dfe4aab7aa5676496afeee00d802d84c2bc44dfb7f3ba2338a7a8b65dfc9d9a",
+    "PROVENANCE.md": "e40cb2d286db7762493ec0abca8d52c856ee9c21d914984947996a7a2cd97498",
+    "README.md": "865863a2c4404c590c111ce5a3c2a2cf9d39a2b518159590306f9313cce75aea",
+    "compatibility.patch": "6dbe17e5913f4c87a2ef80f020fe7600456771021cca51a52e605665fc1e0bd0",
+    "src/configuration.rs": "b865a4b92ca15028ca54e39da3dfede218dcf127bdf6640e9cd85ffdcb0bc0c3",
+    "src/errors.rs": "118f9630f7cf546794bad86e3c20de9b96749ac92ebfe49e7b8bb28dfe69b454",
+    "src/lib.rs": "38202166e1b31039d0abd5d8e0caf0d20f166acc90bbbcabbffcda457c35352c",
+    "src/net/mod.rs": "5f4343a07f6a4f0c130ea10fc4b5d221bfff117d9d6ab02019e821bae794d172",
+    "src/net/resolv_conf.rs": "76963b8028a1ffa7b0395c809e530b97106672cb9d992e5dede9c0d89fbe4413",
+    "src/net/tcp.rs": "529b7bc1c84e3d43a16aa1edffe554c2709d2c85f70b99e6002cb66e0dcb4236",
+    "src/sender.rs": "66f9f0f482560c7352e860d38f4272a1ad3b8eefec4007c6b0b933771e29ad7d",
+    "src/sender_pool.rs": "69f7af2e8617746aca84d865654ea08efdbb40b04f07a1b3324cd864ac46db85"
+  }
+}

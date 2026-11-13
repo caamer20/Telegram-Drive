@@ -1,5 +1,5 @@
 import i18n from '../i18n';
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import { useActionScope } from './useActionScope';
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
@@ -11,7 +11,7 @@ import { isAndroidPlatform, showFileDialogFallback, pickWithFallback } from '../
 import { useSettings } from '../context/SettingsContext';
 import type { Store } from '@tauri-apps/plugin-store';
 import { useTranslation } from 'react-i18next';
-import { useUploadChoice, type UploadChoice } from '../context/UploadChoiceContext';
+import { useUploadChoice } from '../context/UploadChoiceContext';
 import { useConfirm } from '../context/ConfirmContext';
 import { triggerHaptic } from '../services/feedback';
 import { isTransientNetworkError, restoreUploadQueue, serializeUploadQueue } from '../services/transferQueuePolicy';
@@ -77,6 +77,15 @@ export function useFileUpload(
     const queryClient = useQueryClient();
     const { settings } = useSettings();
     const { chooseUploadProtection } = useUploadChoice();
+    const protectionScopeRef = useRef<AbortController | null>(null);
+    useLayoutEffect(() => {
+        const controller = new AbortController();
+        protectionScopeRef.current = controller;
+        return () => {
+            controller.abort();
+            if (protectionScopeRef.current === controller) protectionScopeRef.current = null;
+        };
+    }, [ownerId]);
     const { confirm, promptSecret } = useConfirm();
     const [uploadQueue, setUploadQueue] = useState<QueueItem[]>([]);
     const [initialized, setInitialized] = useState(false);
@@ -512,12 +521,13 @@ export function useFileUpload(
         count: number,
         requestedMode = settings.encryptionDefaultMode,
         throwOnFailure = false,
+        protectMetadata = settings.encryptionProtectMetadata,
     ): Promise<UploadProtectionIntent[] | null> => {
         requireCurrent();
         const mode = requestedMode;
         const base: UploadProtectionIntent = {
             mode,
-            protectMetadata: settings.encryptionProtectMetadata,
+            protectMetadata,
         };
         if (mode !== 'passphrase' && mode !== 'vault_and_passphrase') {
             return Array.from({ length: count }, () => ({ ...base }));
@@ -556,16 +566,11 @@ export function useFileUpload(
 
     const chooseAndStageProtection = async (count: number): Promise<UploadProtectionIntent[] | null> => {
         requireCurrent();
-        const choice: UploadChoice | null = await chooseUploadProtection(count);
-        requireCurrent();
-        if (!choice) return null;
-        if (choice === 'store') {
-            return stageProtectionForFiles(count, 'standard');
-        }
-        const protectedMode = settings.encryptionDefaultMode === 'standard'
-            ? 'vault'
-            : settings.encryptionDefaultMode;
-        return stageProtectionForFiles(count, protectedMode);
+        const controller = protectionScopeRef.current;
+        if (!controller) return null;
+        const selection = await chooseUploadProtection(count, { signal: controller.signal, isCurrent });
+        if (!isCurrent() || !selection) return null;
+        return stageProtectionForFiles(count, selection.mode, false, selection.protectMetadata);
     };
 
     /** Queues a set of file paths with an explicit, non-secret protection intent. */

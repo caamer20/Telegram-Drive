@@ -54,6 +54,7 @@ export const DEFAULT_SETTINGS: Settings = {
   performanceMode: false,
   linuxRenderingFix: true,
   transcodeCacheMaxGb: 5,
+  uploadProtectionPreference: 'ask',
   encryptionDefaultMode: 'standard',
   encryptionProtectMetadata: true,
   encryptionAutoLockMinutes: 15,

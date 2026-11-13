@@ -322,6 +322,12 @@
     "encryption_disclaimer_body": "Telegram Drive no puede recuperar ni restablecer frases de contraseña, claves de cifrado o material de recuperación olvidados. Si pierdes todas las credenciales que pueden desbloquear un archivo, este podría quedar inaccesible de forma permanente. Guarda el material de recuperación de forma segura, conserva una copia verificada y no compartas credenciales con personas en las que no confíes.",
     "encryption_disclaimer_acknowledgement": "Entiendo que soy responsable de proteger mis credenciales de cifrado y que perder todas las credenciales válidas puede impedir permanentemente el acceso a mis archivos cifrados.",
     "encryption_ack_required": "Confirma el aviso sobre la pérdida de claves antes de crear una bóveda.",
+    "default_upload_mode": "Modo de carga predeterminado",
+    "default_upload_mode_desc": "Elige si se debe preguntar antes de cada carga en este dispositivo. Las cargas cifradas pueden seguir requiriendo configurar o desbloquear la bóveda, o una contraseña de archivo.",
+    "upload_mode_ask": "Preguntar siempre",
+    "upload_mode_standard": "Siempre estándar",
+    "upload_mode_encrypted": "Siempre cifrado",
+    "protection_method_desc": "Las cargas protegidas usan este método. Si aquí se elige Estándar, se cifran con la bóveda.",
     "default_upload_protection": "Protección predeterminada de cargas",
     "default_upload_protection_desc": "Elige cómo se protegen de forma predeterminada los archivos nuevos",
     "encryption_mode_standard": "Sin cifrar",
@@ -1469,6 +1475,8 @@
     "rest_open": "Entender los permisos de REST"
   },
   "upload_choice_copy": {
+    "prepare_title": "Preparar carga cifrada",
+    "unavailable": "Las cargas cifradas no están disponibles. Repite la comprobación del cifrado o cancela.",
     "question": "¿Cómo quieres almacenar la selección? Archivos: {{count}}",
     "description": "Puedes conservar el archivo original o protegerlo con el cifrado de Telegram Drive antes de subirlo.",
     "store": "Almacenar",

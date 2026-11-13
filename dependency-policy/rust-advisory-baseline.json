@@ -4,8 +4,6 @@
   "advisories": {
     "RUSTSEC-2024-0429": "Transitive GTK VariantStrIter path is not used; requires an upstream Tauri-compatible GTK upgrade.",
     "RUSTSEC-2026-0258": "Actix local servers do not expose an upstream HTTP/2 service; requires an Actix-compatible h2 migration.",
-    "RUSTSEC-2026-0118": "The transitive grammers resolver is not built with Telegram Drive DNSSEC validation enabled.",
-    "RUSTSEC-2026-0119": "Requires upstream grammers support for Hickory 0.26.",
     "RUSTSEC-2026-0253": "The transitive dav-server cache uses non-panicking key types; a major dependency migration is tracked separately.",
     "RUSTSEC-2026-0194": "The affected parser handles repository-controlled Tauri plist metadata, not untrusted XML.",
     "RUSTSEC-2026-0195": "The affected parser handles repository-controlled Tauri plist metadata, not untrusted XML."
@@ -14,5 +12,5 @@
     "chacha20@0.10.0": "Transitive Actix dependency awaiting a compatible lockfile refresh.",
     "glass_pumpkin@1.10.0": "Transitive grammers dependency requiring a separate Telegram protocol compatibility migration."
   },
-  "policy": "Temporary exact transitive baseline only. New RustSec advisories fail cargo-deny. The 2026-10-01 review re-ran cargo-deny 0.18.7 against the locked graph: every entry below is still reported and none is cleared by a compatible update. Remove entries as compatible fixes land; do not extend the expiry without review."
+  "policy": "Temporary exact transitive baseline only. New RustSec advisories fail cargo-deny. The 2026-10-01 review re-ran cargo-deny 0.18.7 against the locked graph: every entry below is still reported and none is cleared by a compatible update. Remove entries as compatible fixes land; do not extend the expiry without review. The 2026-11-13 resolver security backport removed the resolved RUSTSEC-2026-0118 and RUSTSEC-2026-0119 exceptions; the expiry and remaining exceptions are unchanged."
 }

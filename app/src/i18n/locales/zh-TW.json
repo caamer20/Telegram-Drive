@@ -355,6 +355,12 @@
     "encryption_disclaimer_body": "Telegram Drive 無法復原或重設忘記的密碼、加密金鑰或復原資料。如果您遺失了所有可以解鎖文件的憑證，則該文件可能會永久無法存取。安全地儲存恢復材料，保留經過驗證的備份，並且切勿與您不信任的任何人共享憑證。",
     "encryption_disclaimer_acknowledgement": "我了解我有責任保護我的加密憑證，並且遺失所有有效憑證可能會永久阻止對我的加密檔案的存取。",
     "encryption_ack_required": "在建立保管庫之前，請確認加密金鑰遺失警告。",
+    "default_upload_mode": "預設上傳模式",
+    "default_upload_mode_desc": "選擇是否在此裝置上每次上傳前詢問。加密上傳仍可能需要設定或解鎖保險庫，或輸入檔案通關密語。",
+    "upload_mode_ask": "每次詢問",
+    "upload_mode_standard": "一律標準上傳",
+    "upload_mode_encrypted": "一律加密上傳",
+    "protection_method_desc": "受保護的上傳使用此方式。如果此處選擇標準，則使用保險庫加密。",
     "default_upload_protection": "預設上傳保護",
     "default_upload_protection_desc": "選擇預設如何保護新文件",
     "encryption_mode_standard": "標準",
@@ -1462,6 +1468,8 @@
     "rest_open": "瞭解 REST 權限"
   },
   "upload_choice_copy": {
+    "prepare_title": "準備加密上傳",
+    "unavailable": "無法使用加密上傳。請重試加密檢查或取消。",
     "question": "如何儲存所選內容？檔案數：{{count}}",
     "description": "你可以保留原始檔案，也可以在上傳前使用 Telegram Drive 加密來保護它。",
     "store": "儲存",
