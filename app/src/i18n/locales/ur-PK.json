@@ -1002,6 +1002,9 @@
     "unsupported": "محفوظ فائل دستیاب نہیں"
   },
   "activity": {
+    "sort_transfers": "منتقلیاں ترتیب دیں",
+    "oldest_first": "سب سے پرانی سے سب سے نئی",
+    "newest_first": "سب سے نئی سے سب سے پرانی",
     "attention": "توجہ درکار ہے",
     "completed": "مکمل",
     "pause": "روکیں",

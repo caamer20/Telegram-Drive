@@ -1002,6 +1002,9 @@
     "failed": "Kailangan ng pansin"
   },
   "activity": {
+    "sort_transfers": "Ayusin ang mga paglilipat",
+    "oldest_first": "Pinakaluma hanggang pinakabago",
+    "newest_first": "Pinakabago hanggang pinakaluma",
     "title": "Aktibidad ng transfer",
     "description": "Mga kamakailang resulta, naka-pause na gawain, at file na kailangang subukan muli para sa account na ito.",
     "loading": "Nilo-load ang aktibidad…",

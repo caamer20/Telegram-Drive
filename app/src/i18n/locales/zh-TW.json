@@ -1002,6 +1002,9 @@
     "failed": "需要處理"
   },
   "activity": {
+    "sort_transfers": "排序傳輸項目",
+    "oldest_first": "從最舊到最新",
+    "newest_first": "從最新到最舊",
     "title": "傳輸活動",
     "description": "此帳號最近的傳輸結果、已暫停任務和需要重試的檔案。",
     "loading": "正在加載活動…",

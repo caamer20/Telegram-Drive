@@ -1002,6 +1002,9 @@
     }
   },
   "activity": {
+    "sort_transfers": "転送を並べ替え",
+    "oldest_first": "古い順",
+    "newest_first": "新しい順",
     "uploads": "アップロード",
     "downloads": "ダウンロード",
     "attention": "確認が必要",

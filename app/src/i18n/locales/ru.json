@@ -1016,6 +1016,9 @@
     }
   },
   "activity": {
+    "sort_transfers": "Сортировать передачи",
+    "oldest_first": "От старых к новым",
+    "newest_first": "От новых к старым",
     "uploads": "Загрузки в Telegram",
     "downloads": "Скачивания",
     "attention": "Требуют внимания",

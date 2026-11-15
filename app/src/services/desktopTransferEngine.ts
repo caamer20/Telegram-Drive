@@ -92,6 +92,7 @@ const downloadStatus = (status: TransferStatus): DownloadItem['status'] => {
 
 export const transferJobToUploadItem = (job: DesktopTransferJob): QueueItem => ({
     id: job.id,
+    createdAt: job.createdAt,
     ownerId: job.ownerId ?? undefined,
     path: job.path || job.filename,
     url: job.url,
@@ -113,6 +114,7 @@ export const transferJobToUploadItem = (job: DesktopTransferJob): QueueItem => (
 
 export const transferJobToDownloadItem = (job: DesktopTransferJob): DownloadItem => ({
     id: job.id,
+    createdAt: job.createdAt,
     ownerId: job.ownerId ?? undefined,
     messageId: job.messageId || 0,
     filename: job.filename,

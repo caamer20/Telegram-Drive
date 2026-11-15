@@ -1002,6 +1002,9 @@
     "failed": "Perlu perhatian"
   },
   "activity": {
+    "sort_transfers": "Isih pemindahan",
+    "oldest_first": "Paling lama ke paling baharu",
+    "newest_first": "Paling baharu ke paling lama",
     "title": "Aktiviti pemindahan",
     "description": "Hasil terkini, kerja yang dijeda dan fail yang perlu dicuba lagi untuk akaun ini.",
     "loading": "Memuatkan aktiviti…",

@@ -7,6 +7,8 @@ export type DownloadOutcome = 'saved' | 'skipped';
 export interface QueueItem {
     ownerId?: string;
   id: string;
+  /** Original queue creation time in milliseconds; absent on legacy entries. */
+  createdAt?: number;
   path: string;
   url?: string;
   folderId: number | null;
@@ -47,6 +49,8 @@ export interface DropUploadResult {
 export interface DownloadItem {
     ownerId?: string;
   id: string;
+  /** Original queue creation time in milliseconds; absent on legacy entries. */
+  createdAt?: number;
   messageId: number;
   filename: string;
   folderId: number | null;

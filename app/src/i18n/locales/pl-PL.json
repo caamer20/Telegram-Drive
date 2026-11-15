@@ -1016,6 +1016,9 @@
     "failed": "Wymaga uwagi"
   },
   "activity": {
+    "sort_transfers": "Sortuj transfery",
+    "oldest_first": "Od najstarszych do najnowszych",
+    "newest_first": "Od najnowszych do najstarszych",
     "title": "Aktywność transferów",
     "description": "Ostatnie wyniki, wstrzymane zadania i pliki wymagające ponownej próby dla tego konta.",
     "loading": "Wczytywanie aktywności…",

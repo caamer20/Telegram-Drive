@@ -1,3 +1,22 @@
+## [4.1.6] - 2026-11-14
+
+### Transfer sorting
+
+- Add a Sort transfers control with Oldest to newest and Newest to oldest options. Oldest to newest is the default, and the selection stays active when the Transfers panel is collapsed and reopened.
+- Order uploads and downloads within their existing sections by the time each transfer was originally queued. Progress updates, retries, and completion do not change that date; ties remain stable and entries without a valid recorded date stay last.
+- Keep sorting separate from scheduling and queue priority. Pause, resume, retry, cancel, and clear continue acting on the same transfer IDs.
+- Translate the new control in all 24 supported languages and retain keyboard access, theme styling, and compact layout support.
+
+### Build dependency security
+
+- Update Vite to 7.3.7 and source-map-js to 1.2.2 for their published development-server and source-map processing security fixes, while retaining the existing dependency ranges.
+
+### Compatibility and verification
+
+- Preserve existing Telegram sessions, vaults, settings, and lifetime supporter activations. The optional $5.00 USD one-time lifetime ad-free license and recovery rights remain unchanged.
+- Retain the desktop platform builds, packaged startup, dependency, E2E, signing, checksum, SBOM, and provenance gates. Automated Telegram boundaries use controlled fixtures; live-service and manual installed-platform acceptance remain separate.
+- This release updates desktop only. Android remains on its separate release line.
+
 ## [4.1.5] - 2026-11-13
 
 ### Default upload mode

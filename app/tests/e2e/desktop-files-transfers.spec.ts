@@ -15,6 +15,63 @@ async function ready(page: Page) {
   await expect(page.getByText('Holiday folder photo.jpg', { exact: true })).toBeVisible({ timeout: 30_000 });
 }
 
+test('desktop transfer sorting changes display order while preserving live transfers and file actions', async ({ page }) => {
+  await desktopFixture(page, { transfers: [
+    transfer('upload-new', 'upload', 'uploading', { createdAt: 3000, updatedAt: 3000, progress: 25 }),
+    transfer('upload-tie-b', 'upload', 'paused', { createdAt: 2000 }),
+    transfer('upload-old', 'upload', 'failed', { createdAt: 1000, updatedAt: 9000 }),
+    transfer('upload-tie-a', 'upload', 'completed', { createdAt: 2000 }),
+    transfer('upload-legacy', 'upload', 'paused', { createdAt: undefined }),
+    transfer('upload-invalid', 'upload', 'paused', { createdAt: -1 }),
+    transfer('download-new', 'download', 'downloading', { createdAt: 4000 }),
+    transfer('download-old', 'download', 'paused', { createdAt: 500 }),
+  ] });
+  await ready(page);
+  const center = page.getByTestId('transfer-center');
+  const sort = center.getByRole('combobox', { name: 'Sort transfers', exact: true });
+  const uploads = center.getByRole('region', { name: 'Uploads', exact: true });
+  const downloads = center.getByRole('region', { name: 'Downloads', exact: true });
+  const uploadIds = () => uploads.locator('[data-testid^="transfer-row-"]').evaluateAll(rows => rows.map(row => row.getAttribute('data-testid')?.replace('transfer-row-', '')));
+  const downloadIds = () => downloads.locator('[data-testid^="transfer-row-"]').evaluateAll(rows => rows.map(row => row.getAttribute('data-testid')?.replace('transfer-row-', '')));
+  await expect(sort.locator('option:checked')).toHaveText('Oldest to newest');
+  await expect.poll(uploadIds).toEqual(['upload-old', 'upload-tie-a', 'upload-tie-b', 'upload-new', 'upload-invalid', 'upload-legacy']);
+  await expect.poll(downloadIds).toEqual(['download-old', 'download-new']);
+  const queueBefore = await page.evaluate(() => (window as any).__desktopTest.transfers);
+  const transferCallsBefore = await page.evaluate(() => (window as any).__desktopTest.calls.filter((call: any) => call.command.startsWith('cmd_transfer_')));
+  await center.getByRole('button', { name: 'Close Transfers', exact: true }).focus();
+  await page.keyboard.press('Tab');
+  await expect(sort).toBeFocused();
+  // Native select type-ahead exercises keyboard selection without opening an OS popup.
+  await page.keyboard.press('n');
+  await expect(sort.locator('option:checked')).toHaveText('Newest to oldest');
+  await expect.poll(uploadIds).toEqual(['upload-new', 'upload-tie-a', 'upload-tie-b', 'upload-old', 'upload-invalid', 'upload-legacy']);
+  await expect.poll(downloadIds).toEqual(['download-new', 'download-old']);
+  expect(await page.evaluate(() => (window as any).__desktopTest.transfers)).toEqual(queueBefore);
+  expect(await page.evaluate(() => (window as any).__desktopTest.calls.filter((call: any) => call.command.startsWith('cmd_transfer_')))).toEqual(transferCallsBefore);
+
+  await page.evaluate(() => (window as any).__desktopTest.upsertTransfer('upload-new', { progress: 70 }));
+  await expect(page.getByTestId('transfer-row-upload-new').getByRole('progressbar')).toHaveAttribute('aria-valuenow', '70');
+  await page.getByTestId('transfer-row-upload-old').getByRole('button', { name: /Retry this file/ }).click();
+  await expect(page.getByTestId('transfer-row-upload-old')).toContainText('Queued');
+  expect((await nativeCalls(page, 'cmd_transfer_retry')).at(-1)?.args).toEqual({ id: 'upload-old', ownerId: '101' });
+  await expect.poll(uploadIds).toEqual(['upload-new', 'upload-tie-a', 'upload-tie-b', 'upload-old', 'upload-invalid', 'upload-legacy']);
+  await page.getByTestId('transfer-row-download-new').getByRole('button', { name: /^Cancel/ }).click();
+  await expect(page.getByTestId('transfer-row-download-new')).toContainText('Cancelled');
+  expect((await nativeCalls(page, 'cmd_transfer_cancel')).at(-1)?.args).toEqual({ id: 'download-new', ownerId: '101' });
+  await page.evaluate(() => {
+    const state = (window as any).__desktopTest;
+    const job = { ...state.transfers.find((item: any) => item.id === 'upload-new'), id: 'upload-incoming', path: '/fixtures/upload-incoming.zip', filename: 'upload-incoming.zip', createdAt: 5000, updatedAt: 5000, revision: 1, status: 'paused' };
+    state.transfers.push(job);
+    state.emit('transfer-upserted', job);
+  });
+  await expect.poll(uploadIds).toEqual(['upload-incoming', 'upload-new', 'upload-tie-a', 'upload-tie-b', 'upload-old', 'upload-invalid', 'upload-legacy']);
+  await center.getByRole('button', { name: 'Close Transfers', exact: true }).click();
+  await center.getByRole('button', { name: 'Open Transfers', exact: true }).click();
+  await expect(sort.locator('option:checked')).toHaveText('Newest to oldest');
+  await sort.selectOption({ label: 'Oldest to newest' });
+  await expect.poll(uploadIds).toEqual(['upload-old', 'upload-tie-a', 'upload-tie-b', 'upload-new', 'upload-incoming', 'upload-invalid', 'upload-legacy']);
+});
+
 test('desktop verification with unknown progress shows its stage without a fabricated percentage', async ({ page }) => {
   await desktopFixture(page, { transfers: [transfer('verify-unknown', 'download', 'verifying', { progress: undefined })] });
   await ready(page);

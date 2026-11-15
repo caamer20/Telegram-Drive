@@ -1002,6 +1002,9 @@
     "failed": "Cần chú ý"
   },
   "activity": {
+    "sort_transfers": "Sắp xếp lượt truyền",
+    "oldest_first": "Cũ nhất đến mới nhất",
+    "newest_first": "Mới nhất đến cũ nhất",
     "title": "Hoạt động truyền",
     "description": "Kết quả gần đây, công việc tạm dừng và tệp cần thử lại của tài khoản này.",
     "loading": "Đang tải hoạt động…",

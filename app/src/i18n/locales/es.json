@@ -1009,6 +1009,9 @@
     }
   },
   "activity": {
+    "sort_transfers": "Ordenar transferencias",
+    "oldest_first": "De más antiguas a más recientes",
+    "newest_first": "De más recientes a más antiguas",
     "uploads": "Subidas",
     "downloads": "Descargas",
     "attention": "Requieren atención",

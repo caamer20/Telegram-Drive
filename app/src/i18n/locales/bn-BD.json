@@ -1002,6 +1002,9 @@
     "unsupported": "সুরক্ষিত ফাইল অনুপলব্ধ"
   },
   "activity": {
+    "sort_transfers": "স্থানান্তর সাজান",
+    "oldest_first": "পুরোনো থেকে নতুন",
+    "newest_first": "নতুন থেকে পুরোনো",
     "attention": "মনোযোগ দরকার",
     "completed": "সম্পূর্ণ",
     "pause": "বিরতি দিন",

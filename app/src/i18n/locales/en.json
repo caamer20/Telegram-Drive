@@ -567,6 +567,9 @@
     "use_qr_instead": "Use QR Code Instead"
   },
   "activity": {
+    "sort_transfers": "Sort transfers",
+    "oldest_first": "Oldest to newest",
+    "newest_first": "Newest to oldest",
     "title": "Transfer activity",
     "description": "Recent outcomes, paused work and files that need another attempt for this account.",
     "loading": "Loading activity…",

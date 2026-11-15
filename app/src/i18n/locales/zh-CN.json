@@ -1002,6 +1002,9 @@
     "failed": "需要处理"
   },
   "activity": {
+    "sort_transfers": "排序传输项目",
+    "oldest_first": "从最旧到最新",
+    "newest_first": "从最新到最旧",
     "title": "传输活动",
     "description": "此账号最近的传输结果、已暂停任务和需要重试的文件。",
     "loading": "正在加载活动…",

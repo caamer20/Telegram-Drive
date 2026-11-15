@@ -1002,6 +1002,9 @@
     "failed": "Perlu perhatian"
   },
   "activity": {
+    "sort_transfers": "Urutkan transfer",
+    "oldest_first": "Terlama ke terbaru",
+    "newest_first": "Terbaru ke terlama",
     "title": "Aktivitas transfer",
     "description": "Hasil terbaru, pekerjaan yang dijeda, dan file yang perlu dicoba lagi untuk akun ini.",
     "loading": "Memuat aktivitas…",

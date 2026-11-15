@@ -1002,6 +1002,9 @@
     }
   },
   "activity": {
+    "sort_transfers": "전송 정렬",
+    "oldest_first": "오래된 순",
+    "newest_first": "최신순",
     "uploads": "업로드",
     "downloads": "다운로드",
     "attention": "주의 필요",

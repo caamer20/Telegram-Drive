@@ -1002,6 +1002,9 @@
     }
   },
   "activity": {
+    "sort_transfers": "Übertragungen sortieren",
+    "oldest_first": "Älteste zuerst",
+    "newest_first": "Neueste zuerst",
     "uploads": "Hochgeladene Dateien",
     "downloads": "Heruntergeladene Dateien",
     "attention": "Aufmerksamkeit erforderlich",

@@ -1002,6 +1002,9 @@
     "unsupported": "Korumalı dosya kullanılamıyor"
   },
   "activity": {
+    "sort_transfers": "Aktarımları sırala",
+    "oldest_first": "Eskiden yeniye",
+    "newest_first": "Yeniden eskiye",
     "attention": "İlgilenmeniz gerekiyor",
     "completed": "Tamamlandı",
     "pause": "Duraklat",

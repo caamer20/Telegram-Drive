@@ -399,7 +399,7 @@ checksum = "2a4385e2e34eb35d6b3efe798b9eb88096925d87726c0798709bf56d9ed84af3"
 
 [[package]]
 name = "app"
-version = "4.1.5"
+version = "4.1.6"
 dependencies = [
  "actix-cors",
  "actix-files",

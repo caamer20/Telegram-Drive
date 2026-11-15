@@ -1002,6 +1002,9 @@
     "unsupported": "सुरक्षित फ़ाइल उपलब्ध नहीं"
   },
   "activity": {
+    "sort_transfers": "ट्रांसफ़र क्रमबद्ध करें",
+    "oldest_first": "सबसे पुराने से सबसे नए",
+    "newest_first": "सबसे नए से सबसे पुराने",
     "attention": "ध्यान चाहिए",
     "completed": "पूरा हुआ",
     "pause": "रोकें",

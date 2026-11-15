@@ -1,5 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { RetryFailedUploadsButton } from '../../shared/RetryFailedUploadsButton';
+import { TransferSortControl } from '../../shared/TransferSortControl';
+import { sortTransfers, type TransferSortOrder } from '../../../services/transferSort';
 import { CheckCircle2, ChevronDown, ChevronUp, Download, Pause, Play, UploadCloud, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { DownloadItem, QueueItem, TelegramFolder } from '../../../types';
@@ -251,6 +253,9 @@ export function TransferCenter({
 }: TransferCenterProps) {
   const { t } = useTranslation();
   const [expanded, setExpanded] = useState(true);
+  const [sortOrder, setSortOrder] = useState<TransferSortOrder>('oldest');
+  const sortedUploads = useMemo(() => sortTransfers(uploads, sortOrder), [uploads, sortOrder]);
+  const sortedDownloads = useMemo(() => sortTransfers(downloads, sortOrder), [downloads, sortOrder]);
   useEffect(() => {
     if (openRequest > 0) setExpanded(true);
   }, [openRequest]);
@@ -305,9 +310,15 @@ export function TransferCenter({
       </header>
 
       {expanded && (
+        <div className="flex shrink-0 justify-end border-b border-app-border-subtle px-4 py-2">
+          <TransferSortControl value={sortOrder} onChange={setSortOrder} />
+        </div>
+      )}
+
+      {expanded && (
         <div id="desktop-transfer-details" data-ui-motion className="ui-enter min-h-0 flex-1 overflow-y-auto">
-          {uploads.length > 0 && <TransferQueueSection direction="upload" items={uploads} paused={pausedUploads} folders={folders} onPause={onPauseUploads} onResume={onResumeUploads} onCancelAll={onCancelUploads} onClear={onClearUploads} onCancel={onCancelUpload} onRetry={onRetryUpload} onRetryFailed={onRetryFailedUploads} retryBusy={retryingFailedUploads} />}
-          {downloads.length > 0 && <TransferQueueSection direction="download" items={downloads} paused={pausedDownloads} folders={folders} onPause={onPauseDownloads} onResume={onResumeDownloads} onCancelAll={onCancelDownloads} onClear={onClearDownloads} onCancel={onCancelDownload} onRetry={onRetryDownload} />}
+          {uploads.length > 0 && <TransferQueueSection direction="upload" items={sortedUploads} paused={pausedUploads} folders={folders} onPause={onPauseUploads} onResume={onResumeUploads} onCancelAll={onCancelUploads} onClear={onClearUploads} onCancel={onCancelUpload} onRetry={onRetryUpload} onRetryFailed={onRetryFailedUploads} retryBusy={retryingFailedUploads} />}
+          {downloads.length > 0 && <TransferQueueSection direction="download" items={sortedDownloads} paused={pausedDownloads} folders={folders} onPause={onPauseDownloads} onResume={onResumeDownloads} onCancelAll={onCancelDownloads} onClear={onClearDownloads} onCancel={onCancelDownload} onRetry={onRetryDownload} />}
           {allComplete && (
             <div className="flex items-center gap-3 border-t border-app-border-subtle px-4 py-3 text-sm" role="status">
               <CheckCircle2 className="h-5 w-5 shrink-0 text-app-success" aria-hidden="true" />
