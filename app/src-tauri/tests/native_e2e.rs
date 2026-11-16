@@ -8744,6 +8744,7 @@ fn heic_fixture_completed_exit_keeps_real_status_and_refuses_unmonitored_work() 
             assert_eq!(process["completed_exit_wait"], true, "{process}");
             if mode == "completed" {
                 assert_eq!(reply["ok"], true, "{reply}; {status}");
+                assert_eq!(process["outcome"], "success", "{process}");
             } else {
                 assert!(
                     reply["error"]
@@ -8753,6 +8754,7 @@ fn heic_fixture_completed_exit_keeps_real_status_and_refuses_unmonitored_work() 
                     "{reply}; {status}"
                 );
                 assert!(status["decodes"].as_array().unwrap().is_empty());
+                assert_eq!(process["outcome"], "decoder_failed", "{process}");
             }
         }
     }
@@ -9631,20 +9633,35 @@ fn assert_short_video_upload(fixture: &Fixture, result: &Value, name: &str) {
 #[test]
 fn video_upload_vp9_mp4_uses_a_real_decoder_and_preserves_source_bytes() {
     use sha2::{Digest, Sha256};
-    let fixture = Fixture::new();
-    let name = "VP9 sample with spaces.mp4";
-    let original = include_bytes!("fixtures/video-upload/synthetic-vp9.mp4");
-    fixture.write(name, original);
-    let expected = Sha256::digest(original);
-    force_video_upload_external_decoder(&fixture);
-    let mut app = start_video_upload_ffmpeg_backend(&fixture);
-    let result = app.ok(
-        json!({"command":"video_upload_prepare","owner":"101","source":name,
+    // Independent child processes repeat discovery and version probing; a prior
+    // successful decoder must not mask a fast-exit observation race on Windows.
+    for _ in 0..3 {
+        let fixture = Fixture::new();
+        let name = "VP9 sample with spaces.mp4";
+        let original = include_bytes!("fixtures/video-upload/synthetic-vp9.mp4");
+        fixture.write(name, original);
+        let expected = Sha256::digest(original);
+        force_video_upload_external_decoder(&fixture);
+        let mut app = start_video_upload_ffmpeg_backend(&fixture);
+        let result = app.ok(
+            json!({"command":"video_upload_prepare","owner":"101","source":name,
         "mode":"media","filenameCaption":true,"fixtureResource":true}),
-    );
-    assert_short_video_upload(&fixture, &result, name);
-    assert_eq!(Sha256::digest(fixture.read(name)), expected);
-    app.stop();
+        );
+        assert_short_video_upload(&fixture, &result, name);
+        assert_eq!(Sha256::digest(fixture.read(name)), expected);
+        let processes = result["processes"]
+            .as_array()
+            .expect("No decoder observations");
+        assert!(processes.iter().any(|process| process["version_probe"] == false && process["outcome"] == "success"), "{result}");
+        #[cfg(windows)]
+        assert!(
+            processes
+                .iter()
+                .any(|process| process["version_probe"] == true && process["outcome"] == "success"),
+            "{result}"
+        );
+        app.stop();
+    }
 }
 
 #[test]

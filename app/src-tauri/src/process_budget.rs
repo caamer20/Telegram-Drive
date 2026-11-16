@@ -4,6 +4,7 @@ use std::{
     process::{Child, Command, Stdio},
     time::{Duration, Instant},
 };
+#[cfg(not(target_os = "windows"))]
 use sysinfo::{Pid, System};
 
 pub(crate) const RESIDENT_LIMIT: u64 = 1024 * 1024 * 1024;
@@ -28,6 +29,34 @@ struct Running {
     job: windows_sys::Win32::Foundation::HANDLE,
 }
 impl Running {
+    #[cfg(target_os = "windows")]
+    fn resident_bytes(&self) -> Option<u64> {
+        use std::os::windows::io::AsRawHandle;
+        use windows_sys::Win32::System::ProcessStatus::{
+            GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS,
+        };
+        // Query the handle returned by CreateProcess, not a reopened PID or a
+        // library's inference that an exiting process has ceased to exist.
+        unsafe {
+            let mut counters: PROCESS_MEMORY_COUNTERS = std::mem::zeroed();
+            let size = std::mem::size_of_val(&counters) as u32;
+            counters.cb = size;
+            (GetProcessMemoryInfo(self.child.as_raw_handle(), &mut counters, size) != 0)
+                .then_some(counters.WorkingSetSize as u64)
+        }
+    }
+    #[cfg(target_os = "windows")]
+    fn exit_started(&self) -> bool {
+        use std::os::windows::io::AsRawHandle;
+        use windows_sys::Win32::{Foundation::STILL_ACTIVE, System::Threading::GetExitCodeProcess};
+        // Windows assigns the exit code before signaling process completion.
+        // A failed query or a still-active child never earns an unmonitored wait.
+        unsafe {
+            let mut code = STILL_ACTIVE as u32;
+            GetExitCodeProcess(self.child.as_raw_handle(), &mut code) != 0
+                && code != STILL_ACTIVE as u32
+        }
+    }
     fn stop(&mut self) -> Option<u64> {
         if !self.running {
             return None;
@@ -362,7 +391,9 @@ fn run_inner(
     let mut completed_exit_wait = false;
     #[cfg(feature = "native-e2e")]
     let spawn_seconds = started.elapsed().as_secs_f64();
+    #[cfg(not(target_os = "windows"))]
     let mut system = System::new();
+    #[cfg(not(target_os = "windows"))]
     let pid = Pid::from_u32(running.child.id());
     let mut peak = 0;
     let observed = (|| -> Result<(bool, Option<u64>), String> {
@@ -410,7 +441,12 @@ fn run_inner(
             }
             #[cfg(feature = "native-e2e")]
             let sampled = Instant::now();
+            #[cfg(not(target_os = "windows"))]
             let refreshed = system.refresh_process(pid);
+            #[cfg(target_os = "windows")]
+            let memory = running.resident_bytes();
+            #[cfg(target_os = "windows")]
+            let refreshed = memory.is_some();
             #[cfg(feature = "native-e2e")]
             let completed = completion.as_ref().is_some_and(|path| {
                 std::fs::read_to_string(path)
@@ -428,8 +464,13 @@ fn run_inner(
                 sampler_seconds += sampled.elapsed().as_secs_f64();
             }
             if refreshed {
+                #[cfg(not(target_os = "windows"))]
                 if let Some(process) = system.process(pid) {
                     peak = peak.max(process.memory());
+                }
+                #[cfg(target_os = "windows")]
+                {
+                    peak = peak.max(memory.unwrap_or(0));
                 }
             } else if let Some(result) = running.finish()? {
                 return Ok(result);
@@ -437,41 +478,53 @@ fn run_inner(
                 // Cancellation can arrive during the RSS read. Preserve that
                 // reason before classifying a still-live child as unmonitored.
                 check()?;
-                #[cfg(feature = "native-e2e")]
-                if completed {
-                    // No work remains in this controlled helper. Still collect its real
-                    // exit status, fail closed on timeout, and keep all checks active.
-                    completed_exit_wait = true;
-                    if let Some(clock) = fixture {
-                        if clock.monitor_loss == Some(FixtureMonitorLoss::AfterCompletion) {
-                            std::fs::write(
-                                clock.ready.with_extension("ack"),
-                                running.child.id().to_string(),
-                            )
-                            .map_err(|_| "HEIC_MEMORY_MONITOR_UNAVAILABLE")?;
-                        }
-                    }
-                    let exit_deadline =
-                        current_deadline.min(Instant::now() + Duration::from_secs(2));
-                    loop {
-                        check()?;
-                        if Instant::now() >= exit_deadline {
-                            return Err("HEIC_MEMORY_MONITOR_UNAVAILABLE".into());
-                        }
-                        if let Some((path, cap)) = output {
-                            if std::fs::symlink_metadata(path)
-                                .is_ok_and(|meta| !meta.file_type().is_file() || meta.len() > cap)
-                            {
-                                return Err("HEIC_OUTPUT_LIMIT".into());
+                #[cfg(any(target_os = "windows", feature = "native-e2e"))]
+                {
+                    #[cfg(all(target_os = "windows", feature = "native-e2e"))]
+                    let finishing = running.exit_started() || completed;
+                    #[cfg(all(target_os = "windows", not(feature = "native-e2e")))]
+                    let finishing = running.exit_started();
+                    #[cfg(not(target_os = "windows"))]
+                    let finishing = completed;
+                    if finishing {
+                        // The process has begun exiting (or explicitly finished work
+                        // in a controlled fixture). Require its actual exit status;
+                        // the Windows Job still enforces memory and process limits.
+                        #[cfg(feature = "native-e2e")]
+                        {
+                            completed_exit_wait = true;
+                            if let Some(clock) = fixture {
+                                if clock.monitor_loss == Some(FixtureMonitorLoss::AfterCompletion) {
+                                    std::fs::write(
+                                        clock.ready.with_extension("ack"),
+                                        running.child.id().to_string(),
+                                    )
+                                    .map_err(|_| "HEIC_MEMORY_MONITOR_UNAVAILABLE")?;
+                                }
                             }
                         }
-                        if let Some(result) = running.finish()? {
-                            if result.1.is_some_and(|bytes| bytes > RESIDENT_LIMIT) {
-                                return Err("HEIC_MEMORY_LIMIT".into());
+                        let exit_deadline =
+                            current_deadline.min(Instant::now() + Duration::from_secs(2));
+                        loop {
+                            check()?;
+                            if Instant::now() >= exit_deadline {
+                                return Err("HEIC_MEMORY_MONITOR_UNAVAILABLE".into());
                             }
-                            return Ok(result);
+                            if let Some((path, cap)) = output {
+                                if std::fs::symlink_metadata(path).is_ok_and(|meta| {
+                                    !meta.file_type().is_file() || meta.len() > cap
+                                }) {
+                                    return Err("HEIC_OUTPUT_LIMIT".into());
+                                }
+                            }
+                            if let Some(result) = running.finish()? {
+                                if result.1.is_some_and(|bytes| bytes > RESIDENT_LIMIT) {
+                                    return Err("HEIC_MEMORY_LIMIT".into());
+                                }
+                                return Ok(result);
+                            }
+                            std::thread::sleep(Duration::from_millis(10));
                         }
-                        std::thread::sleep(Duration::from_millis(10));
                     }
                 }
                 return Err("HEIC_MEMORY_MONITOR_UNAVAILABLE".into());

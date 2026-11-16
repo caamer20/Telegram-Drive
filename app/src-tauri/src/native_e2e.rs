@@ -4906,6 +4906,9 @@ impl Driver {
                         };
                     capture["upBytes"] = json!(bandwidth.checked_stats()?.up_bytes);
                     capture["pacerPending"] = json!(network.pacer.pending());
+                    // Fixture-only diagnostics retain the production child-process
+                    // outcome and timing when preparation fails before publication.
+                    capture["processes"] = json!(crate::process_budget::observations());
                     Ok(capture)
                 });
                 self.video_upload = Some(FixtureVideoUploadJourney {
@@ -4929,7 +4932,8 @@ impl Driver {
                     "mainUploadRequests":journey.transport.main_upload_requests.load(std::sync::atomic::Ordering::SeqCst),
                     "preparationCompleted":journey.transport.preparation_completed.load(std::sync::atomic::Ordering::SeqCst),
                     "sendAttempts":journey.transport.send_attempts.load(std::sync::atomic::Ordering::SeqCst),
-                    "finished":journey.task.is_finished(),"upBytes":self.bandwidth.checked_stats()?.up_bytes}),
+                    "finished":journey.task.is_finished(),"upBytes":self.bandwidth.checked_stats()?.up_bytes,
+                    "processes":crate::process_budget::observations()}),
                 )
             }
             "video_upload_release" => {
