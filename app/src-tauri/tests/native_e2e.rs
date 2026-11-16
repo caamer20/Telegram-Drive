@@ -65,8 +65,14 @@ impl Backend {
         if root.join(".video-upload-empty-path").exists() {
             command.env("PATH", root.join("video-upload-scratch"));
         }
+        if root.join(".video-upload-unset-path").exists() {
+            command.env_remove("PATH");
+        }
         if root.join(".video-upload-helper-path").exists() {
             command.env("PATH", root.join("video-upload-codec"));
+        }
+        if root.join(".video-upload-helper-root-path").exists() {
+            command.env("PATH", root);
         }
         let mut child = command
             .arg(root)
@@ -9550,6 +9556,529 @@ fn start_video_upload_backend(fixture: &Fixture) -> Backend {
     app.ok(json!({"command":"seed_account","owner":101}));
     app
 }
+
+fn start_video_upload_ffmpeg_backend(fixture: &Fixture) -> Backend {
+    fixture.write(".video-upload-fixture", b"synthetic\n");
+    std::fs::create_dir(fixture.path("video-upload-scratch")).unwrap();
+    // This journey retains the real PATH so Windows also exercises external FFmpeg.
+    let mut app = Backend::start(&fixture.0);
+    app.ok(json!({"command":"seed_account","owner":101}));
+    app
+}
+
+fn video_upload_external_decoder_fixture(fixture: &Fixture, mode: &str) {
+    fixture.write("ffmpeg-mode", mode);
+    image::RgbImage::from_pixel(320, 180, image::Rgb([30, 100, 160]))
+        .save(fixture.path("ffmpeg-frame.jpg"))
+        .unwrap();
+    std::fs::copy(
+        env!("CARGO_BIN_EXE_native-e2e-heic-helper"),
+        fixture.path(if cfg!(windows) {
+            "ffmpeg.exe"
+        } else {
+            "ffmpeg"
+        }),
+    )
+    .unwrap();
+}
+
+fn force_video_upload_external_decoder(fixture: &Fixture) {
+    #[cfg(windows)]
+    fixture.write(".video-upload-native-mode", b"fail");
+    #[cfg(not(windows))]
+    let _ = fixture;
+}
+
+fn assert_short_video_upload(fixture: &Fixture, result: &Value, name: &str) {
+    assert_eq!(
+        result["result"]["receipt"], "controlled-telegram-message-303",
+        "{result}"
+    );
+    assert_eq!(result["thumbnailRequests"], 1);
+    assert_eq!(result["sendAttempts"], 1);
+    assert_eq!(result["pacerPending"], 0);
+    let wire = uploaded_video_wire(result);
+    assert!(!wire.force_file);
+    assert_eq!(wire.mime_type, "video/mp4");
+    assert!(wire.thumb.is_some());
+    let video = wire
+        .attributes
+        .iter()
+        .find_map(|attribute| match attribute {
+            grammers_tl_types::enums::DocumentAttribute::Video(video) => Some(video),
+            _ => None,
+        })
+        .expect("Missing actual Telegram video attributes");
+    assert_eq!((video.w, video.h), (320, 180));
+    assert!((video.duration - 1.0).abs() < 0.1);
+    assert!(video.supports_streaming);
+    assert!(wire.attributes.iter().any(|attribute| matches!(attribute,
+        grammers_tl_types::enums::DocumentAttribute::Filename(filename) if filename.file_name == name)));
+    assert_eq!(result["caption"], name);
+    let thumbnail = fixture.read(result["thumbnail"].as_str().expect("No uploaded thumbnail"));
+    assert!(thumbnail.len() > 100 && thumbnail.len() < 200 * 1024);
+    assert_eq!(
+        image::guess_format(&thumbnail).unwrap(),
+        image::ImageFormat::Jpeg
+    );
+    let decoded = image::load_from_memory(&thumbnail).unwrap();
+    assert!(decoded.width() > 0 && decoded.width() <= 320);
+    assert!(decoded.height() > 0 && decoded.height() <= 320);
+    assert_eq!(result["upBytes"], thumbnail.len() as u64);
+    assert_video_upload_scratch_empty(fixture);
+}
+
+#[test]
+fn video_upload_vp9_mp4_uses_a_real_decoder_and_preserves_source_bytes() {
+    use sha2::{Digest, Sha256};
+    let fixture = Fixture::new();
+    let name = "VP9 sample with spaces.mp4";
+    let original = include_bytes!("fixtures/video-upload/synthetic-vp9.mp4");
+    fixture.write(name, original);
+    let expected = Sha256::digest(original);
+    force_video_upload_external_decoder(&fixture);
+    let mut app = start_video_upload_ffmpeg_backend(&fixture);
+    let result = app.ok(
+        json!({"command":"video_upload_prepare","owner":"101","source":name,
+        "mode":"media","filenameCaption":true,"fixtureResource":true}),
+    );
+    assert_short_video_upload(&fixture, &result, name);
+    assert_eq!(Sha256::digest(fixture.read(name)), expected);
+    app.stop();
+}
+
+#[test]
+fn video_upload_vp9_falls_back_to_path_when_the_bundled_decoder_stalls() {
+    let fixture = Fixture::new();
+    let name = "VP9 sidecar fallback.mp4";
+    fixture.write(
+        name,
+        include_bytes!("fixtures/video-upload/synthetic-vp9.mp4"),
+    );
+    video_upload_external_decoder_fixture(&fixture, "wait");
+    force_video_upload_external_decoder(&fixture);
+    let mut app = start_video_upload_ffmpeg_backend(&fixture);
+    let started = Instant::now();
+    app.ok(
+        json!({"command":"video_upload_start","owner":"101","source":name,
+        "mode":"media","filenameCaption":true,"fixtureResource":true}),
+    );
+    let ready = Instant::now() + Duration::from_secs(10);
+    let pid = loop {
+        if let Ok(pid) = std::fs::read_to_string(fixture.path("ffmpeg-pid")) {
+            break pid.parse().unwrap();
+        }
+        assert!(Instant::now() < ready, "Bundled decoder did not start");
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    let process = HeicProcess::capture(pid);
+    let result = app.ok(json!({"command":"video_upload_finish"}));
+    assert_short_video_upload(&fixture, &result, name);
+    assert!(started.elapsed() < Duration::from_secs(30));
+    assert!(
+        !process.alive().unwrap(),
+        "Stalled bundled decoder survived fallback"
+    );
+    app.stop();
+}
+
+#[test]
+fn video_upload_hevc_and_av1_mp4_preserve_media_metadata_and_source_bytes() {
+    use sha2::{Digest, Sha256};
+    for (name, original) in [
+        (
+            "HEVC sample.mp4",
+            &include_bytes!("fixtures/video-upload/synthetic-hevc.mp4")[..],
+        ),
+        (
+            "AV1 sample.mp4",
+            &include_bytes!("fixtures/video-upload/synthetic-av1.mp4")[..],
+        ),
+    ] {
+        let fixture = Fixture::new();
+        fixture.write(name, original);
+        force_video_upload_external_decoder(&fixture);
+        let mut app = start_video_upload_ffmpeg_backend(&fixture);
+        let result = app.ok(
+            json!({"command":"video_upload_prepare","owner":"101","source":name,
+            "mode":"media","filenameCaption":true,"fixtureResource":true}),
+        );
+        assert_short_video_upload(&fixture, &result, name);
+        assert_eq!(Sha256::digest(fixture.read(name)), Sha256::digest(original));
+        app.stop();
+    }
+}
+
+#[test]
+fn video_upload_ffmpeg_discovery_handles_spaces_and_unicode_directory() {
+    let mut fixture = Fixture::new();
+    let renamed = fixture.0.with_file_name(format!(
+        "{} codec tools 解码",
+        fixture.0.file_name().unwrap().to_string_lossy()
+    ));
+    std::fs::rename(&fixture.0, &renamed).unwrap();
+    fixture.0 = renamed;
+    let name = "VP9 résumé 测试.mp4";
+    fixture.write(
+        name,
+        include_bytes!("fixtures/video-upload/synthetic-vp9.mp4"),
+    );
+    video_upload_external_decoder_fixture(&fixture, "ok");
+    fixture.write(
+        ".video-upload-helper-root-path",
+        b"Only the owned decoder directory is on PATH",
+    );
+    std::fs::create_dir(fixture.path("native-resource")).unwrap();
+    #[cfg(windows)]
+    fixture.write("native-resource/.video-upload-native-mode", b"fail");
+    let mut app = start_video_upload_ffmpeg_backend(&fixture);
+    for outside in ["/", "..", "../outside"] {
+        assert!(app
+            .failure(
+                json!({"command":"video_upload_prepare","owner":"101","source":name,
+            "mode":"media","fixtureResourceName":outside})
+            )
+            .contains("fixture"));
+    }
+    #[cfg(windows)]
+    for outside in [r"C:\", "C:"] {
+        assert!(app
+            .failure(
+                json!({"command":"video_upload_prepare","owner":"101","source":name,
+            "mode":"media","fixtureResourceName":outside})
+            )
+            .contains("fixture"));
+    }
+    let result = app.ok(
+        json!({"command":"video_upload_prepare","owner":"101","source":name,
+        "mode":"media","filenameCaption":true,"fixtureResourceName":"native-resource"}),
+    );
+    assert_short_video_upload(&fixture, &result, name);
+    assert!(fixture.path("ffmpeg-pid").exists());
+    app.stop();
+}
+
+#[test]
+fn video_upload_failed_decoder_reports_failure_without_missing_install_advice() {
+    let fixture = Fixture::new();
+    let name = "failed-decoder.mp4";
+    fixture.write(
+        name,
+        include_bytes!("fixtures/video-upload/synthetic-vp9.mp4"),
+    );
+    video_upload_external_decoder_fixture(&fixture, "fail");
+    fixture.write(
+        ".video-upload-helper-root-path",
+        b"Only the owned decoder is available",
+    );
+    force_video_upload_external_decoder(&fixture);
+    let mut app = start_video_upload_ffmpeg_backend(&fixture);
+    let result = app.ok(
+        json!({"command":"video_upload_prepare","owner":"101","source":name,
+        "mode":"media","fixtureResource":true}),
+    );
+    let message = result["result"]["error"].as_str().unwrap();
+    assert!(message.contains("VIDEO_THUMBNAIL_UNAVAILABLE"), "{result}");
+    assert!(message.contains("could not decode"), "{message}");
+    assert!(!message.contains("Install FFmpeg"), "{message}");
+    assert!(fixture.path("ffmpeg-pid").exists());
+    assert_eq!(result["mainUploadRequests"], 0);
+    assert_eq!(result["sendAttempts"], 0);
+    assert_eq!(result["upBytes"], 0);
+    assert_video_upload_scratch_empty(&fixture);
+    fixture.write("ffmpeg-mode", b"ok");
+    fixture.write(
+        "ffmpeg-frame.jpg",
+        b"A successful process did not produce an image",
+    );
+    let invalid = app.ok(
+        json!({"command":"video_upload_prepare","owner":"101","source":name,
+        "mode":"media","fixtureResource":true}),
+    );
+    let message = invalid["result"]["error"].as_str().unwrap();
+    assert!(message.contains("VIDEO_THUMBNAIL_UNAVAILABLE"), "{invalid}");
+    assert!(message.contains("invalid preview"), "{message}");
+    assert!(!message.contains("Install FFmpeg"), "{message}");
+    assert!(
+        !message.contains(name),
+        "Decoder diagnostics exposed the source filename"
+    );
+    assert_eq!(invalid["mainUploadRequests"], 0);
+    assert_eq!(invalid["thumbnailRequests"], 0);
+    assert_eq!(invalid["sendAttempts"], 0);
+    assert_eq!(invalid["upBytes"], 0);
+    assert_video_upload_scratch_empty(&fixture);
+    app.stop();
+}
+
+#[test]
+fn video_upload_missing_decoder_reports_install_advice_and_file_mode_still_works() {
+    let fixture = Fixture::new();
+    let name = "missing-decoder.mp4";
+    fixture.write(
+        name,
+        include_bytes!("fixtures/video-upload/synthetic-vp9.mp4"),
+    );
+    fixture.write(".video-upload-empty-path", b"No decoder is available");
+    force_video_upload_external_decoder(&fixture);
+    let mut app = start_video_upload_ffmpeg_backend(&fixture);
+    let result = app.ok(
+        json!({"command":"video_upload_prepare","owner":"101","source":name,
+        "mode":"media","fixtureResource":true}),
+    );
+    let message = result["result"]["error"].as_str().unwrap();
+    assert!(message.contains("VIDEO_THUMBNAIL_UNAVAILABLE"), "{message}");
+    assert!(message.contains("Install FFmpeg"), "{message}");
+    assert_eq!(result["mainUploadRequests"], 0);
+    assert_eq!(result["sendAttempts"], 0);
+    assert_eq!(result["upBytes"], 0);
+    assert_video_upload_scratch_empty(&fixture);
+    let fallback = app.ok(
+        json!({"command":"video_upload_prepare","owner":"101","source":name,
+        "mode":"file","fixtureResource":true}),
+    );
+    assert_eq!(fallback["result"]["video"], false);
+    assert_eq!(fallback["thumbnailRequests"], 0);
+    assert_eq!(fallback["upBytes"], 0);
+    app.stop();
+}
+
+#[test]
+fn video_upload_vp9_falls_back_to_path_when_the_bundled_decoder_fails() {
+    let fixture = Fixture::new();
+    let name = "VP9 failed sidecar.mp4";
+    fixture.write(
+        name,
+        include_bytes!("fixtures/video-upload/synthetic-vp9.mp4"),
+    );
+    video_upload_external_decoder_fixture(&fixture, "fail");
+    force_video_upload_external_decoder(&fixture);
+    let mut app = start_video_upload_ffmpeg_backend(&fixture);
+    let result = app.ok(
+        json!({"command":"video_upload_prepare","owner":"101","source":name,
+        "mode":"media","filenameCaption":true,"fixtureResource":true}),
+    );
+    assert_short_video_upload(&fixture, &result, name);
+    assert!(fixture.path("ffmpeg-pid").exists());
+    app.stop();
+}
+
+#[test]
+fn video_upload_cancellation_during_ffmpeg_fallback_stops_the_owned_process() {
+    let fixture = Fixture::new();
+    let name = "VP9 cancel fallback.mp4";
+    fixture.write(
+        name,
+        include_bytes!("fixtures/video-upload/synthetic-vp9.mp4"),
+    );
+    video_upload_external_decoder_fixture(&fixture, "wait");
+    fixture.write(
+        ".video-upload-helper-root-path",
+        b"Only the owned fallback decoder is on PATH",
+    );
+    let resources = fixture.path("broken-sidecar");
+    std::fs::create_dir(&resources).unwrap();
+    fixture.write(
+        "broken-sidecar/.native-e2e-fixture",
+        b"telegram-drive-synthetic-e2e\n",
+    );
+    fixture.write("broken-sidecar/ffmpeg-mode", b"fail");
+    #[cfg(windows)]
+    fixture.write("broken-sidecar/.video-upload-native-mode", b"fail");
+    std::fs::copy(
+        env!("CARGO_BIN_EXE_native-e2e-heic-helper"),
+        resources.join(if cfg!(windows) {
+            "ffmpeg.exe"
+        } else {
+            "ffmpeg"
+        }),
+    )
+    .unwrap();
+    let mut app = start_video_upload_ffmpeg_backend(&fixture);
+    app.ok(
+        json!({"command":"video_upload_start","owner":"101","source":name,
+        "mode":"media","filenameCaption":true,"fixtureResourceName":"broken-sidecar"}),
+    );
+    let ready = Instant::now() + Duration::from_secs(10);
+    let pid = loop {
+        if let Ok(pid) = std::fs::read_to_string(fixture.path("ffmpeg-pid")) {
+            break pid.parse().unwrap();
+        }
+        assert!(Instant::now() < ready, "Fallback decoder did not start");
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    let process = HeicProcess::capture(pid);
+    app.ok(json!({"command":"video_upload_cancel"}));
+    let result = app.ok(json!({"command":"video_upload_finish"}));
+    assert!(
+        result["result"]["error"]
+            .as_str()
+            .unwrap()
+            .contains("cancelled"),
+        "{result}"
+    );
+    assert_eq!(result["mainUploadRequests"], 0);
+    assert_eq!(result["thumbnailRequests"], 0);
+    assert_eq!(result["sendAttempts"], 0);
+    assert_eq!(result["upBytes"], 0);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let scratch_empty = std::fs::read_dir(fixture.path("video-upload-scratch"))
+            .unwrap()
+            .all(|entry| {
+                std::fs::read_dir(entry.unwrap().path())
+                    .unwrap()
+                    .next()
+                    .is_none()
+            });
+        if !process.alive().unwrap() && scratch_empty {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "Fallback process or scratch survived cancellation"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(
+        !process.alive().unwrap(),
+        "Fallback decoder survived cancellation"
+    );
+    assert_video_upload_scratch_empty(&fixture);
+    app.stop();
+}
+
+#[cfg(windows)]
+#[test]
+fn video_upload_vp9_falls_back_to_ffmpeg_when_windows_native_decoder_stalls() {
+    let fixture = Fixture::new();
+    let name = "VP9 native timeout.mp4";
+    fixture.write(
+        name,
+        include_bytes!("fixtures/video-upload/synthetic-vp9.mp4"),
+    );
+    fixture.write(".video-upload-native-mode", b"wait");
+    let mut app = start_video_upload_ffmpeg_backend(&fixture);
+    let started = Instant::now();
+    let result = app.ok(
+        json!({"command":"video_upload_prepare","owner":"101","source":name,
+        "mode":"media","filenameCaption":true,"fixtureResource":true}),
+    );
+    assert_short_video_upload(&fixture, &result, name);
+    assert!(started.elapsed() < Duration::from_secs(30));
+    app.stop();
+}
+
+#[cfg(windows)]
+#[test]
+fn video_upload_corrupt_ffmpeg_preserves_slow_native_h264_success() {
+    let fixture = Fixture::new();
+    let name = "native H264 after corrupt FFmpeg.mp4";
+    video_upload_fixture(&fixture, name, false, false);
+    let original = fixture.read(name);
+    fixture.write("ffmpeg.exe", b"Not a Windows executable");
+    fixture.write(
+        ".video-upload-empty-path",
+        b"Only the corrupt resource candidate exists",
+    );
+    fixture.write(".video-upload-native-mode", b"delay");
+    let mut app = start_video_upload_ffmpeg_backend(&fixture);
+    let started = Instant::now();
+    let result = app.ok(
+        json!({"command":"video_upload_prepare","owner":"101","source":name,
+        "mode":"media","filenameCaption":true,"fixtureResource":true}),
+    );
+    assert_eq!(
+        result["result"]["receipt"], "controlled-telegram-message-303",
+        "{result}"
+    );
+    assert_eq!(result["thumbnailRequests"], 1);
+    assert_eq!(result["sendAttempts"], 1);
+    let wire = uploaded_video_wire(&result);
+    assert!(!wire.force_file && wire.thumb.is_some());
+    let video = wire
+        .attributes
+        .iter()
+        .find_map(|attribute| match attribute {
+            grammers_tl_types::enums::DocumentAttribute::Video(video) => Some(video),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!((video.w, video.h), (640, 360));
+    assert_eq!(fixture.read(name), original);
+    assert!(
+        started.elapsed() >= Duration::from_secs(16),
+        "Native decoder delay was not exercised"
+    );
+    assert!(started.elapsed() < Duration::from_secs(30));
+    assert_video_upload_scratch_empty(&fixture);
+    app.stop();
+}
+
+#[cfg(windows)]
+#[test]
+fn video_upload_corrupt_ffmpeg_reports_launch_failure_without_install_advice() {
+    let fixture = Fixture::new();
+    let name = "corrupt-decoder.mp4";
+    fixture.write(
+        name,
+        include_bytes!("fixtures/video-upload/synthetic-vp9.mp4"),
+    );
+    fixture.write("ffmpeg.exe", b"Not a Windows executable");
+    fixture.write(
+        ".video-upload-empty-path",
+        b"Only the corrupt resource candidate exists",
+    );
+    force_video_upload_external_decoder(&fixture);
+    let mut app = start_video_upload_ffmpeg_backend(&fixture);
+    let result = app.ok(
+        json!({"command":"video_upload_prepare","owner":"101","source":name,
+        "mode":"media","fixtureResource":true}),
+    );
+    let message = result["result"]["error"].as_str().unwrap();
+    assert!(message.contains("VIDEO_THUMBNAIL_UNAVAILABLE"), "{message}");
+    assert!(message.contains("could not be started"), "{message}");
+    assert!(!message.contains("Install FFmpeg"), "{message}");
+    assert_eq!(result["mainUploadRequests"], 0);
+    assert_eq!(result["sendAttempts"], 0);
+    assert_eq!(result["upBytes"], 0);
+    assert_video_upload_scratch_empty(&fixture);
+    app.stop();
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn video_upload_vp9_uses_the_system_executable_search_path_when_path_is_unset() {
+    let fixture = Fixture::new();
+    let name = "VP9 default executable path.mp4";
+    fixture.write(
+        name,
+        include_bytes!("fixtures/video-upload/synthetic-vp9.mp4"),
+    );
+    fixture.write(
+        ".video-upload-unset-path",
+        b"Use the operating system default executable path",
+    );
+    // Linux CI provisions /usr/bin/ffmpeg. An absent PATH must preserve the OS
+    // default search behavior; an explicitly empty PATH remains a different case.
+    let version = Command::new("ffmpeg")
+        .arg("-version")
+        .env_remove("PATH")
+        .output()
+        .unwrap();
+    assert!(
+        version.status.success(),
+        "Default-path FFmpeg must be provisioned for this journey"
+    );
+    let mut app = start_video_upload_ffmpeg_backend(&fixture);
+    let result = app.ok(
+        json!({"command":"video_upload_prepare","owner":"101","source":name,
+        "mode":"media","filenameCaption":true}),
+    );
+    assert_short_video_upload(&fixture, &result, name);
+    app.stop();
+}
+
 fn assert_video_upload_scratch_empty(fixture: &Fixture) {
     for entry in std::fs::read_dir(fixture.path("video-upload-scratch")).unwrap() {
         let entry = entry.unwrap();
@@ -9899,6 +10428,9 @@ fn video_upload_decoder_deadline_kills_the_owned_process_without_publication_or_
             .contains("VIDEO_THUMBNAIL_UNAVAILABLE"),
         "{result}"
     );
+    let message = result["result"]["error"].as_str().unwrap();
+    assert!(message.contains("timed out"), "{message}");
+    assert!(!message.contains("Install FFmpeg"), "{message}");
     assert!(
         started.elapsed() < Duration::from_secs(70),
         "Decoder exceeded its complete operation bound"

@@ -4780,6 +4780,19 @@ impl Driver {
                 let name = text(&request, "source")?.to_string();
                 let mode = text(&request, "mode")? == "media";
                 let filename_caption = request["filenameCaption"].as_bool();
+                // Only the fixture root or a single child directory can be exposed as resources.
+                let resource = match request["fixtureResourceName"].as_str() {
+                    Some(name) => {
+                        if !matches!(
+                            Path::new(name).components().next(),
+                            Some(std::path::Component::Normal(_))
+                        ) {
+                            return Err("Expected a fixture resource directory name".into());
+                        }
+                        Some(child(&self.root, name)?)
+                    }
+                    None => (request["fixtureResource"] == true).then(|| self.root.clone()),
+                };
                 let transport = Arc::new(FixtureVideoUploadTransport {
                     root: self.root.clone(),
                     block_thumbnail: request["blockThumbnail"] == true,
@@ -4804,7 +4817,7 @@ impl Driver {
                             &name,
                             mode,
                             "video/mp4",
-                            None,
+                            resource,
                             bandwidth.clone(),
                             &account,
                             &mut cancel,

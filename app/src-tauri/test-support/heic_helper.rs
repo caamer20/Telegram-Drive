@@ -23,6 +23,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     let args: Vec<_> = std::env::args().collect();
     if root.join("ffmpeg-mode").is_file() {
+        if args.get(1).map(String::as_str) == Some("-version") {
+            println!("ffmpeg version 8.1.2 controlled native E2E helper");
+            return Ok(());
+        }
         return video(&root, &args);
     }
     let mode = std::fs::read_to_string(root.join("heic-mode")).unwrap_or_else(|_| "success".into());

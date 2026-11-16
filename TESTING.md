@@ -4,7 +4,7 @@ Behavioral regression testing uses E2E suites. New tests must exercise an applic
 
 ## Host verification
 
-Install JavaScript dependencies in `app/` and `supporter-service/`, the normal native build prerequisites, FFmpeg on macOS/Linux for video upload journeys, and Playwright Chromium:
+Install JavaScript dependencies in `app/` and `supporter-service/`, the normal native build prerequisites, FFmpeg on each desktop platform for video upload journeys, and Playwright Chromium:
 
 ```sh
 npm ci --prefix app
@@ -70,7 +70,11 @@ Video journeys prefer a provided JPEG, exercise a controlled extraction child th
 
 The native child-process journeys exercise the same video preparation and publication operation used by local and URL uploads. A controlled Telegram transport reads the actual paced JPEG bytes and captures the caption and serialized MTProto document; assertions independently decode both. Synthetic two-second H.264 fixtures include valid containers above 200 MiB using sparse `free` padding, with early and trailing `moov` metadata. This covers large-container handling, not long/high-bitrate recordings. Original video bytes are preserved. Streaming eligibility follows Telegram Desktop 7.3.1's atom-search decisions, including the validated trailing-`moov` fixture; the search checks the preceding atom's start rather than the `moov` offset.
 
-Failure, retry, cancellation, account changes, source replacement, quota holds and private decoder staging are checked through that operation. Windows journeys remove FFmpeg from PATH to require the native media decoder; non-Windows success uses installed FFmpeg. Decoder-unavailable and controlled-process failure journeys are separate from codec compatibility. A passing macOS run does not establish native Windows decoding. Protected uploads retain the existing encrypted-upload journeys. The main-file part handle and Telegram service are controlled boundaries; real Telegram Desktop playback, the reporter's exact file/codec and installed-app acceptance remain separate checks.
+Failure, retry, cancellation, account changes, source replacement, quota holds and private decoder staging are checked through that operation. The existing Windows H.264 journeys remove FFmpeg from PATH to require the native media decoder. Additional synthetic VP9, HEVC and AV1 MP4 journeys use real FFmpeg and verify JPEG output, Telegram video attributes, source hashes, quota accounting and staging cleanup. Separate controlled decoder failures and stalls exercise bundled-to-PATH fallback, Windows native-to-FFmpeg fallback, executable directories containing spaces/Unicode, truthful failure messages and cancellation. Windows fault markers are accepted only in the native-E2E build. Controlled failures do not establish codec compatibility.
+
+Windows CI installs a pinned, SHA-256-verified FFmpeg archive for tests; it is not bundled into the app. macOS Intel validation uses the explicit x86_64 target (which may execute through Rosetta on an ARM runner). Hosted Windows Server CI does not establish installed Windows 10 or 11 acceptance. Protected uploads retain the existing encrypted-upload journeys. The main-file part handle and Telegram service are controlled boundaries; real Telegram Desktop playback, the reporter's exact file/codec, GUI-launched PATH discovery and installed-app acceptance remain separate checks.
+
+The video facade runs one active upload per driver. Its cancellation journeys cover active decoder processes and thumbnail transport; they do not establish cancellation while another video owns the shared decoder semaphore.
 
 ### What the native journeys do not reach
 

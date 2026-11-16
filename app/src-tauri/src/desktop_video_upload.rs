@@ -29,12 +29,12 @@ async fn prepare(
     media_mode: bool,
     mime_type: &'static str,
     resource: Option<std::path::PathBuf>,
+    deadline: Instant,
 ) -> Result<Option<VideoUploadMetadata>, String> {
     if !media_mode || !is_mp4_family_video(upload_name) {
         return Ok(None);
     }
 
-    let deadline = Instant::now() + Duration::from_secs(DECODE_SECONDS);
     let stop = Arc::new(AtomicBool::new(false));
     let _stop = StopOnDrop(stop.clone());
     let permit = tokio::time::timeout_at(
@@ -42,7 +42,7 @@ async fn prepare(
         DECODERS.clone().acquire_owned(),
     )
     .await
-    .map_err(|_| unavailable())?
+    .map_err(|_| preview_error("Timed out waiting for the video preview decoder"))?
     .map_err(|_| unavailable())?;
     let source = std::path::PathBuf::from(source_path);
     let fingerprint = crate::resumable_upload::SourceFingerprint::of(&source).await?;
@@ -283,11 +283,12 @@ pub(crate) async fn prepare_for_account(
     cancel: &mut tokio::sync::oneshot::Receiver<()>,
 ) -> Result<Option<VideoUploadMetadata>, String> {
     account.validate()?;
+    let deadline = Instant::now() + Duration::from_secs(DECODE_SECONDS);
     let prepared = tokio::select! {
         biased;
         _ = cancel => Err("Transfer cancelled".into()),
         result = async { loop { account.validate()?; tokio::time::sleep(std::time::Duration::from_millis(50)).await; } #[allow(unreachable_code)] Ok::<(), String>(()) } => { result?; unreachable!() },
-        result = tokio::time::timeout(Duration::from_secs(DECODE_SECONDS), prepare(source, name, media_mode, mime, resource)) => result.map_err(|_| unavailable())?,
+        result = tokio::time::timeout_at(tokio::time::Instant::from_std(deadline), prepare(source, name, media_mode, mime, resource, deadline)) => result.map_err(|_| preview_error("Video preview preparation timed out"))?,
     }?;
     account.validate()?;
     if let Some(video) = prepared.as_ref() {
@@ -438,7 +439,10 @@ fn stopped(stop: &AtomicBool) -> Result<(), String> {
     }
 }
 fn unavailable() -> String {
-    "[VIDEO_THUMBNAIL_UNAVAILABLE] Could not create a video preview using this computer's media decoder. Install FFmpeg and make it available on PATH, or choose File mode to upload without an inline preview".into()
+    preview_error("Could not create a video preview using this computer's media decoder")
+}
+fn preview_error(reason: &str) -> String {
+    format!("[VIDEO_THUMBNAIL_UNAVAILABLE] {reason}. Choose File mode to upload without an inline preview")
 }
 async fn thumbnail(
     source: &str,
@@ -453,22 +457,148 @@ async fn thumbnail(
     tokio::task::spawn_blocking(move || {
         let _permit = permit;
         stopped(&stop)?;
+        let candidates = ffmpeg_candidates(resource.as_deref());
         #[cfg(target_os = "windows")]
-        if let Ok(bytes) = windows_thumbnail(&source, width, height, deadline, &stop)
-            .and_then(|bytes| normalize(&bytes))
+        let (candidates, probe_failure) = ready_ffmpeg_candidates(candidates, deadline, &stop)?;
+        #[cfg(target_os = "windows")]
         {
-            stopped(&stop)?;
-            return Ok(bytes);
+            // Native decoding retains the full remaining budget when no external
+            // decoder exists. Otherwise reserve time for every known fallback.
+            let native_deadline = attempt_deadline(deadline, candidates.len() + 1);
+            let native = native_thumbnail(
+                &source,
+                width,
+                height,
+                resource.as_deref(),
+                native_deadline,
+                &stop,
+            );
+            if let Ok(bytes) = native.and_then(|bytes| normalize(&bytes)) {
+                stopped(&stop)?;
+                return Ok(bytes);
+            }
         }
         stopped(&stop)?;
         let _ = (width, height);
         if Instant::now() >= deadline {
-            return Err(unavailable());
+            return Err(preview_error("Video preview preparation timed out"));
         }
-        ffmpeg_thumbnail(&source, resource.as_deref(), deadline, &stop)
+        #[cfg(target_os = "windows")]
+        if candidates.is_empty() {
+            if let Some(failure) = probe_failure {
+                return Err(preview_error(failure));
+            }
+        }
+        ffmpeg_thumbnail(&source, &candidates, deadline, &stop)
     })
     .await
     .map_err(|_| unavailable())?
+}
+/// Select the bundled decoder and first executable on the process's search path.
+/// Absolute paths preserve spaces/Unicode and keep later working-directory
+/// changes from altering selection. Bundled and PATH aliases share one attempt.
+fn ffmpeg_candidates(resource: Option<&Path>) -> Vec<PathBuf> {
+    let name = if cfg!(target_os = "windows") {
+        "ffmpeg.exe"
+    } else {
+        "ffmpeg"
+    };
+    let mut candidates = Vec::new();
+    if let Some(path) = resource.map(|directory| directory.join(name)) {
+        if path.is_file() {
+            if let Ok(path) = path.canonicalize() {
+                candidates.push(path);
+            }
+        }
+    }
+    if let Some(search) = executable_search_path() {
+        for directory in std::env::split_paths(&search) {
+            let path = directory.join(name);
+            if !path.is_file() {
+                continue;
+            }
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                if !path
+                    .metadata()
+                    .is_ok_and(|metadata| metadata.permissions().mode() & 0o111 != 0)
+                {
+                    continue;
+                }
+            }
+            if let Ok(path) = path.canonicalize() {
+                if !candidates.contains(&path) {
+                    candidates.push(path);
+                }
+                break;
+            }
+        }
+    }
+    candidates
+}
+fn executable_search_path() -> Option<std::ffi::OsString> {
+    let search = std::env::var_os("PATH");
+    if search.is_some() {
+        return search;
+    }
+    // execvp uses the platform default when PATH is absent. An explicitly
+    // supplied PATH is left unchanged, including an empty one.
+    #[cfg(unix)]
+    unsafe {
+        use std::os::unix::ffi::OsStringExt;
+        let length = libc::confstr(libc::_CS_PATH, std::ptr::null_mut(), 0);
+        if length == 0 || length > 64 * 1024 {
+            return None;
+        }
+        let mut path = vec![0; length];
+        let written = libc::confstr(libc::_CS_PATH, path.as_mut_ptr().cast(), length);
+        if written == 0 || written > length {
+            return None;
+        }
+        path.truncate(written - 1); // confstr includes the terminating NUL.
+        Some(std::ffi::OsString::from_vec(path))
+    }
+    #[cfg(not(unix))]
+    None
+}
+#[cfg(target_os = "windows")]
+fn ready_ffmpeg_candidates(
+    candidates: Vec<PathBuf>,
+    deadline: Instant,
+    stop: &AtomicBool,
+) -> Result<(Vec<PathBuf>, Option<&'static str>), String> {
+    let mut ready = Vec::new();
+    let mut failure = None;
+    for candidate in candidates {
+        stopped(stop)?;
+        if Instant::now() >= deadline {
+            return Err(preview_error("Video preview preparation timed out"));
+        }
+        // File existence alone cannot detect an invalid PE, wrong architecture,
+        // execution policy or failed job attachment. Probe under the same limits
+        // before reserving native decoding time for this alternative.
+        let mut command = std::process::Command::new(&candidate);
+        command.arg("-version");
+        let result = crate::process_budget::run(
+            command,
+            deadline.min(Instant::now() + Duration::from_secs(2)),
+            false,
+            || stopped(stop),
+            None,
+        );
+        stopped(stop)?;
+        match result {
+            Ok(result) if result.success => ready.push(candidate),
+            Ok(_) => failure = Some("FFmpeg was found but its startup check failed"),
+            Err(error) => failure = Some(ffmpeg_failure(&error)),
+        }
+    }
+    Ok((ready, failure))
+}
+fn attempt_deadline(deadline: Instant, remaining: usize) -> Instant {
+    let now = Instant::now();
+    now + deadline.saturating_duration_since(now) / remaining.max(1) as u32
 }
 fn normalize(bytes: &[u8]) -> Result<Vec<u8>, String> {
     if bytes.len() as u64 > FRAME_LIMIT {
@@ -506,32 +636,25 @@ fn normalize(bytes: &[u8]) -> Result<Vec<u8>, String> {
 }
 fn ffmpeg_thumbnail(
     source: &Path,
-    resource: Option<&Path>,
+    candidates: &[PathBuf],
     deadline: Instant,
     stop: &AtomicBool,
 ) -> Result<Vec<u8>, String> {
+    if candidates.is_empty() {
+        return Err(preview_error("No FFmpeg executable was found by the app. Install FFmpeg and make it available on PATH, then fully restart the app"));
+    }
     let directory = crate::temp_artifacts::staging_root()
-        .map_err(|_| unavailable())?
+        .map_err(|_| preview_error("Could not create temporary storage for the video preview"))?
         .join(format!("video-preview-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir(&directory).map_err(|_| unavailable())?;
+    std::fs::create_dir(&directory)
+        .map_err(|_| preview_error("Could not create temporary storage for the video preview"))?;
     let scratch = Scratch(directory);
     let output = scratch.0.join("frame.jpg");
-    let mut candidates = Vec::new();
-    if let Some(resource) = resource {
-        let path = resource.join(if cfg!(target_os = "windows") {
-            "ffmpeg.exe"
-        } else {
-            "ffmpeg"
-        });
-        if path.is_file() {
-            candidates.push(path);
-        }
-    }
-    candidates.push(PathBuf::from("ffmpeg"));
-    for candidate in candidates {
+    let mut failure = "FFmpeg could not decode a frame from this video";
+    for (index, candidate) in candidates.iter().enumerate() {
         stopped(stop)?;
         if Instant::now() >= deadline {
-            return Err(unavailable());
+            return Err(preview_error("Video preview preparation timed out"));
         }
         let _ = std::fs::remove_file(&output);
         let mut command = std::process::Command::new(candidate);
@@ -563,21 +686,79 @@ fn ffmpeg_thumbnail(
             .arg(&output);
         let result = crate::process_budget::run(
             command,
-            deadline,
+            attempt_deadline(deadline, candidates.len() - index),
             false,
             || stopped(stop),
             Some((&output, FRAME_LIMIT)),
         );
         stopped(stop)?;
-        if result.is_ok_and(|result| result.success) {
-            if let Ok(bytes) = std::fs::read(&output) {
-                if let Ok(jpeg) = normalize(&bytes) {
-                    return Ok(jpeg);
+        // Report only fixed categories. Decoder stderr and OS errors can contain
+        // private paths or media metadata and are never copied into UI/logs.
+        failure = match result {
+            Ok(result) if result.success => {
+                if let Ok(bytes) = std::fs::read(&output) {
+                    if let Ok(jpeg) = normalize(&bytes) {
+                        return Ok(jpeg);
+                    }
                 }
+                "FFmpeg produced an invalid preview"
+            }
+            Ok(_) => "FFmpeg could not decode a frame from this video",
+            Err(error) => ffmpeg_failure(&error),
+        };
+    }
+    Err(preview_error(failure))
+}
+fn ffmpeg_failure(error: &str) -> &'static str {
+    match error {
+        "HEIC_DECODER_UNAVAILABLE" => "FFmpeg was found but could not be started",
+        "HEIC_DECODE_DEADLINE" => "FFmpeg video preview decoding timed out",
+        "HEIC_PROCESS_LIMIT" => "FFmpeg could not be safely started for video preview decoding",
+        "HEIC_MEMORY_LIMIT" | "HEIC_OUTPUT_LIMIT" => {
+            "FFmpeg reached a video preview resource limit"
+        }
+        "HEIC_MEMORY_MONITOR_UNAVAILABLE" => {
+            "FFmpeg could not be safely monitored during video preview decoding"
+        }
+        _ => "FFmpeg could not finish video preview decoding",
+    }
+}
+#[cfg(target_os = "windows")]
+fn native_thumbnail(
+    source: &Path,
+    width: i32,
+    height: i32,
+    resource: Option<&Path>,
+    deadline: Instant,
+    stop: &AtomicBool,
+) -> Result<Vec<u8>, String> {
+    #[cfg(feature = "native-e2e")]
+    if let Some(mode) = resource.and_then(|directory| {
+        std::fs::read_to_string(directory.join(".video-upload-native-mode")).ok()
+    }) {
+        if mode == "wait" {
+            while Instant::now() < deadline {
+                stopped(stop)?;
+                std::thread::sleep(Duration::from_millis(25));
+            }
+            return Err(unavailable());
+        }
+        if mode == "fail" {
+            return Err(unavailable());
+        }
+        if mode == "delay" {
+            let ready = Instant::now() + Duration::from_secs(16);
+            while Instant::now() < ready {
+                stopped(stop)?;
+                if Instant::now() >= deadline {
+                    return Err(unavailable());
+                }
+                std::thread::sleep(Duration::from_millis(25));
             }
         }
     }
-    Err(unavailable())
+    let _ = resource;
+    windows_thumbnail(source, width, height, deadline, stop)
 }
 #[cfg(target_os = "windows")]
 fn windows_thumbnail(

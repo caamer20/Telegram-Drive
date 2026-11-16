@@ -82,6 +82,44 @@ jobs:
             brew install ffmpeg
           fi
 
+      - name: Install pinned Windows video upload decoder for E2E journeys
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # Test-only decoder from the Windows build provider linked by ffmpeg.org.
+          # Keep the archive version and independently reviewed release digest fixed.
+          $archive = Join-Path $env:RUNNER_TEMP 'ffmpeg-8.1.2-essentials_build.zip'
+          $directory = Join-Path $env:RUNNER_TEMP 'video-upload-ffmpeg-8.1.2'
+          Invoke-WebRequest -Uri 'https://github.com/GyanD/codexffmpeg/releases/download/8.1.2/ffmpeg-8.1.2-essentials_build.zip' -OutFile $archive
+          $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($digest -ne 'db580001caa24ac104c8cb856cd113a87b0a443f7bdf47d8c12b1d740584a2ec') {
+            throw 'The pinned FFmpeg E2E archive failed SHA-256 verification'
+          }
+          Expand-Archive -LiteralPath $archive -DestinationPath $directory
+          $bin = Join-Path $directory 'ffmpeg-8.1.2-essentials_build/bin'
+          $executable = Join-Path $bin 'ffmpeg.exe'
+          if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) { throw 'FFmpeg E2E executable is missing' }
+          $version = & $executable -version
+          if ($LASTEXITCODE -ne 0 -or $version[0] -notmatch '^ffmpeg version 8\.1\.2(?:-|\s)') { throw 'Unexpected FFmpeg E2E version' }
+          $decoders = & $executable -hide_banner -decoders 2>&1
+          if ($LASTEXITCODE -ne 0 -or ($decoders -join "`n") -notmatch '(?m)^\s*V\S*\s+vp9\s') { throw 'The pinned FFmpeg E2E decoder lacks VP9 support' }
+          $version[0]
+          Get-CimInstance Win32_OperatingSystem | Select-Object Caption, Version, OSArchitecture
+          $bin >> $env:GITHUB_PATH
+
+      - name: Record native validation architecture
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          uname -m
+          rustc -vV
+          printf 'Native validation target: %s\n' '${{ matrix.target || 'host' }}'
+          if [ '${{ matrix.target }}' = 'x86_64-apple-darwin' ]; then
+            # Verify the runner can execute Intel binaries; do not install Rosetta or accept a license.
+            arch -x86_64 /usr/bin/true
+          fi
+
       - name: Install frontend dependencies
         working-directory: app
         run: npm ci
@@ -105,7 +143,7 @@ jobs:
       - name: Run native process and HTTP end-to-end journeys
         if: runner.os != 'Linux'
         working-directory: app/src-tauri
-        run: cargo test --locked --features native-e2e --test native_e2e
+        run: cargo test --locked --features native-e2e --test native_e2e ${{ matrix.target && format('--target {0}', matrix.target) || '' }}
 
       - name: Run native process and HTTP end-to-end journeys with a virtual display
         if: runner.os == 'Linux'
@@ -119,7 +157,7 @@ jobs:
 
       - name: Lint native targets without warnings
         working-directory: app/src-tauri
-        run: cargo clippy --locked --features native-e2e --lib --all-targets -- -D warnings
+        run: cargo clippy --locked --features native-e2e --lib --all-targets ${{ matrix.target && format('--target {0}', matrix.target) || '' }} -- -D warnings
 
       - name: Exercise smoke harness process ownership and failure journeys
         run: node scripts/e2e/packaged-startup.e2e.cjs
