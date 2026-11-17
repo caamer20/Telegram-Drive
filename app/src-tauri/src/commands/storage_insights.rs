@@ -41,8 +41,7 @@ pub(crate) async fn from_source(
             .iter()
             .map(|row| IndexedFile {
                 metadata: row.file.clone(),
-                created_at_unix: chrono::DateTime::parse_from_rfc3339(&row.file.created_at)
-                    .map(|date| date.timestamp())
+                created_at_unix: crate::app_time::parse_rfc3339_seconds(&row.file.created_at)
                     .unwrap_or(i64::MAX),
             })
             .collect::<Vec<_>>();
@@ -84,7 +83,7 @@ fn summarize(
             let days = old_file_days
                 .unwrap_or(DEFAULT_OLD_FILE_DAYS)
                 .clamp(1, 36500);
-            let cutoff = chrono::Utc::now().timestamp() - days * 86_400;
+            let cutoff = crate::app_time::unix_seconds() - days * 86_400;
             let mut matches: Vec<_> = indexed
                 .into_iter()
                 .filter(|file| file.created_at_unix <= cutoff)

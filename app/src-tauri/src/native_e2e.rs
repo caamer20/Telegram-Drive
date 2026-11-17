@@ -864,7 +864,7 @@ impl crate::local_search::Source for InventorySearchSource {
                             size: 1000,
                             mime_type: Some("application/pdf".into()),
                             file_ext: Some("pdf".into()),
-                            created_at: chrono::Utc::now().to_rfc3339(),
+                            created_at: crate::app_time::now_rfc3339(),
                             icon_type: "file".into(),
                             encryption_state: "plain".into(),
                             is_favorite: overlay.favorite,
@@ -1410,6 +1410,8 @@ impl Driver {
             | "asset_clear"
             | "thumbnail_batch" => self.dispatch_assets(request).await,
             "traffic_clock"
+            | "traffic_clock_instant"
+            | "traffic_windows_clock"
             | "traffic_proxy_start_slow"
             | "traffic_proxy_finish_slow"
             | "traffic_proxy_patch"
@@ -1572,7 +1574,7 @@ impl Driver {
                     crate::transfer_engine::apply_failure(
                         &mut job,
                         reason.to_owned(),
-                        chrono::Utc::now().timestamp_millis(),
+                        crate::app_time::unix_millis(),
                     );
                 } else {
                     job.status =
@@ -3455,13 +3457,66 @@ impl Driver {
 
     async fn dispatch_traffic(&mut self, request: Value) -> Result<Value, String> {
         match text(&request, "command")? {
+            "traffic_windows_clock" => {
+                #[cfg(windows)]
+                {
+                    use windows_sys::Win32::{
+                        Foundation::SYSTEMTIME, System::Time::TIME_ZONE_INFORMATION,
+                    };
+                    let instant = crate::app_time::parse_rfc3339_seconds(text(&request, "time")?)
+                        .ok_or("Invalid time")?;
+                    // Substitute only the OS rule lookup in this native fixture.
+                    // Both paths still use the real Windows UTC-to-local conversion;
+                    // no machine timezone or registry setting is changed.
+                    let zone = match text(&request, "rule")? {
+                        "os" => None,
+                        "disabled" => Some(TIME_ZONE_INFORMATION {
+                            Bias: 300,
+                            DaylightBias: -90,
+                            ..Default::default()
+                        }),
+                        "custom" => Some(TIME_ZONE_INFORMATION {
+                            Bias: 300,
+                            DaylightBias: -90,
+                            DaylightDate: SYSTEMTIME {
+                                wMonth: 4,
+                                wDay: 1,
+                                wHour: 2,
+                                ..Default::default()
+                            },
+                            StandardDate: SYSTEMTIME {
+                                wMonth: 10,
+                                wDay: 1,
+                                wHour: 2,
+                                ..Default::default()
+                            },
+                            ..Default::default()
+                        }),
+                        _ => return Err("Unknown Windows timezone fixture rule".into()),
+                    };
+                    crate::app_time::set_windows_timezone_for_e2e(zone);
+                    let local = crate::app_time::local_datetime_at(instant).map_err(error)?;
+                    self.bandwidth.set_date(local.date());
+                    self.network.pacer.set_clock(local);
+                    Ok(
+                        json!({"local":local.to_string(),"stats":self.bandwidth.get_stats(),
+                        "processTz":std::env::var("TZ").ok()}),
+                    )
+                }
+                #[cfg(not(windows))]
+                Err("Windows timezone fixture requires Windows".into())
+            }
+            "traffic_clock_instant" => {
+                let instant = crate::app_time::parse_rfc3339_seconds(text(&request, "time")?)
+                    .ok_or("Invalid time")?;
+                self.network
+                    .pacer
+                    .set_clock(crate::app_time::local_datetime_at(instant).map_err(error)?);
+                Ok(json!(true))
+            }
             "traffic_clock" => {
                 self.network.pacer.set_clock(
-                    chrono::NaiveDateTime::parse_from_str(
-                        text(&request, "time")?,
-                        "%Y-%m-%d %H:%M",
-                    )
-                    .map_err(error)?,
+                    crate::app_time::parse_civil_minute(text(&request, "time")?).map_err(error)?,
                 );
                 Ok(json!(true))
             }
@@ -3567,10 +3622,8 @@ impl Driver {
                 .bandwidth
                 .set_limit(request["bytes"].as_u64().ok_or("Missing limit")?)?)),
             "bandwidth_set_date" => {
-                self.bandwidth.set_date(
-                    chrono::NaiveDate::parse_from_str(text(&request, "date")?, "%Y-%m-%d")
-                        .map_err(error)?,
-                );
+                self.bandwidth
+                    .set_date(crate::app_time::parse_date(text(&request, "date")?).map_err(error)?);
                 Ok(json!(self.bandwidth.get_stats()))
             }
             "bandwidth_resize" => {
@@ -3966,11 +4019,10 @@ impl Driver {
                     .ok_or("Missing files")?
                     .iter()
                     .map(|file| {
-                        let created = chrono::DateTime::parse_from_rfc3339(
+                        let created = crate::app_time::parse_rfc3339_seconds(
                             file["created"].as_str().ok_or("Missing created")?,
                         )
-                        .map_err(error)?
-                        .with_timezone(&chrono::Utc);
+                        .ok_or("Invalid created")?;
                         let name = file["name"].as_str().ok_or("Missing name")?.to_string();
                         Ok(crate::api_catalog::ApiFile {
                             id: file["id"].as_i64().ok_or("Missing id")?,
@@ -3981,7 +4033,7 @@ impl Driver {
                             mime_type: file["mime"].as_str().map(str::to_string),
                             created_at: crate::api_catalog::rfc3339(created),
                             encrypted: file["encrypted"].as_bool().unwrap_or(false),
-                            timestamp: created.timestamp(),
+                            timestamp: created,
                             is_document: true,
                         })
                     })

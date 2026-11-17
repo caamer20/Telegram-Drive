@@ -595,7 +595,7 @@ async fn engine_loop(
                             pending_ops: pair_pending,
                             conflicts: pair_conflicts,
                             last_error: pair_error.clone(),
-                            last_checked_at: Some(chrono::Utc::now().timestamp()),
+                            last_checked_at: Some(crate::app_time::unix_seconds()),
                             wait_reason: None,
                         },
                     )
@@ -620,7 +620,7 @@ async fn engine_loop(
                             pair_id: pair.id,
                             phase: "paused".into(),
                             last_error: Some(error.clone()),
-                            last_checked_at: Some(chrono::Utc::now().timestamp()),
+                            last_checked_at: Some(crate::app_time::unix_seconds()),
                             ..SyncPairStatus::default()
                         },
                     )
@@ -759,7 +759,7 @@ pub(crate) async fn scan_local(
     let recorded = synced.map(recorded_local_files).unwrap_or_default();
     tokio::task::spawn_blocking(move || {
         let canonical_root = root.canonicalize().map_err(|error| error.to_string())?;
-        let now = chrono::Utc::now().timestamp();
+        let now = crate::app_time::unix_seconds();
         let mut scan = LocalScan::default();
         let entries = walkdir::WalkDir::new(&canonical_root).follow_links(false).into_iter().filter_entry(|entry| {
             if entry.depth() == 0 { return true; }
@@ -1591,7 +1591,7 @@ async fn upsert_state(
     // edit within the same second would otherwise be mistaken for no change.
     let settled_local_mtime = settled_mtime(
         local.as_ref().and_then(|entry| entry.modified_at),
-        chrono::Utc::now().timestamp(),
+        crate::app_time::unix_seconds(),
     );
     statement
         .bind::<(usize, Option<i64>)>((6, settled_local_mtime))

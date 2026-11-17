@@ -55,6 +55,14 @@ const NATIVE_FIXTURE_STARTUP: Duration = Duration::from_secs(120);
 impl Backend {
     fn start(root: &Path) -> Self {
         let mut command = Command::new(env!("CARGO_BIN_EXE_native-e2e-driver"));
+        if root.join(".native-e2e-timezone").exists() {
+            command.env(
+                "TZ",
+                std::fs::read_to_string(root.join(".native-e2e-timezone"))
+                    .unwrap()
+                    .trim(),
+            );
+        }
         if root.join(".video-upload-fixture").exists() {
             let scratch = root.join("video-upload-scratch");
             command
@@ -1696,6 +1704,193 @@ async fn rest_api_routes_authenticate_and_reach_their_own_handlers() {
         }
     }
     assert_eq!(operations, 20, "the contract covers every route");
+    app.stop();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn rest_api_date_filters_preserve_legacy_and_fractional_instant_compatibility() {
+    let fixture = Fixture::new();
+    let mut app = Backend::start(&fixture.0);
+    app.ok(json!({"command":"seed_account","owner":101}));
+    let dates = [
+        "1969-12-31T23:59:59Z",
+        "1970-01-01T00:00:00Z",
+        "1970-01-01T00:00:01Z",
+        "2024-02-29T00:00:00Z",
+        "2024-02-29T12:34:56Z",
+    ];
+    app.ok(json!({"command":"api_seed_catalog","folders":[{"id":null,"name":"Saved Messages"}],
+        "files":dates.iter().enumerate().map(|(i,date)|json!({"id":i+1,"folder":null,"name":format!("Date {}.pdf",i+1),"size":1,"created":date,"mime":"application/pdf"})).collect::<Vec<_>>() }));
+    let key = "date-compatibility-key";
+    let api = app.ok(json!({"command":"start_api","key":key}));
+    let url = format!("{}/api/v1/files", api["url"].as_str().unwrap());
+    let client = reqwest::Client::new();
+    for (bound, expected) in [
+        ("1970-01-01T01:00:00.999+01:00", 2),
+        ("1970-01-01t00:00:00z", 2),
+        ("1970-01-01 00:00:00Z", 2),
+        ("1970-01-01T00:00:00−00:00", 2),
+        ("1969-12-31T23:59:60Z", 1),
+        ("1969-12-31T23:59:59.999Z", 1),
+        ("1970-01-01T00:59:59.999999999999+01:00", 1),
+        ("2024-02-28T19:00:00-05:00", 4),
+        ("2024-02-29", 4),
+        ("2024-02-29 12:34:56 UTC", 5),
+        ("2024-02-29 12:34:56", 5),
+        ("2024-\u{00a0}02-29", 4),
+        ("2024-02-29\u{00a0}12:34:56 UTC", 5),
+        ("+02024-02-29", 4),
+        ("+02024-02-29 12:34:56 UTC", 5),
+        ("0", 2),
+        ("1", 3),
+        ("1709164800", 4),
+    ] {
+        let response = client
+            .get(&url)
+            .header("X-API-Key", key)
+            .query(&[("created_after", bound), ("created_before", bound)])
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200, "{bound}");
+        let body: Value = response.json().await.unwrap();
+        assert_eq!(body["total"], 1, "{bound}: {body}");
+        assert_eq!(body["data"][0]["id"], expected, "{bound}: {body}");
+        assert_eq!(
+            body["data"][0]["created_at"],
+            dates[expected as usize - 1],
+            "{bound}"
+        );
+    }
+    for bound in [
+        "-1",
+        "2023-02-29",
+        "2024-02-30",
+        "2024-13-01",
+        "2024-02-29T25:00:00Z",
+        "2024-02-29T12:00:00+25:00",
+        "9223372036854775808",
+        "not a date",
+        "1970-01-01T00:00:00Z[UTC]",
+        "1970-01-01T00:00:00+00:00:00",
+        "1970-01-01T00:00:00+00",
+        "+ 2024-02-29",
+        "+ 2024-02-29 12:34:56 UTC",
+    ] {
+        let response = client
+            .get(&url)
+            .header("X-API-Key", key)
+            .query(&[("created_after", bound)])
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 400, "{bound}");
+        let body: Value = response.json().await.unwrap();
+        assert!(
+            body.to_string().contains("INVALID_TIMESTAMP"),
+            "{bound}: {body}"
+        );
+    }
+    app.stop();
+}
+
+fn raw_api_chunked_pipeline(address: &str, chunked_body: &[u8]) -> String {
+    use std::io::Read;
+    let mut socket = std::net::TcpStream::connect(address).unwrap();
+    socket
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .unwrap();
+    socket
+        .set_write_timeout(Some(Duration::from_secs(10)))
+        .unwrap();
+    socket.write_all(b"POST /api/v1/files/1/copy HTTP/1.1\r\nHost: localhost\r\nX-API-Key: parser-key\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\n\r\n").unwrap();
+    socket.write_all(chunked_body).unwrap();
+    socket.write_all(b"GET /api/v1/files HTTP/1.1\r\nHost: localhost\r\nX-API-Key: parser-key\r\nConnection: close\r\n\r\n").unwrap();
+    let mut response = Vec::new();
+    match socket.read_to_end(&mut response) {
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::ConnectionReset => {}
+        Err(error) => panic!(
+            "HTTP response did not finish: {error}; {}",
+            String::from_utf8_lossy(&response)
+        ),
+    }
+    String::from_utf8(response).unwrap()
+}
+
+fn parser_api_fixture() -> (Fixture, Backend, String) {
+    let fixture = Fixture::new();
+    let mut app = Backend::start(&fixture.0);
+    app.ok(json!({"command":"seed_account","owner":101}));
+    app.ok(json!({
+        "command":"api_seed_catalog", "folders":[{"id":null,"name":"Saved Messages"}],
+        "files":[{"id":1,"folder":null,"name":"pipeline-marker.pdf","size":1,
+            "created":"2026-01-01T00:00:00Z","mime":"application/pdf"}]
+    }));
+    let api = app.ok(json!({"command":"start_api","key":"parser-key"}));
+    let address = api["url"]
+        .as_str()
+        .unwrap()
+        .trim_start_matches("http://")
+        .to_owned();
+    (fixture, app, address)
+}
+
+#[test]
+fn rest_api_accepts_valid_chunk_extensions_trailers_and_pipelined_requests() {
+    let (_fixture, app, address) = parser_api_fixture();
+    for body in [
+        b"2\r\n{}\r\n0\r\n\r\n".as_slice(),
+        b"2;note=\"a b\\\"c\";token=yes\r\n{}\r\n0\r\nX-Checksum: synthetic\r\n\r\n".as_slice(),
+    ] {
+        let response = raw_api_chunked_pipeline(&address, body);
+        assert!(response.starts_with("HTTP/1.1 503"), "{response}");
+        assert_eq!(response.matches("HTTP/1.1 ").count(), 2, "{response}");
+        assert!(
+            response.contains("HTTP/1.1 200") && response.contains("pipeline-marker.pdf"),
+            "{response}"
+        );
+    }
+    app.stop();
+}
+
+#[test]
+fn rest_api_rejects_malformed_chunk_trailers_without_processing_a_following_request() {
+    let (_fixture, app, address) = parser_api_fixture();
+    for body in [
+        b"2\r\n{}\r\n0\r\nX\n\r\n\r\n".as_slice(),
+        b"2\r\n{}\r\n0\r\nX-Trailer: value\nOther: value\r\n\r\n".as_slice(),
+    ] {
+        let response = raw_api_chunked_pipeline(&address, body);
+        assert!(
+            response.starts_with("HTTP/1.1 400"),
+            "malformed trailer accepted: {response}"
+        );
+        assert!(
+            !response.contains("pipeline-marker.pdf") && !response.contains("HTTP/1.1 200"),
+            "following request executed: {response}"
+        );
+    }
+    app.stop();
+}
+
+#[test]
+fn rest_api_rejects_unterminated_quoted_chunk_extensions_without_processing_a_following_request() {
+    let (_fixture, app, address) = parser_api_fixture();
+    for body in [
+        b"2;note=\"unterminated\r\n{}\r\n0\r\n\r\n".as_slice(),
+        b"2;note=\"dangling\\\r\n{}\r\n0\r\n\r\n".as_slice(),
+    ] {
+        let response = raw_api_chunked_pipeline(&address, body);
+        assert!(
+            response.starts_with("HTTP/1.1 400"),
+            "malformed quoted extension accepted: {response}"
+        );
+        assert!(
+            !response.contains("pipeline-marker.pdf") && !response.contains("HTTP/1.1 200"),
+            "following request executed: {response}"
+        );
+    }
     app.stop();
 }
 
@@ -4493,7 +4688,7 @@ fn local_search_runtime_filters_before_paging_and_reuses_saved_rules() {
                 "size":size,
                 "mime_type":"application/octet-stream",
                 "file_ext":ext,
-                "created_at":chrono::Utc::now().to_rfc3339(),
+                "created_at":jiff::Timestamp::now().to_string(),
                 "is_favorite":false,
                 "is_pinned":false,
                 "encryption_state":"plain",
@@ -4840,8 +5035,8 @@ fn local_search_date_window_is_frozen_across_pages_of_one_generation() {
     let fixture = Fixture::new();
     let mut app = Backend::start(&fixture.0);
     app.ok(json!({"command":"seed_account","owner":101}));
-    let boundary = (chrono::Utc::now() - chrono::Duration::days(7) + chrono::Duration::seconds(3))
-        .to_rfc3339();
+    let boundary =
+        (jiff::Timestamp::now() + jiff::SignedDuration::from_secs(-7 * 86_400 + 3)).to_string();
     let files: Vec<_> = (1..=2)
         .map(|id| {
             json!(
@@ -4872,10 +5067,11 @@ fn local_search_date_window_is_frozen_across_pages_of_one_generation() {
 
 #[test]
 fn configurable_weekly_quota_uses_the_saved_limit_and_releases_failed_transfer_holds() {
-    use chrono::Datelike;
     let fixture = Fixture::new();
-    let today = chrono::Local::now().date_naive();
-    let monday = today - chrono::Duration::days(i64::from(today.weekday().num_days_from_monday()));
+    let today = jiff::Zoned::now().date();
+    let monday = today
+        .checked_sub(jiff::Span::new().days(i64::from(today.weekday().to_monday_zero_offset())))
+        .unwrap();
     fixture.write("bandwidth.json",json!({"date":monday.to_string(),"up_bytes":0,"down_bytes":0,"limit_bytes":131072,"period":"weekly"}).to_string());
     let mut app = Backend::start(&fixture.0);
     assert!(
@@ -5042,9 +5238,10 @@ fn quota_corrupt_existing_file_is_preserved_and_cannot_reset_the_limit_or_usage(
     let mut app = Backend::start(&fixture.0);
     app.failure(json!({"command":"bandwidth_hold","bytes":1}));
     assert_eq!(fixture.read("bandwidth.json"), corrupt.as_bytes());
-    use chrono::Datelike;
-    let today = chrono::Local::now().date_naive();
-    let monday = today - chrono::Duration::days(i64::from(today.weekday().num_days_from_monday()));
+    let today = jiff::Zoned::now().date();
+    let monday = today
+        .checked_sub(jiff::Span::new().days(i64::from(today.weekday().to_monday_zero_offset())))
+        .unwrap();
     fixture.write("bandwidth.json",json!({"date":monday.to_string(),"up_bytes":32768,"down_bytes":0,"limit_bytes":65536,"period":"weekly"}).to_string());
     assert!(app
         .failure(json!({"command":"bandwidth_hold","bytes":65536}))
@@ -5115,6 +5312,204 @@ fn traffic_upload_throttle_is_flagged_and_paces_only_unconfirmed_parts() {
     assert_eq!(snapshot["vpn"]["bandwidth_limit_up_kbs"], 512);
     assert_eq!(fixture.read("network_settings.json"), before);
     restarted.stop();
+}
+
+async fn wait_for_http_pacer(app: &mut Backend) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while app.ok(json!({"command":"traffic_pending"})) != 1 {
+        assert!(
+            Instant::now() < deadline,
+            "the HTTP body did not reach the application pacer"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn traffic_local_zone_dst_transitions_control_real_http_pause_and_quota() {
+    // OS date provides an independent timezone oracle; the application observes
+    // the same zone only inside its synthetic child process.
+    for (seconds, expected) in [
+        (1772953140_i64, "2026-03-08 01:59 -0500"),
+        (1772953200, "2026-03-08 03:00 -0400"),
+        (1793511000, "2026-11-01 01:30 -0400"),
+        (1793514600, "2026-11-01 01:30 -0500"),
+        (1793516400, "2026-11-01 02:00 -0500"),
+    ] {
+        let mut date = Command::new("date");
+        date.env("TZ", "America/New_York");
+        #[cfg(target_os = "macos")]
+        date.args(["-r", &seconds.to_string()]);
+        #[cfg(not(target_os = "macos"))]
+        date.args(["-d", &format!("@{seconds}")]);
+        let output = date.arg("+%Y-%m-%d %H:%M %z").output().unwrap();
+        assert!(output.status.success(), "OS date failed: {output:?}");
+        assert_eq!(String::from_utf8(output.stdout).unwrap().trim(), expected);
+    }
+    let fixture = Fixture::new();
+    fixture.write(".native-e2e-timezone", "America/New_York");
+    fixture.write("media.bin", vec![4; 4096]);
+    let mut app = Backend::start(&fixture.0);
+    app.ok(json!({"command":"seed_account","owner":101}));
+    app.ok(json!({"command":"traffic_clock_instant","time":"2026-03-08T06:59:00Z"}));
+    app.ok(
+        json!({"command":"traffic_configure","bandwidth_schedule":true,"windows":[
+        {"days":[6],"start_minute":60,"end_minute":180,"up_kbs":0,"down_kbs":0,"pause":true}]}),
+    );
+    let media = app
+        .ok(json!({"command":"start_media_fixture","source":"media.bin","filename":"media.bin"}));
+    let url = media["url"].as_str().unwrap().to_owned();
+    let spring_url = url.clone();
+    let spring = tokio::spawn(async move {
+        reqwest::get(spring_url)
+            .await
+            .unwrap()
+            .bytes()
+            .await
+            .unwrap()
+    });
+    wait_for_http_pacer(&mut app).await;
+    tokio::time::sleep(Duration::from_millis(350)).await;
+    assert!(
+        !spring.is_finished(),
+        "01:59 local must still pause the actual HTTP transfer"
+    );
+    app.ok(json!({"command":"traffic_clock_instant","time":"2026-03-08T07:00:00Z"}));
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(5), spring)
+            .await
+            .unwrap()
+            .unwrap()
+            .len(),
+        4096,
+        "spring DST jumps to the exclusive 03:00 pause boundary"
+    );
+    app.ok(json!({"command":"traffic_clock_instant","time":"2026-11-01T05:30:00Z"}));
+    app.ok(
+        json!({"command":"traffic_configure","bandwidth_schedule":true,"windows":[
+        {"days":[6],"start_minute":60,"end_minute":120,"up_kbs":0,"down_kbs":0,"pause":true}]}),
+    );
+    let fall = tokio::spawn(async move { reqwest::get(url).await.unwrap().bytes().await.unwrap() });
+    wait_for_http_pacer(&mut app).await;
+    tokio::time::sleep(Duration::from_millis(350)).await;
+    assert!(!fall.is_finished(), "the first 01:30 occurrence must pause");
+    app.ok(json!({"command":"traffic_clock_instant","time":"2026-11-01T06:30:00Z"}));
+    tokio::time::sleep(Duration::from_millis(350)).await;
+    assert!(
+        !fall.is_finished(),
+        "the repeated 01:30 occurrence must also pause"
+    );
+    app.ok(json!({"command":"traffic_clock_instant","time":"2026-11-01T07:00:00Z"}));
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(5), fall)
+            .await
+            .unwrap()
+            .unwrap()
+            .len(),
+        4096
+    );
+    assert_eq!(
+        app.ok(json!({"command":"bandwidth_read"}))["down_bytes"],
+        8192,
+        "only both successful HTTP bodies commit quota across DST schedule changes"
+    );
+    app.stop();
+}
+
+#[cfg(windows)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn traffic_windows_os_rules_control_http_pause_and_weekly_quota_without_changing_system_zone()
+{
+    // The real OS path must ignore a Unix-style process TZ override. PowerShell
+    // independently asks Windows for the local conversion, without changing it.
+    let oracle = Command::new("powershell.exe")
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "[TimeZoneInfo]::ConvertTimeFromUtc([DateTime]::Parse('2026-07-06T04:30:00Z').ToUniversalTime(), [TimeZoneInfo]::Local).ToString('yyyy-MM-ddTHH:mm:ss')",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        oracle.status.success(),
+        "Windows timezone oracle failed: {oracle:?}"
+    );
+    let os_fixture = Fixture::new();
+    os_fixture.write(".native-e2e-timezone", "Antarctica/Troll");
+    let mut os_app = Backend::start(&os_fixture.0);
+    let os_local = os_app.ok(json!({"command":"traffic_windows_clock",
+        "rule":"os","time":"2026-07-06T04:30:00Z"}));
+    assert_eq!(os_local["processTz"], "Antarctica/Troll");
+    assert_eq!(
+        os_local["local"],
+        String::from_utf8(oracle.stdout).unwrap().trim(),
+        "the normal Windows path must use the OS rules and ignore process TZ"
+    );
+    os_app.stop();
+
+    let fixture = Fixture::new();
+    fixture.write(".native-e2e-timezone", "Antarctica/Troll");
+    fixture.write("media.bin", vec![7; 4096]);
+    fixture.write(
+        "bandwidth.json",
+        json!({"date":"2026-06-29","up_bytes":0,"down_bytes":1024,
+            "limit_bytes":8192,"period":"weekly"})
+        .to_string(),
+    );
+    let mut app = Backend::start(&fixture.0);
+    app.ok(json!({"command":"seed_account","owner":101}));
+    let disabled = app.ok(json!({"command":"traffic_windows_clock",
+        "rule":"disabled","time":"2026-07-06T04:30:00Z"}));
+    assert_eq!(disabled["local"], "2026-07-05T23:30:00");
+    assert_eq!(disabled["stats"]["date"], "2026-06-29");
+    assert_eq!(disabled["stats"]["down_bytes"], 1024);
+    app.ok(
+        json!({"command":"traffic_configure","bandwidth_schedule":true,
+        "windows":[{"days":[6],"start_minute":1380,"end_minute":30,
+            "up_kbs":0,"down_kbs":0,"pause":true}]}),
+    );
+    let media = app.ok(json!({"command":"start_media_fixture",
+        "source":"media.bin","filename":"media.bin"}));
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .unwrap();
+    let url = media["url"].as_str().unwrap().to_string();
+    let body =
+        tokio::spawn(async move { client.get(url).send().await.unwrap().bytes().await.unwrap() });
+    wait_for_http_pacer(&mut app).await;
+    tokio::time::sleep(Duration::from_millis(350)).await;
+    assert!(
+        !body.is_finished(),
+        "disabled DST leaves Sunday 23:30 inside the overnight HTTP pause"
+    );
+
+    // A nonstandard 90-minute DST bias and April/October transitions deliberately
+    // differ from IANA's named US zone. The same UTC instant becomes Monday.
+    let custom = app.ok(json!({"command":"traffic_windows_clock",
+        "rule":"custom","time":"2026-07-06T04:30:00Z"}));
+    assert_eq!(custom["local"], "2026-07-06T01:00:00");
+    assert_eq!(custom["stats"]["date"], "2026-07-06");
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(5), body)
+            .await
+            .unwrap()
+            .unwrap()
+            .as_ref(),
+        vec![7; 4096],
+        "custom Windows rules must release the actual HTTP body"
+    );
+    let stats = app.ok(json!({"command":"bandwidth_read"}));
+    assert_eq!(stats["date"], "2026-07-06");
+    assert_eq!(stats["down_bytes"], 4096);
+    assert_eq!(stats["limit_bytes"], 8192);
+    let persisted: Value = serde_json::from_slice(&fixture.read("bandwidth.json")).unwrap();
+    assert_eq!(persisted["date"], "2026-07-06");
+    assert_eq!(persisted["down_bytes"], 4096);
+    assert_eq!(persisted["limit_bytes"], 8192);
+    app.stop();
 }
 
 #[tokio::test]
@@ -5644,7 +6039,7 @@ async fn sponsor_origins_only_hide_requests_after_verified_active_or_grace_acces
         let key = SigningKey::from_bytes(&[73; 32]);
         let public = URL_SAFE_NO_PAD.encode(key.verifying_key().as_bytes());
         let device = "synthetic-sponsor-device";
-        let now = chrono::Utc::now().timestamp();
+        let now = jiff::Timestamp::now().as_second();
         let token =
             |expires: i64, until: i64| {
                 let header = URL_SAFE_NO_PAD.encode(
@@ -5836,7 +6231,7 @@ async fn supporter_verification_suppresses_inflight_and_stale_ad_relay_bodies_un
     let public = URL_SAFE_NO_PAD.encode(key.verifying_key().as_bytes());
     let device = "inflight-sponsor-device";
     let load_access = |app: &mut Backend| {
-        let now = chrono::Utc::now().timestamp();
+        let now = jiff::Timestamp::now().as_second();
         let header = URL_SAFE_NO_PAD.encode(
             serde_json::to_vec(&json!({"alg":"EdDSA","typ":"TD-SUPPORTER","kid":"v1"})).unwrap(),
         );
@@ -5878,7 +6273,7 @@ async fn supporter_verification_suppresses_inflight_and_stale_ad_relay_bodies_un
                 "token":"unavailable-fixture",
                 "devicePublicKey":device,
                 "servicePublicKey":public,
-                "now":chrono::Utc::now().timestamp()
+                "now":jiff::Timestamp::now().as_second()
             }
         ));
         assert_eq!(

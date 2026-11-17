@@ -524,7 +524,7 @@ async fn get_shared_file(
     }
 
     if let Some(expiry) = row.expires_at {
-        let now = chrono::Utc::now().timestamp();
+        let now = crate::app_time::unix_seconds();
         if expiry < now {
             return HttpResponse::Gone().body("This shared link has expired");
         }
@@ -667,7 +667,7 @@ async fn verify_shared_file_password(
 
     if row
         .expires_at
-        .is_some_and(|expiry| expiry < chrono::Utc::now().timestamp())
+        .is_some_and(|expiry| expiry < crate::app_time::unix_seconds())
     {
         return HttpResponse::Gone().body("This shared link has expired");
     }
@@ -678,7 +678,7 @@ async fn verify_shared_file_password(
     };
 
     let token_key = token_attempt_key(&token);
-    let now = chrono::Utc::now().timestamp();
+    let now = crate::app_time::unix_seconds();
     if let Err(retry_after) =
         with_password_attempt_limiter(|limiter| limiter.begin_attempt(token_key, now))
     {

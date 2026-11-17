@@ -6,8 +6,8 @@ use crate::commands::utils::media_size;
 use crate::commands::TelegramState;
 use crate::models::FolderMetadata;
 use crate::workspace::AccountGuard;
-use chrono::{DateTime, NaiveDate, NaiveDateTime, SecondsFormat, Utc};
 use grammers_client::types::{Media, Message, Peer};
+use jiff::{fmt::temporal::DateTimePrinter, Timestamp};
 use serde::Serialize;
 use std::{
     collections::HashMap,
@@ -44,26 +44,26 @@ pub struct ApiFile {
     pub is_document: bool,
 }
 
-pub fn rfc3339(date: DateTime<Utc>) -> String {
-    date.to_rfc3339_opts(SecondsFormat::Secs, true)
+pub fn rfc3339(seconds: i64) -> String {
+    let timestamp = Timestamp::from_second(seconds)
+        .expect("Telegram message timestamps fit the supported calendar");
+    DateTimePrinter::new()
+        .precision(Some(0))
+        .timestamp_to_string(&timestamp)
 }
 
 /// Accepts RFC 3339, a plain date, Unix seconds, and the
 /// `2026-06-05 10:00:00 UTC` form returned by releases before 4.0.
 pub fn parse_time(value: &str) -> Option<i64> {
     let value = value.trim();
-    if let Ok(parsed) = DateTime::parse_from_rfc3339(value) {
-        return Some(parsed.timestamp());
+    if let Some(seconds) = crate::app_time::parse_rfc3339_seconds(value) {
+        return Some(seconds);
     }
-    if let Ok(parsed) =
-        NaiveDateTime::parse_from_str(value.trim_end_matches(" UTC"), "%Y-%m-%d %H:%M:%S")
-    {
-        return Some(parsed.and_utc().timestamp());
+    if let Ok(parsed) = crate::app_time::parse_civil_datetime(value.trim_end_matches(" UTC")) {
+        return Some(crate::app_time::civil_utc_seconds(parsed));
     }
-    if let Ok(parsed) = NaiveDate::parse_from_str(value, "%Y-%m-%d") {
-        return parsed
-            .and_hms_opt(0, 0, 0)
-            .map(|start| start.and_utc().timestamp());
+    if let Ok(parsed) = crate::app_time::parse_date(value) {
+        return Some(crate::app_time::civil_utc_seconds(parsed.at(0, 0, 0, 0)));
     }
     value.parse::<i64>().ok().filter(|seconds| *seconds >= 0)
 }
@@ -104,7 +104,7 @@ pub fn file_from_message(message: &Message, folder_id: Option<i64>) -> Option<Ap
         name,
         size,
         mime_type,
-        created_at: rfc3339(message.date()),
+        created_at: rfc3339(message.date().timestamp()),
         timestamp: message.date().timestamp(),
         document_name,
         is_document,

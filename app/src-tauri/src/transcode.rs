@@ -312,7 +312,7 @@ impl TranscodeManager {
                         .iter()
                         .fold(0u64, |total, entry| total.saturating_add(entry.size_bytes));
                     snapshot.entries = entries;
-                    snapshot.last_scanned_at = Some(chrono::Utc::now().timestamp());
+                    snapshot.last_scanned_at = Some(crate::app_time::unix_seconds());
                     snapshot.last_error = None;
                     log::info!(
                         "Transcode cache reconciliation found {} variants ({} bytes) in {:?}",
@@ -324,7 +324,7 @@ impl TranscodeManager {
                 Err(error) => {
                     log::warn!("Transcode cache reconciliation failed: {error}");
                     snapshot.last_error = Some(error);
-                    snapshot.last_scanned_at = Some(chrono::Utc::now().timestamp());
+                    snapshot.last_scanned_at = Some(crate::app_time::unix_seconds());
                 }
             }
             drop(snapshot);

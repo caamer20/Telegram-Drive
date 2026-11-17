@@ -373,7 +373,7 @@ pub fn install_baseline(conn: &Connection) -> Result<(), String> {
             .bind((3, baseline_checksum().as_str()))
             .map_err(|error| error.to_string())?;
         statement
-            .bind((4, chrono::Utc::now().timestamp()))
+            .bind((4, crate::app_time::unix_seconds()))
             .map_err(|error| error.to_string())?;
         statement
             .bind((5, env!("CARGO_PKG_VERSION")))
@@ -547,7 +547,7 @@ pub fn install_share_ownership(conn: &Connection) -> Result<(), String> {
             .bind((2, share_owner_checksum().as_str()))
             .map_err(|e| e.to_string())?;
         statement
-            .bind((3, chrono::Utc::now().timestamp()))
+            .bind((3, crate::app_time::unix_seconds()))
             .map_err(|e| e.to_string())?;
         statement
             .bind((4, env!("CARGO_PKG_VERSION")))

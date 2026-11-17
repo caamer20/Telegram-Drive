@@ -197,7 +197,7 @@ fn encrypt_settings(
         .map_err(|_| "Unable to initialize settings encryption".to_string())?;
     let mut envelope = EncryptedSettingsEnvelope {
         version: 1,
-        updated_at: chrono::Utc::now().timestamp(),
+        updated_at: crate::app_time::unix_seconds(),
         device_id,
         salt: URL_SAFE_NO_PAD.encode(salt),
         nonce: URL_SAFE_NO_PAD.encode(nonce),

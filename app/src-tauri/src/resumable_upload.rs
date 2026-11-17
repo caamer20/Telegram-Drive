@@ -271,7 +271,7 @@ impl ResumableUpload {
     /// Anything else recorded under the same key is removed.
     pub async fn session(&self) -> Result<Option<UploadSession>, String> {
         let source = self.source.clone();
-        let now = chrono::Utc::now().timestamp();
+        let now = crate::app_time::unix_seconds();
         self.with_store(move |store, key| {
             // An unreadable record is not an error: the upload starts over.
             let Some(session) = store
@@ -308,7 +308,7 @@ impl ResumableUpload {
 
     async fn save(&self, session: &UploadSession) -> Result<(), String> {
         let mut session = session.clone();
-        session.updated_at = chrono::Utc::now().timestamp();
+        session.updated_at = crate::app_time::unix_seconds();
         self.with_store(move |store, key| store.put_record(RECORD_KIND, key, &session))
             .await
     }
@@ -337,7 +337,7 @@ impl ResumableUpload {
         let envelope_header =
             envelope_header.map(|header| base64::engine::general_purpose::STANDARD.encode(header));
         let recorded = self.session().await.map_err(UploadError::Failed)?;
-        let now = chrono::Utc::now().timestamp();
+        let now = crate::app_time::unix_seconds();
         let mut session = match recorded {
             Some(session)
                 if session.total_bytes == total_bytes

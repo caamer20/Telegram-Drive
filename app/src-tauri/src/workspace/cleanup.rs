@@ -191,7 +191,7 @@ pub async fn cmd_cleanup_schedule(
                 file,
                 fingerprint,
                 retention_days,
-                chrono::Utc::now().timestamp_millis(),
+                crate::app_time::unix_millis(),
             )?;
             Ok::<(), String>(())
         }
@@ -287,7 +287,7 @@ pub async fn cmd_cleanup_process(
     let due = list(&Store::open(&root, account.owner)?)?;
     for removal in due
         .into_iter()
-        .filter(|value| is_due(value, chrono::Utc::now().timestamp_millis()))
+        .filter(|value| is_due(value, crate::app_time::unix_millis()))
     {
         account.validate()?;
         let (client, peer, remote) = match message(&app, &account, &removal.file).await {
@@ -301,7 +301,7 @@ pub async fn cmd_cleanup_process(
             &root,
             account.owner,
             removal,
-            chrono::Utc::now().timestamp_millis(),
+            crate::app_time::unix_millis(),
             fingerprint,
             || account.validate(),
             || async {

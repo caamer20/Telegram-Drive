@@ -345,7 +345,7 @@ pub(crate) fn init_db_at(dir: &std::path::Path) -> Result<DbConnection, String> 
             COMMIT;",
             migration_name.replace('\'', "''"),
             migration_checksum,
-            chrono::Utc::now().timestamp(),
+            crate::app_time::unix_seconds(),
             env!("CARGO_PKG_VERSION").replace('\'', "''"),
         );
         retry_initialization_step("folder sync migration", || {
@@ -388,7 +388,7 @@ pub(crate) fn init_db_at(dir: &std::path::Path) -> Result<DbConnection, String> 
             COMMIT;",
             migration_name.replace('\'', "''"),
             migration_checksum,
-            chrono::Utc::now().timestamp(),
+            crate::app_time::unix_seconds(),
             env!("CARGO_PKG_VERSION").replace('\'', "''"),
         );
         retry_initialization_step("file inventory migration", || {
@@ -477,7 +477,7 @@ fn run_encryption_migration(conn: &sqlite::Connection) -> Result<(), String> {
         }
         conn.execute(format!(
             "INSERT OR IGNORE INTO schema_version (version, applied_at) VALUES (3, {})",
-            chrono::Utc::now().timestamp()
+            crate::app_time::unix_seconds()
         ))
         .map_err(|error| error.to_string())?;
         Ok(())

@@ -1,4 +1,5 @@
 pub mod app_log;
+pub(crate) mod app_time;
 pub mod crypto;
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub mod desktop_lifecycle;

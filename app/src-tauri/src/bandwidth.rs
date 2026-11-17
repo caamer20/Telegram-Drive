@@ -1,4 +1,4 @@
-use chrono::{Datelike, Duration, Local, NaiveDate};
+use jiff::{civil::Date, Span};
 use serde::{Deserialize, Serialize};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
@@ -28,15 +28,15 @@ fn weekly_period_name() -> String {
     "weekly".to_string()
 }
 
-fn week_start_for(date: NaiveDate) -> NaiveDate {
-    date - Duration::days(date.weekday().num_days_from_monday() as i64)
+fn week_start_for(date: Date) -> Date {
+    date - Span::new().days(i64::from(date.weekday().to_monday_zero_offset()))
 }
 
 impl Default for BandwidthStats {
     fn default() -> Self {
-        let week_start = week_start_for(Local::now().date_naive());
+        let week_start = week_start_for(crate::app_time::local_datetime().date());
         Self {
-            date: week_start.format("%Y-%m-%d").to_string(),
+            date: week_start.to_string(),
             up_bytes: 0,
             down_bytes: 0,
             limit_bytes: WEEKLY_LIMIT_BYTES,
@@ -52,7 +52,7 @@ pub struct BandwidthManager {
     accounting: Mutex<Accounting>,
     limit: std::sync::atomic::AtomicU64,
     #[cfg(feature = "native-e2e")]
-    date: Mutex<Option<NaiveDate>>,
+    date: Mutex<Option<Date>>,
 }
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ReservationDirection {
@@ -155,7 +155,7 @@ impl BandwidthManager {
         };
         let stats: BandwidthStats = serde_json::from_str(&value)
             .map_err(|error| format!("Invalid bandwidth accounting: {error}"))?;
-        NaiveDate::parse_from_str(&stats.date, "%Y-%m-%d")
+        crate::app_time::parse_date(&stats.date)
             .map_err(|error| format!("Invalid bandwidth accounting date: {error}"))?;
         if stats.limit_bytes == 0 || stats.up_bytes.checked_add(stats.down_bytes).is_none() {
             return Err("Invalid bandwidth accounting quota or usage".into());
@@ -181,9 +181,9 @@ impl BandwidthManager {
         }
         let today = self.today();
         let monday = week_start_for(today);
-        let canonical = monday.format("%Y-%m-%d").to_string();
+        let canonical = monday.to_string();
         let previous = state.stats.clone();
-        let date = NaiveDate::parse_from_str(&state.stats.date, "%Y-%m-%d")
+        let date = crate::app_time::parse_date(&state.stats.date)
             .map_err(|error| format!("Invalid bandwidth accounting date: {error}"))?;
         if week_start_for(date) > monday {
             return Err("Bandwidth clock moved backward; retaining the later quota window".into());
@@ -315,15 +315,15 @@ impl BandwidthManager {
         self.limit.store(bytes, std::sync::atomic::Ordering::SeqCst);
         Ok(Self::display_stats(&state))
     }
-    fn today(&self) -> NaiveDate {
+    fn today(&self) -> Date {
         #[cfg(feature = "native-e2e")]
         if let Some(date) = *self.date.lock().unwrap_or_else(|e| e.into_inner()) {
             return date;
         }
-        Local::now().date_naive()
+        crate::app_time::local_datetime().date()
     }
     #[cfg(feature = "native-e2e")]
-    pub(crate) fn set_date(&self, date: NaiveDate) {
+    pub(crate) fn set_date(&self, date: Date) {
         *self.date.lock().unwrap_or_else(|e| e.into_inner()) = Some(date);
     }
     fn commit(&self, id: u64) -> Result<(), String> {

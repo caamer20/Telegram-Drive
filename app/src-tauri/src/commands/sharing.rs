@@ -113,7 +113,7 @@ pub async fn cmd_create_share(
     }
     account.validate()?;
     let token = generate_share_token();
-    let created_at = chrono::Utc::now().timestamp();
+    let created_at = crate::app_time::unix_seconds();
     let expires_at = expiry_hours.map(|hours| created_at + hours * 3600);
     let password = validate_share_password(password)?;
     // Bcrypt is deliberately completed on a blocking worker before the SQLite

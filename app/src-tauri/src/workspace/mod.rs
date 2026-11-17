@@ -74,7 +74,7 @@ pub async fn record_chunk(
     tokio::task::spawn_blocking(move||publication.persist(|| {
         let account=&publication.account;let store=Store::open(&account.root,account.owner)?;
         store.remember_files(&files,&name,&scan)?;
-        if let Some(file)=files.first() {let key=file.folder_id.map(|id|id.to_string()).unwrap_or_else(||"saved".into());store.put_record("scan",&key,&serde_json::json!({"folderId":file.folder_id,"folderName":name,"complete":false,"updatedAt":chrono::Utc::now().timestamp_millis()}))?;}
+        if let Some(file)=files.first() {let key=file.folder_id.map(|id|id.to_string()).unwrap_or_else(||"saved".into());store.put_record("scan",&key,&serde_json::json!({"folderId":file.folder_id,"folderName":name,"complete":false,"updatedAt":crate::app_time::unix_millis()}))?;}
         account.validate()
     })).await.map_err(|error|error.to_string())?
 }
@@ -90,7 +90,7 @@ pub async fn complete_scan(
         store.transaction(|| {
             store.complete_scan(folder,&scan)?;
             let key=folder.map(|id|id.to_string()).unwrap_or_else(||"saved".into());let old=store.record::<serde_json::Value>("scan",&key)?.unwrap_or_default();
-            store.put_record("scan",&key,&serde_json::json!({"folderId":folder,"folderName":old.get("folderName").and_then(|value|value.as_str()).unwrap_or("Saved Messages"),"complete":true,"updatedAt":chrono::Utc::now().timestamp_millis()}))?;
+            store.put_record("scan",&key,&serde_json::json!({"folderId":folder,"folderName":old.get("folderName").and_then(|value|value.as_str()).unwrap_or("Saved Messages"),"complete":true,"updatedAt":crate::app_time::unix_millis()}))?;
             account.validate()
         })
     })).await.map_err(|error|error.to_string())?

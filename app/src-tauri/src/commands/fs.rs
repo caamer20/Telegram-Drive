@@ -348,7 +348,7 @@ fn registry_record_from_header(
         header_sha256: Some(header_sha256),
         record_state: EncryptedFileState::Active,
         reconciliation_state: reconciliation_state.to_string(),
-        created_at: chrono::Utc::now().timestamp(),
+        created_at: crate::app_time::unix_seconds(),
         last_verified_at: None,
     })
 }
@@ -3088,7 +3088,7 @@ async fn cmd_upload_file_encrypted(
                         header_sha256: Some(header_sha256),
                         record_state: EncryptedFileState::Active,
                         reconciliation_state: "ok".to_string(),
-                        created_at: chrono::Utc::now().timestamp(),
+                        created_at: crate::app_time::unix_seconds(),
                         last_verified_at: None,
                     };
                     let registry_result =
@@ -4638,10 +4638,7 @@ pub async fn cmd_get_files(
     let request_id = match request_id {
         Some(request_id) if !request_id.trim().is_empty() && request_id.len() <= 128 => request_id,
         Some(_) => return Err("A valid file-load request identifier is required".to_string()),
-        None => format!(
-            "legacy-{}",
-            chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
-        ),
+        None => format!("legacy-{}", crate::app_time::unix_nanos()),
     };
     let inventory_key = crate::commands::file_inventory::folder_key(folder_id);
     let registration_key = format!("{}:{inventory_key}", workspace_account.owner);

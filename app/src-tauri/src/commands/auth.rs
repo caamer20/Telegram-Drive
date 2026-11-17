@@ -48,7 +48,7 @@ fn quarantine_session_files(session_path: &Path) -> Result<String, String> {
         .ok_or_else(|| "Session path has no parent directory".to_string())?;
     let quarantine_id = format!(
         "{}-{}",
-        chrono::Utc::now().format("%Y%m%dT%H%M%SZ"),
+        crate::app_time::utc_compact_stamp(),
         uuid::Uuid::new_v4()
     );
     let quarantine_dir = app_data_dir.join("session-quarantine").join(&quarantine_id);

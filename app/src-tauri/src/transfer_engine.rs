@@ -277,7 +277,7 @@ impl TransferStore {
         connection
             .execute(DATABASE_SCHEMA)
             .map_err(|error| format!("Could not initialize transfer database: {error}"))?;
-        Self::maintain_tombstones(&connection, chrono::Utc::now().timestamp())?;
+        Self::maintain_tombstones(&connection, crate::app_time::unix_seconds())?;
         let mut jobs = Self::load_all_from(&connection)?;
         // A supervised transfer belongs to an operation that ended with the
         // previous process. Its supervisor plans the work again; a leftover
@@ -454,7 +454,7 @@ impl TransferStore {
             connection
                 .execute("BEGIN IMMEDIATE")
                 .map_err(|e| e.to_string())?;
-            let removed_at = chrono::Utc::now().timestamp();
+            let removed_at = crate::app_time::unix_seconds();
             let result = (|| {
                 for id in &ids {
                     let mut tombstone = connection
@@ -2065,7 +2065,7 @@ fn flood_wait_seconds(error: &str) -> Option<u32> {
 }
 
 fn now_millis() -> i64 {
-    chrono::Utc::now().timestamp_millis()
+    crate::app_time::unix_millis()
 }
 
 #[tauri::command]

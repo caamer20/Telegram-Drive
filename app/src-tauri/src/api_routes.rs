@@ -1849,7 +1849,7 @@ async fn api_upload_file(
         name: filename,
         size: file_size,
         mime_type: field_mime,
-        created_at: api_catalog::rfc3339(msg.date()),
+        created_at: api_catalog::rfc3339(msg.date().timestamp()),
         encrypted: false,
         timestamp: msg.date().timestamp(),
         is_document: true,

@@ -41,7 +41,7 @@ pub async fn upsert_inventory_chunk(
     if files.is_empty() {
         return Ok(());
     }
-    let updated_at = chrono::Utc::now().timestamp();
+    let updated_at = crate::app_time::unix_seconds();
     scoped_connection(database, publication, move |connection| {
         connection
             .execute("BEGIN IMMEDIATE")
@@ -133,7 +133,7 @@ pub async fn complete_inventory_scan(
     scan_id: String,
     publication: Option<crate::file_inventory::Publication>,
 ) -> Result<(), String> {
-    let completed_at = chrono::Utc::now().timestamp();
+    let completed_at = crate::app_time::unix_seconds();
     scoped_connection(database, publication, move |connection| {
         connection
             .execute("BEGIN IMMEDIATE")

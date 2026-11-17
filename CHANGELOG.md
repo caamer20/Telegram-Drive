@@ -1,3 +1,29 @@
+## [4.1.7] - 2026-11-17
+
+### Video upload previews
+
+- Improve VP9 and other supported MP4 video preview preparation (#249). Reserve time for a working FFmpeg fallback when the Windows native decoder or a bundled decoder stalls, while retaining the overall timeout and resource limits.
+- Fix Windows process monitoring rejecting short-lived decoder processes. Resolve FFmpeg to an explicit executable path and distinguish missing decoders, launch failures, decoding failures and timeouts without exposing private paths or raw decoder output.
+- Preserve original video bytes, dimensions, duration, filename captions, quota accounting, cancellation and temporary-file cleanup. File mode and protected uploads retain their existing behavior.
+
+### WebDAV retention
+
+- Keep known older entries visible after the root cache expires when a folder listing is incomplete, including the existing large-catalog case above 50,000 entries.
+- Retain cached history only for the same folder path and identity. Complete listings still remove obsolete entries, and removed, renamed or reassigned folders cannot retain stale file URLs.
+- Reject late listing results for replaced folders while preserving account isolation and independent folder refresh timing.
+
+### Dependency security
+
+- Update Actix HTTP to 3.21.3 to reject malformed chunk trailers and unterminated quoted chunk extensions without accepting a following request.
+- Replace direct use of the unmaintained Chrono library with Jiff while preserving stored timestamp units, documented date filters, weekly quota boundaries and operating-system local-time scheduling. Upstream Telegram and WebDAV packages retain their transitive date dependency under the existing policy.
+
+### Compatibility and verification
+
+- Preserve existing Telegram sessions, vaults, settings, transfer behavior and lifetime supporter activations. The optional $5.00 USD one-time lifetime ad-free license and recovery rights remain unchanged.
+- Add native HTTP/decoder regressions for cache expiry, folder identity changes, stale publication, VP9/HEVC/AV1 preparation, decoder fallback and process cleanup. Automated Telegram boundaries use controlled fixtures; the reporter's exact Windows 10 file and manual installed-platform acceptance remain unrun.
+- The optional application npm audit reports [GHSA-fc5q-39xc-vjpf](https://github.com/advisories/GHSA-fc5q-39xc-vjpf) in Picomatch 4.0.7, a Vite build-only dependency absent from the application runtime. No patched npm release is available at release preparation; the finding remains unresolved and the existing dependency policy is unchanged.
+- Retain desktop platform builds, packaged startup, dependency, E2E, signing, checksum, SBOM and provenance gates. This release updates desktop only; Android remains on its separate release line.
+
 ## [4.1.6] - 2026-11-14
 
 ### Transfer sorting

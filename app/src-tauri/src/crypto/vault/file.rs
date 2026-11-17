@@ -213,7 +213,7 @@ impl FileVault {
             .parent()
             .ok_or_else(|| CryptoError::internal("Vault has no parent directory"))?;
         let prefix = self.archive_prefix();
-        let stamp = chrono::Utc::now().format("%Y%m%dT%H%M%S%3fZ");
+        let stamp = crate::app_time::utc_millis_stamp();
         let archive = parent.join(format!("{prefix}{stamp}"));
         let mut input = std::fs::File::open(&source)?;
         let mut options = OpenOptions::new();
@@ -779,7 +779,7 @@ impl CryptoVault for FileVault {
                 "Vault passphrase is too short",
             ));
         }
-        self.created_at = chrono::Utc::now().timestamp();
+        self.created_at = crate::app_time::unix_seconds();
         self.vault_key = Some(SecretKey::new(random::random_key()));
         self.profiles.clear();
         let salt = random::random_salt();

@@ -221,7 +221,7 @@ impl Index {
             connection,
             rows,
             credential,
-            date_anchor: chrono::Utc::now().timestamp(),
+            date_anchor: crate::app_time::unix_seconds(),
             truncated,
         })
     }

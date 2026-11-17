@@ -230,7 +230,7 @@ pub async fn log_sync(
     statement.bind((2, action.as_str())).map_err(|error| error.to_string())?;
     statement.bind::<(usize, Option<&str>)>((3, path.as_deref())).map_err(|error| error.to_string())?;
     statement.bind::<(usize, Option<&str>)>((4, detail.as_deref())).map_err(|error| error.to_string())?;
-    statement.bind((5, chrono::Utc::now().timestamp())).map_err(|error| error.to_string())?;
+    statement.bind((5, crate::app_time::unix_seconds())).map_err(|error| error.to_string())?;
     statement.next().map_err(|error| error.to_string())?;
     drop(statement);
     // Keep diagnostics useful without allowing an always-offline or otherwise

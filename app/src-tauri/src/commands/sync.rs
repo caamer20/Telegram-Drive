@@ -284,7 +284,7 @@ pub async fn cmd_add_sync_pair(
     let direction = request.sync_direction.clone();
     let preferences = request.preferences.clone();
     let is_active = is_active.unwrap_or(false);
-    let created_at = chrono::Utc::now().timestamp();
+    let created_at = crate::app_time::unix_seconds();
     let folder_key = channel_id.to_string();
     let canonical_for_check = canonical.clone();
     let local_path_for_db = local_path.clone();

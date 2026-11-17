@@ -1,6 +1,6 @@
 [package]
 name = "app"
-version = "4.1.6"
+version = "4.1.7"
 description = "A local-first file workspace for files stored in Telegram, built with Tauri, Rust, and React."
 authors = ["Cameron Amer"]
 edition = "2021"
@@ -41,7 +41,8 @@ tauri-plugin-window-state = "2"
 tauri-plugin-shell = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
-chrono = "0.4"
+jiff = "=0.2.28"
+iana-time-zone = "=0.1.65"
 base64 = "0.22"
 image = { version = "0.25.10", default-features = false, features = ["bmp", "gif", "jpeg", "png", "webp"] }
 log = "0.4"
@@ -102,7 +103,7 @@ rfd = { version = "0.16", default-features = false }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = { version = "0.61.3", features = ["Foundation", "Storage", "Storage_Streams", "Media_Editing", "Graphics_Imaging", "Win32_System_WinRT"] }
-windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem", "Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_System_Diagnostics_ToolHelp", "Win32_System_ProcessStatus"] }
+windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem", "Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_System_Diagnostics_ToolHelp", "Win32_System_ProcessStatus", "Win32_System_Time"] }
 
 [target.'cfg(target_os = "android")'.dependencies]
 jni = "0.21"

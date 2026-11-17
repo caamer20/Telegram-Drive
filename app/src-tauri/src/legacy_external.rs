@@ -210,7 +210,7 @@ fn offline_file(
         || record["status"] == "expired"
         || record["expiresAt"]
             .as_i64()
-            .is_some_and(|expiry| expiry <= chrono::Utc::now().timestamp_millis())
+            .is_some_and(|expiry| expiry <= crate::app_time::unix_millis())
     {
         return Ok(None);
     }

@@ -338,7 +338,7 @@ impl Store {
             return Err("Invalid record identifier".into());
         }
         self.execute("INSERT INTO workspace_records VALUES(?,?,?,?) ON CONFLICT(kind,id) DO UPDATE SET value=excluded.value,updated=excluded.updated",
-            &[kind.into(), id.into(), serde_json::to_string(value).map_err(|e| e.to_string())?.into(), chrono::Utc::now().timestamp_millis().into()])
+            &[kind.into(), id.into(), serde_json::to_string(value).map_err(|e| e.to_string())?.into(), crate::app_time::unix_millis().into()])
     }
     pub fn remove_record(&self, kind: &str, id: &str) -> Result<()> {
         self.execute(
