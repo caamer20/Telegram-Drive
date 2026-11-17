@@ -63,6 +63,27 @@ lookup to exercise disabled/custom DST, overnight pacing and persisted weekly
 quota rollover. All new pause assertions first observe an active HTTP waiter.
 The machine timezone is never changed.
 
+## Platform CI correction
+
+The first candidate, `40bd2a0`, passed the 202-test GitHub browser suite. Intel
+macOS reported **243 native passes and one failure** in the existing aborted
+legacy-preview hashing/clear journey. The retained worker tuple released its
+category lock before unregistering the legacy active path; clear could then
+observe the file as active, skip it and report completion. Both the historical
+preview and equivalent HEIC retention tuples now release their legacy/source
+markers before the category lock. The existing regression and assertions remain
+intact; no timeout or cleanup requirement was relaxed. Local pre-fix repetition
+passed 105 times, so those repetitions are not treated as evidence against the
+observed CI race.
+
+After the ordering correction, the complete local native suite passed again:
+**244 passed, 0 failed, 0 ignored**. Serial focused repetitions also passed:
+**10** legacy-hash abort/clear journeys (each covers nested and flat caches),
+**3** HEIC abort/clear/account-change journeys, and **3** HEIC reuse/pin/unpin/clear
+journeys. The original Windows candidate passed **239 native journeys**, including
+the OS-rule/DST case; its remaining jobs were cancelled as superseded, so those
+lint/package checks are not counted as passes.
+
 ## Publication and acceptance boundaries
 
 The complete outgoing history and shared-file changes were reviewed for Android

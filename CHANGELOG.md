@@ -19,6 +19,7 @@
 
 ### Compatibility and verification
 
+- Fix a preview-cache cleanup race after canceled background validation. Release legacy/source usage markers before allowing cache deletion to proceed, including the HEIC path.
 - Preserve existing Telegram sessions, vaults, settings, transfer behavior and lifetime supporter activations. The optional $5.00 USD one-time lifetime ad-free license and recovery rights remain unchanged.
 - Add native HTTP/decoder regressions for cache expiry, folder identity changes, stale publication, VP9/HEVC/AV1 preparation, decoder fallback and process cleanup. Automated Telegram boundaries use controlled fixtures; the reporter's exact Windows 10 file and manual installed-platform acceptance remain unrun.
 - The optional application npm audit reports [GHSA-fc5q-39xc-vjpf](https://github.com/advisories/GHSA-fc5q-39xc-vjpf) in Picomatch 4.0.7, a Vite build-only dependency absent from the application runtime. No patched npm release is available at release preparation; the finding remains unresolved and the existing dependency policy is unchanged.

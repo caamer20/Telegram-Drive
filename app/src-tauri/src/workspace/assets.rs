@@ -1308,11 +1308,13 @@ where
             // Retain admission/category guards through the full digest. Clear
             // invalidates the request before it waits for the same category.
             let legacy = Arc::new(crate::commands::preview::LegacyPreviewUse::new(&path));
+            // Tuple fields drop in order. Unregister the active legacy path
+            // before releasing the category lock that lets clear proceed.
             let lease = (
+                legacy.clone(),
                 capacity.clone(),
                 file_guard.clone(),
                 category_guard.clone(),
-                legacy.clone(),
             );
             crate::external_files::reuse_cached_retained(account.clone(), path.clone(), lease)
                 .await?;
@@ -2143,7 +2145,9 @@ pub(crate) async fn display_rendition_at(
         false,
     );
     let legacy_guard = crate::commands::preview::LegacyPreviewUse::new(&original);
-    let holds = Arc::new((capacity, file_guard, category, source_guard, legacy_guard));
+    // Clear must see both source markers released once the category lock opens,
+    // including when only a detached blocking worker still owns this lease.
+    let holds = Arc::new((legacy_guard, source_guard, capacity, file_guard, category));
     let scope = account.clone();
     let base = cache.clone();
     let source = original.clone();
