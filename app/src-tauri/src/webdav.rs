@@ -270,6 +270,47 @@ impl TelegramDavFs {
         self
     }
 
+    #[cfg(feature = "native-e2e")]
+    pub(crate) async fn fixture_expire_root_index(&self) -> bool {
+        let mut index = self.index.write().await;
+        match (
+            index.refreshed.get_mut("/"),
+            Instant::now().checked_sub(INDEX_TTL),
+        ) {
+            (Some(refreshed), Some(expired)) => {
+                *refreshed = expired;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    #[cfg(feature = "native-e2e")]
+    async fn fixture_wait_to_publish(
+        &self,
+        account: &AccountGuard,
+        folder_id: Option<i64>,
+    ) -> FsResult<()> {
+        let identity = folder_id
+            .map(|id| id.to_string())
+            .unwrap_or_else(|| "saved".into());
+        let hold = self.account_root.join("webdav-publish-hold");
+        if std::fs::read_to_string(&hold).ok().as_deref() != Some(identity.as_str()) {
+            return Ok(());
+        }
+        std::fs::write(self.account_root.join("webdav-publish-entered"), &identity)
+            .map_err(io_error)?;
+        let deadline = Instant::now() + Duration::from_secs(120);
+        while std::fs::read_to_string(&hold).ok().as_deref() == Some(identity.as_str()) {
+            account.validate().map_err(|_| FsError::Forbidden)?;
+            if Instant::now() >= deadline {
+                return Err(FsError::IsRemote);
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        account.validate().map_err(|_| FsError::Forbidden)
+    }
+
     fn account(&self) -> FsResult<AccountGuard> {
         let account = DAV_REQUEST
             .try_with(|access| access.account.clone())
@@ -374,16 +415,37 @@ impl TelegramDavFs {
 
         let mut index = self.index.write().await;
         index.bind(&self.account()?)?;
-        let previous = index.children.remove("/").unwrap_or_default();
-        for path in previous {
-            index.nodes.remove(&path);
-            index.children.remove(&path);
-            index.refreshed.remove(&path);
-        }
+        let incoming = raw_folders
+            .into_iter()
+            .zip(aliases)
+            .map(|((folder_id, _name, modified), alias)| (format!("/{alias}"), folder_id, modified))
+            .collect::<Vec<_>>();
+        let retained = incoming
+            .iter()
+            .filter(|(path, folder_id, _)| {
+                matches!(index.nodes.get(path), Some(DavNode::Folder { folder_id: previous, .. }) if previous == folder_id)
+            })
+            .map(|(path, folder_id, _)| (path.clone(), *folder_id))
+            .collect::<HashMap<_, _>>();
+
+        // Root discovery must not discard a retained folder's partial history or
+        // reset its own refresh clock. Alias reuse is safe only for the same ID.
+        // Remove leaf nodes as well as directory indexes for changed/removed
+        // folders, so their former file URLs cannot survive a path reassignment.
+        index.nodes.retain(|path, node| match node {
+            DavNode::Root => path == "/",
+            DavNode::Folder { folder_id, .. } => retained.get(path) == Some(folder_id),
+            DavNode::File { folder_id, .. } => path
+                .rsplit_once('/')
+                .is_some_and(|(parent, _)| retained.get(parent) == Some(folder_id)),
+        });
+        index.children.retain(|path, _| retained.contains_key(path));
+        index
+            .refreshed
+            .retain(|path, _| retained.contains_key(path));
         index.nodes.insert("/".to_string(), DavNode::Root);
         let mut children = Vec::new();
-        for ((folder_id, _name, modified), alias) in raw_folders.into_iter().zip(aliases) {
-            let path = format!("/{}", alias);
+        for (path, folder_id, modified) in incoming {
             index.nodes.insert(
                 path.clone(),
                 DavNode::Folder {
@@ -437,6 +499,7 @@ impl TelegramDavFs {
                     )
                 })
                 .collect();
+            self.fixture_wait_to_publish(&account, folder_id).await?;
             return self
                 .publish_folder_rows(
                     &account,
@@ -522,6 +585,9 @@ impl TelegramDavFs {
         ticket
             .with(account, || {
                 index.bind(account).map_err(|error| error.to_string())?;
+                if !matches!(index.nodes.get(folder_path), Some(DavNode::Folder { folder_id: current, .. }) if *current == folder_id) {
+                    return Err("Folder not found".into());
+                }
                 let previous = index.children.remove(folder_path).unwrap_or_default();
                 let fresh_ids = raw_files.iter().map(|file| file.0).collect::<HashSet<_>>();
                 let mut children = Vec::new();

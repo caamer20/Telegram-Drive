@@ -6686,6 +6686,261 @@ async fn retained_session_release_keeps_http_alive_and_fences_account_replacemen
     app.stop();
 }
 
+async fn dav_propfind(client: &reqwest::Client, url: &str) -> (u16, String) {
+    let response = client
+        .request(reqwest::Method::from_bytes(b"PROPFIND").unwrap(), url)
+        .header("depth", "1")
+        .send()
+        .await
+        .unwrap();
+    let status = response.status().as_u16();
+    (status, response.text().await.unwrap())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn webdav_root_ttl_retains_partial_history_until_a_complete_listing() {
+    let fixture = Fixture::new();
+    let mut app = Backend::start(&fixture.0);
+    app.ok(json!({"command":"seed_account","owner":101}));
+    let seed = |ids: &[i64], complete| {
+        json!({
+            "command":"api_seed_catalog",
+            "folders":[{"id":null,"name":"Saved Messages"}],
+            "complete":complete,
+            "files":ids.iter().map(|id| json!({"id":id,"folder":null,
+                "name":format!("File {id}.pdf"),"size":100,
+                "created":"2026-10-01T00:00:00Z","mime":"application/pdf"})).collect::<Vec<_>>()
+        })
+    };
+    app.ok(seed(&[1, 2], true));
+    let token = "f".repeat(64);
+    let dav = app.ok(json!({"command":"start_webdav","token":token,"catalogFixture":true}));
+    let url = format!(
+        "{}/dav/{token}/Saved%20Messages/",
+        dav["url"].as_str().unwrap()
+    );
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .unwrap();
+    let (status, body) = dav_propfind(&client, &url).await;
+    assert_eq!(status, 207);
+    assert!(
+        body.contains("File%201.pdf") && body.contains("File%202.pdf"),
+        "{body}"
+    );
+    app.ok(seed(&[2, 3], false));
+    let (status, body) = dav_propfind(&client, &url).await;
+    assert_eq!(status, 207);
+    for id in 1..=3 {
+        assert!(body.contains(&format!("File%20{id}.pdf")), "{body}");
+    }
+    // Exercise the real production root clock, rather than a fixture-only refresh.
+    tokio::time::sleep(Duration::from_secs(31)).await;
+    app.ok(seed(&[3, 4], false));
+    let (status, body) = dav_propfind(&client, &url).await;
+    assert_eq!(status, 207);
+    for id in 1..=4 {
+        assert!(
+            body.contains(&format!("File%20{id}.pdf")),
+            "root TTL must preserve known entries until a complete folder listing: {body}"
+        );
+    }
+    app.ok(seed(&[4], true));
+    let (status, body) = dav_propfind(&client, &url).await;
+    assert_eq!(status, 207);
+    assert!(body.contains("File%204.pdf"), "{body}");
+    for id in 1..=3 {
+        assert!(
+            !body.contains(&format!("File%20{id}.pdf")),
+            "complete listings must remove absent rows: {body}"
+        );
+    }
+    app.stop();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn webdav_root_refresh_fences_replaced_renamed_removed_and_other_account_folders() {
+    let fixture = Fixture::new();
+    let mut app = Backend::start(&fixture.0);
+    app.ok(json!({"command":"seed_account","owner":101}));
+    let seed = |folder: i64, name: &str, id: i64| {
+        json!({
+            "command":"api_seed_catalog", "folders":[{"id":folder,"name":name}],
+            "complete":false,"files":[{"id":id,"folder":folder,
+                "name":format!("File {id}.pdf"),"size":100,
+                "created":"2026-10-01T00:00:00Z","mime":"application/pdf"}]
+        })
+    };
+    app.ok(seed(10, "Shared", 1));
+    let token = "a".repeat(64);
+    let dav = app.ok(json!({"command":"start_webdav","token":token,"catalogFixture":true}));
+    let base = format!("{}/dav/{token}", dav["url"].as_str().unwrap());
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .unwrap();
+    let shared = format!("{base}/Shared/");
+    let (status, body) = dav_propfind(&client, &shared).await;
+    assert_eq!(status, 207);
+    assert!(body.contains("File%201.pdf"), "{body}");
+
+    // A reused visible path is a different collection when Telegram's folder ID changes.
+    app.ok(seed(20, "Shared", 2));
+    assert_eq!(app.ok(json!({"command":"webdav_expire_root_index"})), true);
+    let (status, body) = dav_propfind(&client, &shared).await;
+    assert_eq!(status, 207);
+    assert!(
+        body.contains("File%202.pdf") && !body.contains("File%201.pdf"),
+        "{body}"
+    );
+    assert_eq!(
+        client
+            .head(format!("{shared}File%201.pdf"))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        404,
+        "a replaced folder must not expose an orphaned file through direct metadata"
+    );
+
+    // Renaming the same collection removes its old path, including direct child lookups.
+    app.ok(seed(20, "Renamed", 3));
+    assert_eq!(app.ok(json!({"command":"webdav_expire_root_index"})), true);
+    let renamed = format!("{base}/Renamed/");
+    let (status, body) = dav_propfind(&client, &renamed).await;
+    assert_eq!(status, 207);
+    assert!(body.contains("File%203.pdf"), "{body}");
+    assert_eq!(dav_propfind(&client, &shared).await.0, 404);
+    assert_eq!(
+        client
+            .head(format!("{shared}File%202.pdf"))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        404
+    );
+
+    // A complete root with no collections must retire every old descendant.
+    app.ok(json!({"command":"api_seed_catalog","folders":[],"complete":true,"files":[]}));
+    assert_eq!(app.ok(json!({"command":"webdav_expire_root_index"})), true);
+    assert_eq!(dav_propfind(&client, &format!("{base}/")).await.0, 207);
+    assert_eq!(dav_propfind(&client, &renamed).await.0, 404);
+    assert_eq!(
+        client
+            .head(format!("{renamed}File%203.pdf"))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        404
+    );
+
+    // Reintroduce a collection before switching accounts so isolation checks a live cache.
+    app.ok(seed(20, "Renamed", 4));
+    assert_eq!(app.ok(json!({"command":"webdav_expire_root_index"})), true);
+    assert!(dav_propfind(&client, &renamed)
+        .await
+        .1
+        .contains("File%204.pdf"));
+    app.ok(json!({"command":"seed_account","owner":202}));
+    app.ok(seed(20, "Renamed", 5));
+    let (status, body) = dav_propfind(&client, &renamed).await;
+    assert_eq!(status, 207);
+    assert!(
+        body.contains("File%205.pdf") && !body.contains("File%204.pdf"),
+        "{body}"
+    );
+    assert_eq!(
+        client
+            .head(format!("{renamed}File%204.pdf"))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        404
+    );
+    app.stop();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn webdav_inflight_folder_listing_cannot_publish_into_a_replacement_collection() {
+    let fixture = Fixture::new();
+    let mut app = Backend::start(&fixture.0);
+    app.ok(json!({"command":"seed_account","owner":101}));
+    let seed = |folder: i64, id: i64| {
+        json!({
+            "command":"api_seed_catalog","folders":[{"id":folder,"name":"Shared"}],
+            "complete":false,"files":[{"id":id,"folder":folder,
+                "name":format!("File {id}.pdf"),"size":100,
+                "created":"2026-10-01T00:00:00Z","mime":"application/pdf"}]
+        })
+    };
+    app.ok(seed(10, 1));
+    let token = "b".repeat(64);
+    let dav = app.ok(json!({"command":"start_webdav","token":token,"catalogFixture":true}));
+    let url = format!("{}/dav/{token}/Shared/", dav["url"].as_str().unwrap());
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(20))
+        .build()
+        .unwrap();
+    assert!(dav_propfind(&client, &url).await.1.contains("File%201.pdf"));
+    fixture.write("webdav-publish-hold", "10");
+    app.ok(seed(10, 2));
+    let old_client = client.clone();
+    let old_url = url.clone();
+    let pending = tokio::spawn(async move { dav_propfind(&old_client, &old_url).await });
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !fixture.path("webdav-publish-entered").exists() {
+        assert!(
+            Instant::now() < deadline,
+            "the original folder listing never reached publication"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(fixture.read("webdav-publish-entered"), b"10");
+    app.ok(seed(20, 3));
+    assert_eq!(app.ok(json!({"command":"webdav_expire_root_index"})), true);
+    let (status, body) = dav_propfind(&client, &url).await;
+    assert_eq!(status, 207);
+    assert!(
+        body.contains("File%203.pdf")
+            && !body.contains("File%201.pdf")
+            && !body.contains("File%202.pdf"),
+        "{body}"
+    );
+    std::fs::remove_file(fixture.path("webdav-publish-hold")).unwrap();
+    let (status, body) = pending.await.unwrap();
+    assert!(
+        matches!(status, 207 | 404),
+        "stale listing status={status}; {body}"
+    );
+    assert!(
+        !body.contains("File%201.pdf") && !body.contains("File%202.pdf"),
+        "an old in-flight listing must not expose the replaced folder: {body}"
+    );
+    let (status, body) = dav_propfind(&client, &url).await;
+    assert_eq!(status, 207);
+    assert!(
+        body.contains("File%203.pdf") && !body.contains("File%202.pdf"),
+        "{body}"
+    );
+    for id in [1, 2] {
+        assert_eq!(
+            client
+                .head(format!("{url}File%20{id}.pdf"))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            404
+        );
+    }
+    app.stop();
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn release_partial_catalog_serves_rest_and_dav_without_pruning_known_older_files() {
     let fixture = Fixture::new();

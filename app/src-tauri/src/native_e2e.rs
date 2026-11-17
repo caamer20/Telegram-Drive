@@ -1124,6 +1124,7 @@ struct Driver {
         tokio::task::JoinHandle<std::io::Result<()>>,
     )>,
     retained_sessions: Vec<Arc<TelegramState>>,
+    webdav_filesystems: Vec<crate::webdav::TelegramDavFs>,
 }
 
 impl Driver {
@@ -1445,6 +1446,7 @@ impl Driver {
             | "api_seed_catalog"
             | "supporter_verify"
             | "start_webdav"
+            | "webdav_expire_root_index"
             | "release_retained_sessions"
             | "start_api"
             | "start_http" => self.dispatch_servers(request).await,
@@ -4023,6 +4025,7 @@ impl Driver {
                 )
                 .with_remote_error(request["remoteError"].as_str().map(str::to_string))
                 .with_catalog_fixture(request["catalogFixture"] == true);
+                self.webdav_filesystems.push(filesystem.clone());
                 let server = crate::webdav::serve(
                     listener,
                     filesystem,
@@ -4031,6 +4034,13 @@ impl Driver {
                 .map_err(error)?;
                 self.servers.push((server.handle(), tokio::spawn(server)));
                 Ok(json!({"url":format!("http://{address}")}))
+            }
+            "webdav_expire_root_index" => {
+                let filesystem = self
+                    .webdav_filesystems
+                    .last()
+                    .ok_or("No WebDAV fixture is running")?;
+                Ok(json!(filesystem.fixture_expire_root_index().await))
             }
             "release_retained_sessions" => {
                 let mut released = 0;
@@ -5378,6 +5388,7 @@ pub async fn run() -> Result<(), String> {
         planned_sync: None,
         servers: Vec::new(),
         retained_sessions: Vec::new(),
+        webdav_filesystems: Vec::new(),
         archive_task: None,
         archive_continue: None,
         asset_downloads: Arc::new(AtomicU64::new(0)),
