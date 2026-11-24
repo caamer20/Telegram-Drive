@@ -76,7 +76,7 @@ export function useFileUpload(
     const requireCurrent = () => { if (!isCurrent()) throw new Error('ACCOUNT_CHANGED'); };
     const runningItemsRef = useRef(new Map<string, () => boolean>());
     const queryClient = useQueryClient();
-    const { settings } = useSettings();
+    const { settings, isLoaded: settingsLoaded } = useSettings();
     const { chooseUploadProtection } = useUploadChoice();
     const protectionScopeRef = useRef<AbortController | null>(null);
     useLayoutEffect(() => {
@@ -291,11 +291,13 @@ export function useFileUpload(
 
     useEffect(() => {
         if (isAndroidPlatform) return;
+        if (!settingsLoaded) return;
         void configureDesktopTransferLimits(
             settings.maxConcurrentUploads || 1,
             settings.maxConcurrentDownloads || 1,
+            settings.strictUploadOrder,
         ).catch(error => console.error('[Transfer] Could not update concurrency limits:', error));
-    }, [settings.maxConcurrentDownloads, settings.maxConcurrentUploads]);
+    }, [settingsLoaded, settings.maxConcurrentDownloads, settings.maxConcurrentUploads, settings.strictUploadOrder]);
 
     useEffect(() => {
         if (!isAndroidPlatform || !initialized) return;

@@ -106,6 +106,8 @@
       "select_channel": "选择 Telegram 频道",
       "no_channels": "创建同步映射前请刷新 Telegram 文件夹。"
     },
+    "strict_upload_order": "严格按队列顺序上传",
+    "strict_upload_order_desc": "按队列顺序逐个上传。重试期间，后续文件会等待。要继续，请恢复、重试、取消或移除受阻的上传任务。",
     "concurrent_uploads": "并发上传数",
     "concurrent_downloads": "并发下载数",
     "zip_before_upload": "上传前压缩文件夹",

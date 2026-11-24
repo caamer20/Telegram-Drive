@@ -173,6 +173,8 @@
     "desktop_notification_filenames": "Pokazuj nazwy plików",
     "desktop_notification_filenames_desc": "Nazwy mogą być widoczne na ekranie blokady. Wyłączenie zwiększa prywatność.",
     "desktop_save_failed": "Nie udało się zapisać ustawień pulpitu",
+    "strict_upload_order": "Ścisła kolejność wysyłania",
+    "strict_upload_order_desc": "Pliki są wysyłane pojedynczo w kolejności z listy. Następne czekają podczas ponownych prób. Aby kontynuować, wznów, ponów, anuluj lub usuń zablokowane wysyłanie.",
     "concurrent_uploads": "Równoczesne przesyłanie",
     "max_uploads_desc": "Maksymalna liczba przesyłań równoległych",
     "concurrent_downloads": "Równoczesne pobieranie",

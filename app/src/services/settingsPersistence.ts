@@ -39,6 +39,7 @@ export function settingsForPersistence(settings: Settings): Settings {
 
 export function mergeStoredSettings(defaults: Settings, stored?: Partial<Settings> | null): Settings {
   const merged = { ...defaults, ...stored };
+  merged.strictUploadOrder = stored?.strictUploadOrder === true;
   if ((merged.proxyType as string) === 'mtproto') merged.proxyType = 'socks5';
   if (!['ask', 'standard', 'encrypted'].includes(merged.uploadProtectionPreference)) {
     merged.uploadProtectionPreference = 'ask';

@@ -106,6 +106,8 @@
       "select_channel": "Selecionar canal do Telegram",
       "no_channels": "Atualize suas pastas do Telegram antes de criar um mapeamento de sincronização."
     },
+    "strict_upload_order": "Ordem estrita de envio",
+    "strict_upload_order_desc": "Envie um arquivo por vez na ordem da fila. Os próximos aguardam durante as novas tentativas. Para continuar, retome, tente novamente, cancele ou remova o envio bloqueado.",
     "concurrent_uploads": "Envios simultâneos",
     "concurrent_downloads": "Downloads simultâneos",
     "zip_before_upload": "Compactar pastas antes do envio",

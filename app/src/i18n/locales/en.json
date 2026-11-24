@@ -173,6 +173,8 @@
     "desktop_notification_filenames": "Show file names",
     "desktop_notification_filenames_desc": "File names may be visible on the lock screen. Off is more private.",
     "desktop_save_failed": "Desktop preferences could not be saved",
+    "strict_upload_order": "Strict upload order",
+    "strict_upload_order_desc": "Upload one at a time in queue order. Later uploads wait through retries. Resume, retry, cancel or clear a blocked upload to continue.",
     "concurrent_uploads": "Concurrent Uploads",
     "max_uploads_desc": "Max parallel uploads",
     "concurrent_downloads": "Concurrent Downloads",

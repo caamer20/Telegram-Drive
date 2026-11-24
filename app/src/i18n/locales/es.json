@@ -106,6 +106,8 @@
       "select_channel": "Seleccionar canal de Telegram",
       "no_channels": "Actualiza tus carpetas de Telegram antes de crear una relación de sincronización."
     },
+    "strict_upload_order": "Orden estricto de subida",
+    "strict_upload_order_desc": "Sube los archivos de uno en uno, en el orden de la cola. Los siguientes esperan durante los reintentos. Para continuar, reanuda, reintenta, cancela o elimina la subida bloqueada.",
     "concurrent_uploads": "Subidas concurrentes",
     "concurrent_downloads": "Descargas concurrentes",
     "zip_before_upload": "Comprimir carpetas antes de subir",

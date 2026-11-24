@@ -6,6 +6,7 @@ export const DEFAULT_SETTINGS: Settings = {
   fileSortDirection: 'asc',
   autoUpdate: true,
   maxConcurrentUploads: 6,
+  strictUploadOrder: false,
   maxConcurrentDownloads: 6,
   zipFolders: true,
   videoUploadMode: 'file',

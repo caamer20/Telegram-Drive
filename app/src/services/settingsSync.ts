@@ -7,6 +7,7 @@ export const SYNCABLE_SETTING_KEYS = [
   'fileSortDirection',
   'autoUpdate',
   'maxConcurrentUploads',
+  'strictUploadOrder',
   'maxConcurrentDownloads',
   'zipFolders',
   'videoUploadMode',

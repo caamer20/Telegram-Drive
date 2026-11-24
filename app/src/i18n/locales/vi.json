@@ -173,6 +173,8 @@
     "desktop_notification_filenames": "Hiển thị tên tệp",
     "desktop_notification_filenames_desc": "Tên tệp có thể xuất hiện trên màn hình khóa. Tắt sẽ riêng tư hơn.",
     "desktop_save_failed": "Không thể lưu tùy chọn máy tính",
+    "strict_upload_order": "Giữ đúng thứ tự tải lên",
+    "strict_upload_order_desc": "Tải từng tệp theo thứ tự hàng đợi. Các tệp sau sẽ chờ trong lúc thử lại. Để tiếp tục, hãy tiếp tục, thử lại, hủy hoặc xóa lượt tải lên đang bị chặn.",
     "concurrent_uploads": "Tải lên đồng thời",
     "max_uploads_desc": "Số lượt tải lên song song tối đa",
     "concurrent_downloads": "Tải xuống đồng thời",

@@ -48,7 +48,11 @@ image = { version = "0.25.10", default-features = false, features = ["bmp", "gif
 log = "0.4"
 env_logger = "0.11"
 tauri-plugin-updater = "2.14.1"
-actix-web = "4.18.2"
+# Keep Actix's standard server features. The share route uses the maintained cookie crate directly.
+actix-web = { version = "4.18.2", default-features = false, features = [
+  "macros", "compress-brotli", "compress-gzip", "compress-zstd", "http2", "unicode", "compat", "ws",
+] }
+cookie = { version = "0.18.3", features = ["percent-encode"] }
 actix-cors = "0.7"
 actix-files = "0.7.4"
 actix-multipart = "0.7"

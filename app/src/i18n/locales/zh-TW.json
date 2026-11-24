@@ -173,6 +173,8 @@
     "desktop_notification_filenames": "顯示檔案名稱",
     "desktop_notification_filenames_desc": "檔案名稱可能顯示在鎖定畫面。關閉此項更能保護隱私。",
     "desktop_save_failed": "無法儲存桌面偏好設定",
+    "strict_upload_order": "嚴格依佇列順序上傳",
+    "strict_upload_order_desc": "依佇列順序逐一上傳。重試期間，後續檔案會等待。若要繼續，請恢復、重試、取消或移除受阻的上傳工作。",
     "concurrent_uploads": "並發上傳",
     "max_uploads_desc": "最大平行上傳數",
     "concurrent_downloads": "並發下載",

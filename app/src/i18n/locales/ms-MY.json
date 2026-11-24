@@ -173,6 +173,8 @@
     "desktop_notification_filenames": "Tunjukkan nama fail",
     "desktop_notification_filenames_desc": "Nama fail mungkin kelihatan pada skrin kunci. Dimatikan lebih peribadi.",
     "desktop_save_failed": "Keutamaan desktop tidak dapat disimpan",
+    "strict_upload_order": "Ikut tertib muat naik",
+    "strict_upload_order_desc": "Muat naik satu demi satu mengikut turutan baris gilir. Muat naik seterusnya menunggu semasa percubaan semula. Untuk meneruskan, sambung, cuba semula, batalkan atau keluarkan muat naik yang tersekat.",
     "concurrent_uploads": "Muat Naik Serentak",
     "max_uploads_desc": "Muat naik selari maksimum",
     "concurrent_downloads": "Muat Turun Serentak",

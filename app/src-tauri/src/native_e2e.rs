@@ -15,7 +15,7 @@ use crate::sync_engine::{
     self, config as sync_config, native_fixture::NativeSyncFixture, policy::StoredPairPolicy,
     SyncEngine,
 };
-use crate::transfer_engine::{TransferJob, TransferStore};
+use crate::transfer_engine::{TransferDirection, TransferJob, TransferLimits, TransferStore};
 use crate::workspace::{store::Store, AccountGuard};
 use grammers_session::{storages::SqliteSession, types::PeerInfo, Session};
 use serde_json::{json, Value};
@@ -177,6 +177,7 @@ struct MediaFixture {
     resolutions: Arc<AtomicU64>,
     cache: Arc<crate::server::MediaResolutionCache<PathBuf>>,
     resolution_gate: Arc<tokio::sync::Notify>,
+    body_checkpoint: Arc<tokio::sync::Barrier>,
 }
 
 fn fixture_download(
@@ -184,6 +185,7 @@ fn fixture_download(
     start: u64,
     fail_after: Option<u64>,
     delay_ms: u64,
+    mut after_first_chunk: Option<Arc<tokio::sync::Barrier>>,
 ) -> impl futures::Stream<Item = Result<actix_web::web::Bytes, actix_web::Error>> {
     async_stream::stream! {
         use tokio::io::{AsyncReadExt, AsyncSeekExt};
@@ -209,6 +211,10 @@ fn fixture_download(
             if delay_ms > 0 { tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await; }
             delivered += count as u64;
             yield Ok(actix_web::web::Bytes::from(bytes));
+            if let Some(checkpoint) = after_first_chunk.take() {
+                checkpoint.wait().await; // Acknowledge that the first block was sent.
+                checkpoint.wait().await; // Wait for the test to release the next block.
+            }
         }
     }
 }
@@ -230,6 +236,8 @@ struct MediaFixtureQuery {
     message_id: i32,
     #[serde(default)]
     wait_for_resolution: bool,
+    #[serde(default)]
+    hold_after_first_chunk: bool,
 }
 
 async fn fixture_media(
@@ -301,10 +309,13 @@ async fn fixture_media(
                 state: crypto.get_ref().clone(),
                 credential,
             },
-            move |start| fixture_download(source, start, query.fail_after, query.delay_ms),
+            move |start| fixture_download(source, start, query.fail_after, query.delay_ms, None),
         )
         .await;
     }
+    let checkpoint = query
+        .hold_after_first_chunk
+        .then(|| fixture.body_checkpoint.clone());
     crate::server::build_media_response_from_source(
         size,
         &request,
@@ -317,7 +328,7 @@ async fn fixture_media(
             network: fixture.network.clone(),
         },
         Some(account),
-        move |start| fixture_download(source, start, query.fail_after, query.delay_ms),
+        move |start| fixture_download(source, start, query.fail_after, query.delay_ms, checkpoint),
     )
 }
 
@@ -1094,6 +1105,8 @@ struct FixtureVideoUploadJourney {
 }
 
 struct TransferRetryDriver {
+    active: HashMap<String, TransferDirection>,
+    limits: TransferLimits,
     store: TransferStore,
     jobs: HashMap<String, TransferJob>,
     pending: HashMap<String, TransferJob>,
@@ -1318,6 +1331,8 @@ impl Driver {
         if self.transfer_retry.is_none() {
             let (store, jobs) = TransferStore::open(&self.root.join("transfers.db"))?;
             self.transfer_retry = Some(TransferRetryDriver {
+                limits: TransferLimits::load(&self.root),
+                active: HashMap::new(),
                 store,
                 jobs: jobs.into_iter().map(|job| (job.id.clone(), job)).collect(),
                 pending: HashMap::new(),
@@ -1552,6 +1567,8 @@ impl Driver {
             | "transfers"
             | "retry_failed_upload"
             | "transfer_retry_snapshot"
+            | "claim_transfer_jobs"
+            | "fixture_transfer_limits"
             | "record_transfer_result"
             | "fail_transfer"
             | "remove_transfer" => self.dispatch_transfers(request).await,
@@ -4027,6 +4044,7 @@ impl Driver {
                     filename: text(&request, "filename")?.to_string(),
                     resolutions: Arc::new(AtomicU64::new(0)),
                     resolution_gate: Arc::new(tokio::sync::Notify::new()),
+                    body_checkpoint: Arc::new(tokio::sync::Barrier::new(2)),
                     cache: Arc::new(crate::server::MediaResolutionCache::new(
                         request["cacheEntries"].as_u64().unwrap_or(64) as usize,
                         std::time::Duration::from_millis(
@@ -4050,6 +4068,15 @@ impl Driver {
                         .app_data(actix_web::web::Data::new(crypto.clone()))
                         .app_data(actix_web::web::Data::new(fixture.clone()))
                         .route("/media", actix_web::web::get().to(fixture_media))
+                        .route(
+                            "/body-checkpoint",
+                            actix_web::web::post().to(
+                                |fixture: actix_web::web::Data<MediaFixture>| async move {
+                                    fixture.body_checkpoint.wait().await;
+                                    actix_web::HttpResponse::NoContent().finish()
+                                },
+                            ),
+                        )
                         .route(
                             "/resolve-continue",
                             actix_web::web::post().to(
@@ -5288,6 +5315,33 @@ impl Driver {
                     json!({"job":result.job,"retried":result.retried,"hasPromptToken":state.prompt_tokens.contains_key(id)}),
                 )
             }
+            "claim_transfer_jobs" => {
+                let account = AccountGuard::open(&self.root, None)?;
+                let state = self.transfer_retry()?;
+                let jobs = crate::transfer_engine::claim_ready_jobs(
+                    &state.store,
+                    &mut state.jobs,
+                    &mut state.active,
+                    &account,
+                    state.limits,
+                    request["online"].as_bool().unwrap_or(true),
+                )
+                .await;
+                Ok(json!(jobs
+                    .into_iter()
+                    .filter(|job| state.active.contains_key(&job.id))
+                    .map(|job| job.id)
+                    .collect::<Vec<_>>()))
+            }
+            "fixture_transfer_limits" => {
+                let state = self.transfer_retry()?;
+                state.limits.update(
+                    request["uploads"].as_u64().ok_or("missing uploads")? as usize,
+                    request["downloads"].as_u64().ok_or("missing downloads")? as usize,
+                    request["strict"].as_bool(),
+                );
+                Ok(json!(true))
+            }
             "transfer_retry_snapshot" => {
                 let id = text(&request, "id")?;
                 let state = self.transfer_retry()?;
@@ -5297,8 +5351,13 @@ impl Driver {
             "record_transfer_result" => {
                 // The controlled Telegram boundary supplies a finished result;
                 // production SQLite checkpoint/recovery behavior remains real.
-                let job = serde_json::from_value(request["job"].clone()).map_err(error)?;
+                let mut job: TransferJob =
+                    serde_json::from_value(request["job"].clone()).map_err(error)?;
+                if let Some(receipt) = request["transportResponse"].as_str() {
+                    job.apply_success(receipt);
+                }
                 let state = self.transfer_retry()?;
+                state.active.remove(&job.id);
                 let result = crate::transfer_engine::commit_result(
                     &state.store,
                     &mut state.jobs,

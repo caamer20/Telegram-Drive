@@ -794,11 +794,19 @@ function OwnedSettingsModal({ ownerId, isOpen, onClose, initialTab = 'general', 
                                 </h3>
 
                                 <SettingsRow
-                                    icon={<Upload className="h-4 w-4 text-telegram-subtext" />}
-                                    title={t('settings.concurrent_uploads')}
-                                    description={t('settings.max_uploads_desc')}
-                                    control={<SettingsStepper value={settings.maxConcurrentUploads} minimum={1} maximum={10} label={t('settings.concurrent_uploads')} onChange={value => updateSetting('maxConcurrentUploads', value)} />}
+                                    title={t('settings.strict_upload_order')}
+                                    description={t('settings.strict_upload_order_desc')}
+                                    control={<SettingsToggle checked={settings.strictUploadOrder} label={t('settings.strict_upload_order')} onChange={() => updateSetting('strictUploadOrder', !settings.strictUploadOrder)} />}
                                 />
+
+                                {!settings.strictUploadOrder && (
+                                    <SettingsRow
+                                        icon={<Upload className="h-4 w-4 text-telegram-subtext" />}
+                                        title={t('settings.concurrent_uploads')}
+                                        description={t('settings.max_uploads_desc')}
+                                        control={<SettingsStepper value={settings.maxConcurrentUploads} minimum={1} maximum={10} label={t('settings.concurrent_uploads')} onChange={value => updateSetting('maxConcurrentUploads', value)} />}
+                                    />
+                                )}
 
                                 <SettingsRow
                                     icon={<Download className="h-4 w-4 text-telegram-subtext" />}

@@ -106,6 +106,8 @@
       "select_channel": "Telegram 채널 선택",
       "no_channels": "동기화 연결을 만들기 전에 Telegram 폴더를 새로 고치세요."
     },
+    "strict_upload_order": "업로드 대기열 순서 유지",
+    "strict_upload_order_desc": "대기열 순서대로 한 번에 하나씩 업로드합니다. 재시도하는 동안 다음 파일은 기다립니다. 계속하려면 막힌 업로드를 재개하거나 다시 시도하거나 취소하거나 대기열에서 제거하세요.",
     "concurrent_uploads": "동시 업로드 수",
     "concurrent_downloads": "동시 다운로드 수",
     "zip_before_upload": "업로드 전 폴더 ZIP 압축",

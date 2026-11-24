@@ -6,9 +6,9 @@ use crate::workspace::AccountGuard;
 #[derive(Clone)]
 pub struct ShareAccountRoot(pub std::path::PathBuf);
 use actix_web::{
-    cookie::Cookie, get, middleware::DefaultHeaders, post, web, HttpRequest, HttpResponse,
-    Responder,
+    get, http::header, middleware::DefaultHeaders, post, web, HttpRequest, HttpResponse, Responder,
 };
+use cookie::Cookie;
 use grammers_client::types::Media;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -160,6 +160,20 @@ struct VerifyForm {
 /// Verify a password against a bcrypt hash.
 fn verify_password(password: &str, hash: &str) -> bool {
     bcrypt::verify(password, hash).unwrap_or(false)
+}
+
+fn request_cookie<'a>(request: &'a HttpRequest, name: &str) -> Option<Cookie<'a>> {
+    let mut found = None;
+    for header in request.headers().get_all(header::COOKIE) {
+        // Every header must be valid UTF-8, even after the first matching pair.
+        let value = std::str::from_utf8(header.as_bytes()).ok()?;
+        if found.is_none() {
+            found = Cookie::split_parse_encoded(value)
+                .flatten()
+                .find(|cookie| cookie.name() == name);
+        }
+    }
+    found
 }
 
 fn generate_cookie_val(token: &str, password_hash: &str) -> String {
@@ -533,7 +547,7 @@ async fn get_shared_file(
     // Check password protection
     if let Some(hash) = &row.password_hash {
         let mut authenticated = false;
-        if let Some(cookie) = req.cookie(&format!("share_auth_{}", token)) {
+        if let Some(cookie) = request_cookie(&req, &format!("share_auth_{}", token)) {
             let expected = generate_cookie_val(&token, hash);
             if cookie.value() == expected {
                 authenticated = true;
@@ -718,12 +732,12 @@ async fn verify_shared_file_password(
         // The cookie is protected by `.http_only(true)` and `.same_site(Strict)`
         // to mitigate XSS and CSRF within the constraints of this local service.
         let val = generate_cookie_val(&token, hash);
-        let cookie = Cookie::build(format!("share_auth_{}", token), val)
+        let cookie = Cookie::build((format!("share_auth_{}", token), val))
             .path(format!("/d/{}", token))
             .http_only(true)
-            .same_site(actix_web::cookie::SameSite::Strict)
-            .max_age(actix_web::cookie::time::Duration::minutes(30))
-            .finish();
+            .same_site(cookie::SameSite::Strict)
+            .max_age(cookie::time::Duration::minutes(30))
+            .build();
 
         let (language, _) = resolve_req_lang(&req, form.lang.as_deref());
         let explicit_language = query_language(&req).is_some()
@@ -739,7 +753,7 @@ async fn verify_shared_file_password(
         };
         HttpResponse::Found()
             .insert_header(("Location", location))
-            .cookie(cookie)
+            .append_header((header::SET_COOKIE, cookie.to_string()))
             .finish()
     } else {
         with_password_attempt_limiter(|limiter| limiter.record_failure(&token_key, now));

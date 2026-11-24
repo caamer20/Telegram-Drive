@@ -188,10 +188,11 @@ export async function enqueueDesktopTransfers(
     return invoke<DesktopTransferJob[]>('cmd_transfer_enqueue_many', { requests });
 }
 
-export async function configureDesktopTransferLimits(maxUploads: number, maxDownloads: number) {
+export async function configureDesktopTransferLimits(maxUploads: number, maxDownloads: number, strictUploadOrder: boolean) {
     await invoke('cmd_transfer_set_limits', {
         maxUploads: Math.max(1, maxUploads),
         maxDownloads: Math.max(1, maxDownloads),
+        strictUploadOrder,
     });
 }
 

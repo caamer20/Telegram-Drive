@@ -173,6 +173,8 @@
     "desktop_notification_filenames": "Mostra i nomi dei file",
     "desktop_notification_filenames_desc": "I nomi possono apparire nella schermata di blocco. Disattivato è più riservato.",
     "desktop_save_failed": "Impossibile salvare le preferenze desktop",
+    "strict_upload_order": "Ordine rigoroso di caricamento",
+    "strict_upload_order_desc": "Carica un file alla volta in ordine di coda. I successivi attendono durante i tentativi. Per continuare, riprendi, riprova, annulla o rimuovi il caricamento bloccato.",
     "concurrent_uploads": "Caricamenti simultanei",
     "max_uploads_desc": "Numero massimo di caricamenti paralleli",
     "concurrent_downloads": "Download simultanei",

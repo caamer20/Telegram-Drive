@@ -106,6 +106,8 @@
       "select_channel": "Choisir un canal Telegram",
       "no_channels": "Actualisez vos dossiers Telegram avant de créer une association de synchronisation."
     },
+    "strict_upload_order": "Ordre strict des envois",
+    "strict_upload_order_desc": "Les fichiers sont envoyés un par un dans l’ordre de la file. Les suivants attendent pendant les nouvelles tentatives. Pour continuer, reprenez, réessayez, annulez ou retirez l’envoi bloqué.",
     "concurrent_uploads": "Téléversements simultanés",
     "concurrent_downloads": "Téléchargements simultanés",
     "zip_before_upload": "Zipper les dossiers avant téléversement",

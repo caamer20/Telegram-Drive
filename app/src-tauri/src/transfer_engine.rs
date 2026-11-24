@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use sqlite::State as SqliteState;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Listener, Manager, State};
 use tokio::sync::{Mutex as AsyncMutex, Notify, RwLock};
@@ -197,6 +197,24 @@ pub struct TransferJob {
     pub updated_at: i64,
 }
 
+impl TransferJob {
+    pub(crate) fn apply_success(&mut self, response: &str) {
+        self.status = TransferStatus::Completed;
+        self.progress = 100;
+        self.transferred_bytes = self.total_bytes.max(self.transferred_bytes);
+        self.speed_bytes_per_sec = 0;
+        self.error = None;
+        self.retry_at = None;
+        self.error_category = None;
+        self.network_retries = 0;
+        record_success_response(self, response);
+    }
+
+    fn queue_order(&self) -> (i64, i64, &str) {
+        (self.queue_position, self.created_at, &self.id)
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TransferEnqueueRequest {
@@ -342,7 +360,9 @@ impl TransferStore {
 
     fn load_all_from(connection: &sqlite::Connection) -> Result<Vec<TransferJob>, String> {
         let mut statement = connection
-            .prepare("SELECT payload_json FROM transfer_jobs ORDER BY queue_position, created_at")
+            .prepare(
+                "SELECT payload_json FROM transfer_jobs ORDER BY queue_position, created_at, id",
+            )
             .map_err(|error| error.to_string())?;
         let mut jobs = Vec::new();
         while statement.next().map_err(|error| error.to_string())? == SqliteState::Row {
@@ -652,6 +672,55 @@ struct RemoteProgressPayload {
     total_bytes: u64,
 }
 
+#[derive(Clone, Copy)]
+pub(crate) struct TransferLimits {
+    uploads: usize,
+    downloads: usize,
+    strict_upload_order: bool,
+}
+
+impl TransferLimits {
+    pub(crate) fn load(root: &Path) -> Self {
+        let defaults = Self {
+            uploads: 6,
+            downloads: 6,
+            strict_upload_order: false,
+        };
+        let settings = match std::fs::read(root.join("settings.json")) {
+            Ok(bytes) => serde_json::from_slice::<serde_json::Value>(&bytes).ok(),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return defaults,
+            Err(_) => None,
+        };
+        let Some(settings) = settings else {
+            // Preserve ordering until the loaded UI settings can be applied.
+            log::warn!("Could not read saved transfer settings; starting uploads in strict order");
+            return Self {
+                strict_upload_order: true,
+                ..defaults
+            };
+        };
+        let settings = settings.get("settings").unwrap_or(&settings);
+        let limit = |key: &str, fallback| {
+            settings[key]
+                .as_u64()
+                .map_or(fallback, |value| value.clamp(1, 32) as usize)
+        };
+        Self {
+            uploads: limit("maxConcurrentUploads", defaults.uploads),
+            downloads: limit("maxConcurrentDownloads", defaults.downloads),
+            strict_upload_order: settings["strictUploadOrder"].as_bool().unwrap_or(false),
+        }
+    }
+
+    pub(crate) fn update(&mut self, uploads: usize, downloads: usize, strict: Option<bool>) {
+        self.uploads = uploads.clamp(1, 32);
+        self.downloads = downloads.clamp(1, 32);
+        if let Some(strict) = strict {
+            self.strict_upload_order = strict;
+        }
+    }
+}
+
 pub struct TransferEngine {
     app: AppHandle,
     store: TransferStore,
@@ -666,18 +735,18 @@ pub struct TransferEngine {
     notify: Notify,
     /// Wakes supervisors waiting for a transfer to settle.
     changes: Notify,
-    max_uploads: AtomicUsize,
-    max_downloads: AtomicUsize,
+    limits: RwLock<TransferLimits>,
     shutting_down: AtomicBool,
 }
 
 impl TransferEngine {
     pub fn initialize(app: AppHandle) -> Result<Arc<Self>, String> {
-        let database_path = app
+        let root = app
             .path()
             .app_data_dir()
-            .map_err(|error| error.to_string())?
-            .join("transfers.db");
+            .map_err(|error| error.to_string())?;
+        let limits = TransferLimits::load(&root);
+        let database_path = root.join("transfers.db");
         let (store, loaded_jobs) = TransferStore::open(&database_path)?;
         let startup_jobs = loaded_jobs.clone();
         let mut jobs = HashMap::new();
@@ -697,8 +766,7 @@ impl TransferEngine {
             progress_checkpoints: AsyncMutex::new(HashMap::new()),
             notify: Notify::new(),
             changes: Notify::new(),
-            max_uploads: AtomicUsize::new(6),
-            max_downloads: AtomicUsize::new(6),
+            limits: RwLock::new(limits),
             shutting_down: AtomicBool::new(false),
         }))
     }
@@ -1030,93 +1098,32 @@ impl TransferEngine {
         let Ok(account) = self.account(None) else {
             return;
         };
-        let owner = account.owner.to_string();
-        if self
+        let connected = self
             .app
             .state::<TelegramState>()
             .client
             .lock()
             .await
-            .is_none()
-        {
-            return;
-        }
+            .is_some();
+        let limits = *self.limits.read().await;
         let mut active = self.active.lock().await;
-        let upload_slots = self.max_uploads.load(Ordering::Relaxed).saturating_sub(
-            active
-                .values()
-                .filter(|d| **d == TransferDirection::Upload)
-                .count(),
-        );
-        let download_slots = self.max_downloads.load(Ordering::Relaxed).saturating_sub(
-            active
-                .values()
-                .filter(|d| **d == TransferDirection::Download)
-                .count(),
-        );
-        if upload_slots == 0 && download_slots == 0 {
-            return;
-        }
-        let now = now_millis();
         let mut jobs = self.jobs.write().await;
-        let eligible: HashMap<_, _> = jobs
-            .values()
-            .filter(|job| {
-                job.owner_id.as_deref() == Some(owner.as_str())
-                    && !job.persistence_pending
-                    && (job.status == TransferStatus::Pending
-                        || job.status == TransferStatus::WaitingForNetwork
-                        || (job.status == TransferStatus::Cooldown
-                            && job.retry_at.is_some_and(|at| at <= now)))
-            })
-            .map(|job| {
-                let mut next = job.clone();
-                next.status = TransferStatus::Pending;
-                (next.id.clone(), next)
-            })
-            .collect();
-        let selected: Vec<_> =
-            select_pending_job_ids(&eligible, &active, upload_slots, download_slots)
-                .into_iter()
-                .filter_map(|id| eligible.get(&id).cloned())
-                .map(|mut job| {
-                    job.status = if job.kind == TransferKind::LocalUpload {
-                        TransferStatus::Uploading
-                    } else {
-                        TransferStatus::Downloading
-                    };
-                    job.error = None;
-                    job.error_category = None;
-                    job.retry_at = None;
-                    job.speed_bytes_per_sec = 0;
-                    job.revision = job.revision.saturating_add(1);
-                    job.updated_at = now;
-                    job
-                })
-                .collect();
-        if selected.is_empty() || account.validate().is_err() {
-            return;
-        }
-        if let Err(error) = commit_jobs(&self.store, &mut jobs, &selected).await {
-            // No work starts without its durable intent. Expose a reviewable storage error.
-            for selected_job in &selected {
-                if let Some(job) = jobs.get_mut(&selected_job.id) {
-                    job.status = TransferStatus::Paused;
-                    job.error = Some(error.clone());
-                    job.error_category = Some(TransferErrorCategory::Persistence);
-                    job.revision = job.revision.saturating_add(1);
-                    self.emit_job(job);
-                }
-            }
-            return;
-        }
+        let updates = claim_ready_jobs(
+            &self.store,
+            &mut jobs,
+            &mut active,
+            &account,
+            limits,
+            connected,
+        )
+        .await;
         drop(jobs);
-        for job in &selected {
-            active.insert(job.id.clone(), job.direction);
-        }
         drop(active);
-        for job in selected {
+        for job in updates {
             self.emit_job(&job);
+            if job.status == TransferStatus::Paused {
+                continue;
+            }
             let engine = self.clone();
             tauri::async_runtime::spawn(async move {
                 engine.execute(job).await;
@@ -1211,15 +1218,7 @@ impl TransferEngine {
             match result {
                 Ok(response) => {
                     // Successful publication wins over a late pause/cancel race.
-                    current.status = TransferStatus::Completed;
-                    current.progress = 100;
-                    current.transferred_bytes = current.total_bytes.max(current.transferred_bytes);
-                    current.speed_bytes_per_sec = 0;
-                    current.error = None;
-                    current.retry_at = None;
-                    current.error_category = None;
-                    current.network_retries = 0;
-                    record_success_response(&mut current, &response);
+                    current.apply_success(&response);
                 }
                 Err(_error)
                     if matches!(
@@ -1630,7 +1629,7 @@ impl TransferEngine {
             .filter(|job| owner.is_some() && job.owner_id == owner)
             .cloned()
             .collect();
-        jobs.sort_by_key(|job| (job.queue_position, job.created_at));
+        jobs.sort_unstable_by(|left, right| left.queue_order().cmp(&right.queue_order()));
         jobs
     }
 
@@ -1661,34 +1660,123 @@ impl TransferEngine {
     }
 }
 
-fn select_pending_job_ids(
-    jobs: &HashMap<String, TransferJob>,
-    active: &HashMap<String, TransferDirection>,
-    upload_slots: usize,
-    download_slots: usize,
-) -> Vec<String> {
+/// Reserve runnable work in SQLite before giving it to the transport.
+/// A failed intent write pauses those jobs in memory and starts no transfer.
+pub(crate) async fn claim_ready_jobs(
+    store: &TransferStore,
+    jobs: &mut HashMap<String, TransferJob>,
+    active: &mut HashMap<String, TransferDirection>,
+    account: &AccountGuard,
+    limits: TransferLimits,
+    connected: bool,
+) -> Vec<TransferJob> {
+    if !connected {
+        return Vec::new();
+    }
+    let owner = account.owner.to_string();
+    let upload_count = active
+        .values()
+        .filter(|&&direction| direction == TransferDirection::Upload)
+        .count();
+    let mut uploads = limits.uploads.saturating_sub(upload_count);
+    let mut downloads = limits.downloads.saturating_sub(active.len() - upload_count);
+    if limits.strict_upload_order
+        && active.iter().any(|(id, direction)| {
+            *direction == TransferDirection::Upload
+                && jobs
+                    .get(id)
+                    .is_none_or(|job| job.owner_id.as_deref() == Some(&owner))
+        })
+    {
+        uploads = 0;
+    }
+    if uploads == 0 && downloads == 0 {
+        return Vec::new();
+    }
+
+    let now = now_millis();
     let mut candidates: Vec<_> = jobs
         .values()
-        .filter(|job| job.status == TransferStatus::Pending && !active.contains_key(&job.id))
-        .map(|job| (job.queue_position, job.id.clone(), job.direction))
-        .collect();
-    candidates.sort_by_key(|candidate| candidate.0);
-    let mut uploads = 0usize;
-    let mut downloads = 0usize;
-    candidates
-        .into_iter()
-        .filter_map(|(_, id, direction)| match direction {
-            TransferDirection::Upload if uploads < upload_slots => {
-                uploads += 1;
-                Some(id)
+        .filter_map(|job| {
+            if job.owner_id.as_deref() != Some(&owner) {
+                return None;
             }
-            TransferDirection::Download if downloads < download_slots => {
-                downloads += 1;
-                Some(id)
-            }
-            _ => None,
+            let ready = !job.persistence_pending
+                && !active.contains_key(&job.id)
+                && (matches!(
+                    job.status,
+                    TransferStatus::Pending | TransferStatus::WaitingForNetwork
+                ) || (job.status == TransferStatus::Cooldown
+                    && job.retry_at.is_some_and(|at| at <= now)));
+            let blocking_upload = limits.strict_upload_order
+                && job.direction == TransferDirection::Upload
+                && (job.persistence_pending
+                    || !matches!(
+                        job.status,
+                        TransferStatus::Completed | TransferStatus::Cancelled
+                    ));
+            (ready || blocking_upload).then_some((job, ready))
         })
-        .collect()
+        .collect();
+    candidates
+        .sort_unstable_by(|(left, _), (right, _)| left.queue_order().cmp(&right.queue_order()));
+    let mut selected = Vec::new();
+    for (job, ready) in candidates {
+        if uploads == 0 && downloads == 0 {
+            break;
+        }
+        let slots = match job.direction {
+            TransferDirection::Upload => &mut uploads,
+            TransferDirection::Download => &mut downloads,
+        };
+        if *slots == 0 {
+            continue;
+        }
+        if ready {
+            let mut next = job.clone();
+            next.status = if job.kind == TransferKind::LocalUpload {
+                TransferStatus::Uploading
+            } else {
+                TransferStatus::Downloading
+            };
+            next.error = None;
+            next.error_category = None;
+            next.retry_at = None;
+            next.speed_bytes_per_sec = 0;
+            next.revision = next.revision.saturating_add(1);
+            next.updated_at = now;
+            selected.push(next);
+            *slots -= 1;
+        }
+        // The first unresolved upload owns the entire upload lane, even if
+        // it cannot run yet or its successful publication still needs saving.
+        if limits.strict_upload_order && job.direction == TransferDirection::Upload {
+            uploads = 0;
+        }
+    }
+    if selected.is_empty() || account.validate().is_err() {
+        return Vec::new();
+    }
+    if let Err(error) = commit_jobs(store, jobs, &selected).await {
+        if error.starts_with("ACCOUNT_") {
+            return Vec::new();
+        }
+        return selected
+            .into_iter()
+            .filter_map(|selection| {
+                let job = jobs.get_mut(&selection.id)?;
+                job.status = TransferStatus::Paused;
+                job.error = Some(error.clone());
+                job.error_category = Some(TransferErrorCategory::Persistence);
+                job.revision = job.revision.saturating_add(1);
+                Some(job.clone())
+            })
+            .collect();
+    }
+    for job in &selected {
+        active.insert(job.id.clone(), job.direction);
+    }
+    selected
 }
 
 /// Whether a supervised transfer has reached a state its supervisor must act
@@ -2084,17 +2172,19 @@ pub async fn cmd_transfer_list(
 }
 
 #[tauri::command]
-pub fn cmd_transfer_set_limits(
+pub async fn cmd_transfer_set_limits(
     max_uploads: usize,
     max_downloads: usize,
+    strict_upload_order: Option<bool>,
     engine: State<'_, Arc<TransferEngine>>,
 ) -> Result<(), String> {
+    // Acknowledging the new limits and claiming a batch are serialized.
+    let _mutation = engine.mutation_lock.lock().await;
     engine
-        .max_uploads
-        .store(max_uploads.clamp(1, 32), Ordering::Relaxed);
-    engine
-        .max_downloads
-        .store(max_downloads.clamp(1, 32), Ordering::Relaxed);
+        .limits
+        .write()
+        .await
+        .update(max_uploads, max_downloads, strict_upload_order);
     engine.notify.notify_one();
     Ok(())
 }

@@ -797,6 +797,12 @@ async fn real_http_server_streams_owned_cache_and_revokes_it_after_account_switc
     password.bind((1, password_hash.as_str())).unwrap();
     password.next().unwrap();
     drop(password);
+    db.execute(concat!(
+        "INSERT INTO shared_links(id,owner_id,message_id,file_name,password_hash,created_at) ",
+        "SELECT 'second',owner_id,message_id,'Second-private.pdf',password_hash,created_at ",
+        "FROM shared_links WHERE id='private'",
+    ))
+    .unwrap();
     drop(db);
     let fmp4_root = fixture.path("transcode/fmp4/101_0_42");
     std::fs::create_dir_all(&fmp4_root).unwrap();
@@ -869,6 +875,39 @@ async fn real_http_server_streams_owned_cache_and_revokes_it_after_account_switc
     assert!(cookie.contains("HttpOnly"));
     assert!(cookie.contains("SameSite=Strict"));
     assert!(cookie.contains("Path=/d/private"));
+    assert!(cookie.contains("Max-Age=1800"));
+    let issued = cookie.split(';').next().unwrap();
+    let location = verified.headers()["location"].to_str().unwrap();
+    let granted = client
+        .get(format!("{url}{location}"))
+        .header("cookie", "unrelated=one; malformed")
+        .header("cookie", issued.replace("share_auth_", "share%5Fauth_"))
+        .send()
+        .await
+        .unwrap();
+    // The password gate must admit the request even though this fixture has no Telegram client.
+    assert_eq!(granted.status(), 503);
+    assert_eq!(
+        granted.text().await.unwrap(),
+        "Telegram client is not connected"
+    );
+    let duplicate = client
+        .get(format!("{url}{location}"))
+        .header("cookie", "share_auth_private=wrong")
+        .header("cookie", issued)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(duplicate.status(), 200);
+    assert!(duplicate.text().await.unwrap().contains("A-private.pdf"));
+    let second = client
+        .get(format!("{url}/d/second"))
+        .header("cookie", issued)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(second.status(), 200);
+    assert!(second.text().await.unwrap().contains("Second-private.pdf"));
     let missing = client.get(format!("{url}/d/missing")).send().await.unwrap();
     assert_eq!(missing.status(), 404);
     let token = "synthetic-e2e-stream-token";
@@ -2899,14 +2938,34 @@ async fn media_http_ranges_filenames_failures_and_account_revocation() {
             assert!(response.bytes().await.is_err());
         }
     }
+    let checkpoint = reqwest::Url::parse(url)
+        .unwrap()
+        .join("/body-checkpoint")
+        .unwrap();
     let mut response = client
-        .get(format!("{url}&delayMs=20"))
+        .get(format!("{url}&holdAfterFirstChunk=true"))
         .send()
         .await
         .unwrap();
-    assert!(!response.chunk().await.unwrap().unwrap().is_empty());
+    assert_eq!(response.status(), 200);
+    let prefix = response.chunk().await.unwrap().unwrap();
+    assert!(!prefix.is_empty());
+    assert_eq!(prefix.as_ref(), &content[..prefix.len()]);
+    // First rendezvous confirms the source stopped after one block. The
+    // second permits the next block only after the new account is current.
+    let meet_source = || {
+        client
+            .post(checkpoint.clone())
+            .timeout(Duration::from_secs(10))
+            .send()
+    };
+    assert_eq!(meet_source().await.unwrap().status(), 204);
     app.ok(json!({"command":"seed_account", "owner":202}));
-    assert!(response.bytes().await.is_err());
+    assert_eq!(meet_source().await.unwrap().status(), 204);
+    tokio::time::timeout(Duration::from_secs(10), response.bytes())
+        .await
+        .expect("revoked response must terminate")
+        .expect_err("revoked response must end before its declared length");
     assert_eq!(client.get(url).send().await.unwrap().status(), 404);
     let fresh = app.ok(
         json!({"command":"start_media_fixture","source":"media.bin","filename":"owner-202.bin"}),
@@ -11495,8 +11554,150 @@ fn retry_upload_fixture(id: &str, owner: &str, status: &str) -> Value {
     })
 }
 
+fn verify_ordered_upload_dispatch() {
+    fn seed(
+        app: &mut Backend,
+        id: &str,
+        owner: &str,
+        direction: &str,
+        status: &str,
+        position: i64,
+    ) {
+        let mut job = retry_upload_fixture(id, owner, status);
+        job["direction"] = json!(direction);
+        job["queuePosition"] = json!(position);
+        if direction == "download" {
+            job["kind"] = json!("download");
+        }
+        app.ok(json!({"command":"save_transfer","job":job}));
+    }
+    fn claim(app: &mut Backend) -> Vec<String> {
+        let jobs = app.ok(json!({"command":"claim_transfer_jobs"}));
+        jobs.as_array()
+            .unwrap()
+            .iter()
+            .map(|id| id.as_str().unwrap().to_owned())
+            .collect()
+    }
+    fn result(app: &mut Backend, id: &str, status: &str, retry_at: Option<i64>) -> Value {
+        let mut job = app.ok(json!({"command":"transfer_retry_snapshot","id":id}))["job"].clone();
+        job["revision"] = json!(job["revision"].as_u64().unwrap() + 1);
+        job["status"] = json!(status);
+        job["retryAt"] = json!(retry_at);
+        let receipt = (status == "completed" && job["direction"] == "upload").then_some("888");
+        app.ok(json!({"command":"record_transfer_result","job":job,"transportResponse":receipt}))
+    }
+    let fixture = Fixture::new();
+    fixture.write("settings.json", br#"{"settings":{"strictUploadOrder":true,"maxConcurrentUploads":4,"maxConcurrentDownloads":1}}"#);
+    let mut app = Backend::start(&fixture.0);
+    app.ok(json!({"command":"seed_account","owner":101}));
+    seed(&mut app, "foreign", "202", "upload", "paused", 0);
+    seed(&mut app, "a", "101", "upload", "failed", 1);
+    seed(&mut app, "c", "101", "upload", "pending", 2);
+    seed(&mut app, "b", "101", "upload", "pending", 2);
+    seed(&mut app, "last", "101", "upload", "pending", 8);
+    seed(&mut app, "d1", "101", "download", "pending", 3);
+    seed(&mut app, "d2", "101", "download", "pending", 4);
+    assert_eq!(
+        app.ok(json!({"command":"claim_transfer_jobs","online":false})),
+        json!([])
+    );
+    assert_eq!(claim(&mut app), ["d1"]);
+    result(&mut app, "d1", "completed", None);
+    assert_eq!(claim(&mut app), ["d2"]);
+    result(&mut app, "d2", "completed", None);
+    for blocked in ["waiting_for_unlock", "paused", "cooldown", "failed"] {
+        result(&mut app, "a", blocked, Some(i64::MAX));
+        assert!(claim(&mut app).is_empty(), "{blocked} head was overtaken");
+    }
+    app.stop();
+    let mut app = Backend::start(&fixture.0);
+    assert!(
+        claim(&mut app).is_empty(),
+        "restart skipped an unresolved publication"
+    );
+    app.ok(json!({"command":"retry_failed_upload","owner":"101","id":"a"}));
+    assert_eq!(claim(&mut app), ["a"]);
+    assert!(claim(&mut app).is_empty());
+    app.stop();
+    let mut app = Backend::start(&fixture.0);
+    assert!(
+        claim(&mut app).is_empty(),
+        "an interrupted head has unknown publication status"
+    );
+    let interrupted = app.ok(json!({"command":"transfer_retry_snapshot","id":"a"}));
+    assert_eq!(interrupted["job"]["status"], "paused");
+    assert_eq!(interrupted["job"]["errorCategory"], "interrupted");
+    result(&mut app, "a", "waiting_for_network", None);
+    assert_eq!(claim(&mut app), ["a"], "reconnection must retry the head");
+    result(&mut app, "a", "cooldown", Some(0));
+    assert_eq!(
+        claim(&mut app),
+        ["a"],
+        "an elapsed FLOOD_WAIT must retry the head"
+    );
+
+    let db = sqlite::open(fixture.path("transfers.db")).unwrap();
+    db.execute("CREATE TRIGGER hold_order_receipt BEFORE UPDATE ON transfer_jobs WHEN NEW.id='a' AND NEW.status='completed' BEGIN SELECT RAISE(ABORT,'fixture checkpoint failure'); END;").unwrap();
+    assert_eq!(
+        result(&mut app, "a", "completed", None)["persistencePending"],
+        true
+    );
+    assert!(
+        claim(&mut app).is_empty(),
+        "uncommitted receipt released the next upload"
+    );
+    db.execute("DROP TRIGGER hold_order_receipt").unwrap();
+    let saved = app.ok(json!({"command":"retry_failed_upload","owner":"101","id":"a"}));
+    assert_eq!(saved["retried"], false);
+    assert_eq!(saved["job"]["persistencePending"], false);
+    assert_eq!(saved["job"]["messageId"], 888);
+    assert_eq!(
+        claim(&mut app),
+        ["b"],
+        "legacy equal positions need a stable tie break"
+    );
+    result(&mut app, "b", "cancelled", None);
+    assert_eq!(claim(&mut app), ["c"]);
+    result(&mut app, "c", "failed", None);
+    assert!(claim(&mut app).is_empty());
+    app.ok(json!({"command":"remove_transfer","id":"c"}));
+    app.stop();
+    let mut app = Backend::start(&fixture.0);
+    assert_eq!(
+        claim(&mut app),
+        ["last"],
+        "a removed head must stay removed"
+    );
+    app.stop();
+
+    let defaults = Fixture::new();
+    defaults.write(
+        "settings.json",
+        br#"{"settings":{"maxConcurrentUploads":2,"maxConcurrentDownloads":1}}"#,
+    );
+    let mut app = Backend::start(&defaults.0);
+    app.ok(json!({"command":"seed_account","owner":101}));
+    seed(&mut app, "first", "101", "upload", "paused", 0);
+    seed(&mut app, "second", "101", "upload", "pending", 1);
+    seed(&mut app, "third", "101", "upload", "pending", 2);
+    seed(&mut app, "fourth", "101", "upload", "pending", 3);
+    assert_eq!(claim(&mut app), ["second", "third"]);
+    app.ok(json!({"command":"fixture_transfer_limits","uploads":4,"downloads":1,"strict":true}));
+    result(&mut app, "first", "cancelled", None);
+    result(&mut app, "second", "completed", None);
+    assert!(
+        claim(&mut app).is_empty(),
+        "enabling strict order must drain running uploads"
+    );
+    result(&mut app, "third", "completed", None);
+    assert_eq!(claim(&mut app), ["fourth"]);
+    app.stop();
+}
+
 #[test]
 fn retry_failed_uploads_preserves_other_states_account_scope_and_durable_inputs() {
+    verify_ordered_upload_dispatch();
     let fixture = Fixture::new();
     let mut app = Backend::start(&fixture.0);
     app.ok(json!({"command":"seed_account","owner":101}));

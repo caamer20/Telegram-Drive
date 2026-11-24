@@ -113,6 +113,7 @@ The application caps a Telegram object at exactly **2,000,000,000 bytes**. Encry
 
 - Durable desktop upload and download queues that recover across window and application restarts.
 - Independent upload/download concurrency controls, bandwidth controls, pause, resume, retry, cancel, cooldown, network-waiting, and vault-unlock states.
+- In desktop Preferences, enable **Strict upload order** to publish queued uploads one at a time in their original order. During a network interruption or Telegram cooldown, later uploads wait. Resume or retry the first blocked upload, or cancel or remove it to let the next one proceed. Downloads have their own concurrency limit. Existing uploads already in flight finish before the ordered queue starts.
 - Background operation from the system tray while transfers are active.
 - Native transfer notifications for completion, failure, pause, and attention-required states, with per-category controls.
 - Suspend, resume, network-recovery, and Telegram flood-wait handling.

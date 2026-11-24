@@ -20,6 +20,7 @@ export interface Settings {
   fileSortDirection: 'asc' | 'desc';
   autoUpdate: boolean;
   maxConcurrentUploads: number;
+  strictUploadOrder: boolean;
   maxConcurrentDownloads: number;
   zipFolders: boolean;
   videoUploadMode: VideoUploadMode;

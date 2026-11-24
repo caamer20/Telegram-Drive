@@ -106,6 +106,8 @@
       "select_channel": "Telegram kanalı seç",
       "no_channels": "Eşitleme eşlemesi oluşturmadan önce Telegram klasörlerinizi yenileyin."
     },
+    "strict_upload_order": "Yükleme sırasını koru",
+    "strict_upload_order_desc": "Dosyaları kuyruk sırasıyla tek tek yükler. Yeniden deneme sırasında sonraki dosyalar bekler. Devam etmek için takılan yüklemeyi sürdürün, yeniden deneyin, iptal edin veya kuyruktan kaldırın.",
     "concurrent_uploads": "Eşzamanlı Yüklemeler",
     "concurrent_downloads": "Eşzamanlı İndirmeler",
     "zip_before_upload": "Yüklemeden Önce Klasörleri Sıkıştır (Zip)",

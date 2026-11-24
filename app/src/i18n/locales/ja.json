@@ -106,6 +106,8 @@
       "select_channel": "Select Telegram channel",
       "no_channels": "Refresh your Telegram folders before creating a sync mapping."
     },
+    "strict_upload_order": "キューの順序を厳守",
+    "strict_upload_order_desc": "キューの順に1件ずつアップロードします。再試行中は次のファイルも待機します。続けるには、停止したアップロードを再開、再試行、キャンセル、またはキューから削除してください。",
     "concurrent_uploads": "同時アップロード数",
     "concurrent_downloads": "同時ダウンロード数",
     "zip_before_upload": "アップロード前にフォルダを ZIP 圧縮する",

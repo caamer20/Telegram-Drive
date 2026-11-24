@@ -25,6 +25,7 @@ const ARGON2_PARALLELISM: u32 = 1;
 const BOOLEAN_KEYS: &[&str] = &[
     "autoUpdate",
     "zipFolders",
+    "strictUploadOrder",
     "videoFilenameCaption",
     "sidebarCollapsed",
     "hideGroups",

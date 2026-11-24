@@ -173,6 +173,8 @@
     "desktop_notification_filenames": "Ipakita ang mga pangalan ng file",
     "desktop_notification_filenames_desc": "Maaaring makita ang mga pangalan sa lock screen. Mas pribado kapag naka-off.",
     "desktop_save_failed": "Hindi ma-save ang mga kagustuhan sa desktop",
+    "strict_upload_order": "Sundin ang pagkakasunod ng upload",
+    "strict_upload_order_desc": "Isa-isang ia-upload ang mga file ayon sa pila. Maghihintay ang mga susunod habang sinusubukang muli ang nauna. Para magpatuloy, ituloy, subukang muli, kanselahin o alisin ang naantalang upload.",
     "concurrent_uploads": "Kasabay na Mga Pag-upload",
     "max_uploads_desc": "Max parallel na pag-upload",
     "concurrent_downloads": "Kasabay na Mga Pag-download",

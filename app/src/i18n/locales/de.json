@@ -106,6 +106,8 @@
       "select_channel": "Telegram-Kanal auswählen",
       "no_channels": "Telegram-Ordner vor dem Erstellen einer Synchronisierungszuordnung aktualisieren."
     },
+    "strict_upload_order": "Feste Upload-Reihenfolge",
+    "strict_upload_order_desc": "Dateien werden einzeln in der Reihenfolge der Warteschlange hochgeladen. Weitere Uploads warten auch bei Wiederholungsversuchen. Setze einen blockierten Upload fort, versuche ihn erneut, brich ihn ab oder entferne ihn.",
     "concurrent_uploads": "Gleichzeitige Uploads",
     "concurrent_downloads": "Gleichzeitige Downloads",
     "zip_before_upload": "Ordner vor dem Upload zippen",

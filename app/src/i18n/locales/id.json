@@ -106,6 +106,8 @@
       "select_channel": "Pilih kanal Telegram",
       "no_channels": "Segarkan folder Telegram sebelum membuat pemetaan sinkronisasi."
     },
+    "strict_upload_order": "Urutan unggahan tetap",
+    "strict_upload_order_desc": "Unggah satu per satu sesuai urutan antrean. Unggahan berikutnya menunggu selama percobaan ulang. Lanjutkan, coba lagi, batalkan, atau hapus unggahan yang terhambat untuk meneruskan antrean.",
     "concurrent_uploads": "Unggahan Simultan",
     "concurrent_downloads": "Unduhan Simultan",
     "zip_before_upload": "Kompres Folder Sebelum Diunggah",
