@@ -4,7 +4,7 @@ import App from "./App";
 import i18n,{ensureLanguageResource,i18nInitialized} from './i18n';
 import bootstrapCopy from 'virtual:telegram-drive-bootstrap-copy';
 import {resolveLanguagePreference} from './i18n/resolveLanguage';
-import {load} from '@tauri-apps/plugin-store';
+import { loadAppStore } from './services/appStore';
 import { reportCrash } from './services/crashTelemetry';
 
 window.onerror = function (message, source, lineno, colno, error) {
@@ -49,7 +49,7 @@ async function savedLanguage() {
   let timer:number|undefined;
   try {
     return await Promise.race([
-      load('settings.json').then(store=>store.get<{language?:Parameters<typeof resolveLanguagePreference>[0]}>('settings')).then(settings=>typeof settings?.language==='string'?settings.language:undefined).catch(()=>undefined),
+      loadAppStore('settings.json').then(store=>store.get<{language?:Parameters<typeof resolveLanguagePreference>[0]}>('settings')).then(settings=>typeof settings?.language==='string'?settings.language:undefined).catch(()=>undefined),
       new Promise<undefined>(done=>{timer=window.setTimeout(()=>done(undefined),700);}),
     ]);
   } finally {window.clearTimeout(timer);}

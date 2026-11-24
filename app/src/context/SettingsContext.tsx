@@ -18,6 +18,7 @@ interface SettingsContextType {
     setCrashReportingConsent: (allow: boolean) => void;
     resetSettings: () => void;
     isLoaded: boolean;
+    hasStoredSettings: boolean;
     persistenceStatus: 'loading' | 'saved' | 'saving' | 'error';
     retryPersistence: () => Promise<void>;
 }
@@ -27,8 +28,18 @@ const SettingsContext = createContext<SettingsContextType | undefined>(undefined
 export function SettingsProvider({ children }: { children: ReactNode }) {
     const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
     const [isLoaded, setIsLoaded] = useState(false);
-    const [persistenceStatus, setPersistenceStatus] = useState<'loading' | 'saved' | 'saving' | 'error'>('loading');
+    const [hasStoredSettings, setHasStoredSettings] = useState(false);
+    // Before the first successful read, defaults are only a display fallback.
+    const unmergedEdits = useRef<Partial<Settings> | null>({});
     const latestSettingsRef = useRef<Settings>(DEFAULT_SETTINGS);
+    const acceptStoredSettings = useCallback((stored: Settings) => {
+        unmergedEdits.current = null;
+        setHasStoredSettings(true);
+        setSettings(stored);
+        latestSettingsRef.current = stored;
+        configureCrashTelemetry(stored.crashReportingConsentSeen === true && stored.crashReportingEnabled === true, stored.crashReportingConsentId);
+    }, []);
+    const [persistenceStatus, setPersistenceStatus] = useState<'loading' | 'saved' | 'saving' | 'error'>('loading');
     const persistenceQueueRef = useRef<Promise<void>>(Promise.resolve());
     const persistenceRevisionRef = useRef(0);
     const retryOperationRef = useRef<'load' | 'save'>('load');
@@ -41,8 +52,9 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         setPersistenceStatus('loading');
         const operation = (async () => {
             let loadFailed = false;
-            const loaded = await readPersistedSettings(DEFAULT_SETTINGS, undefined, () => {
+            const loaded = await readPersistedSettings(DEFAULT_SETTINGS).catch(() => {
                 loadFailed = true;
+                return DEFAULT_SETTINGS;
             });
             const readFailed = loadFailed;
             if (revision !== persistenceRevisionRef.current) {
@@ -72,11 +84,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
             }
             setIsLoaded(true);
             if (revision !== persistenceRevisionRef.current) return;
-            if (!readFailed) {
-                configureCrashTelemetry(loaded.crashReportingConsentSeen === true && loaded.crashReportingEnabled === true, loaded.crashReportingConsentId);
-                setSettings(loaded);
-                latestSettingsRef.current = loaded;
-            }
+            if (!readFailed) acceptStoredSettings(loaded);
             setPersistenceStatus(loadFailed ? 'error' : 'saved');
             if (loadFailed) throw new Error('Settings loading failed');
             retryOperationRef.current = 'save';
@@ -87,19 +95,28 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
             () => { loadingPromiseRef.current = null; },
         );
         return operation;
-    }, []);
+    }, [acceptStoredSettings]);
 
     useEffect(() => {
         void loadSettings().catch(() => undefined);
     }, [loadSettings]);
 
-    const persistSettings = useCallback((next: Settings): Promise<void> => {
+    const persistSettings = useCallback((next: Settings, edits?: Partial<Settings>): Promise<void> => {
         latestSettingsRef.current = next;
         const revision = ++persistenceRevisionRef.current;
         // An explicit edit/reset is now the state to retry, even after a failed read.
         retryOperationRef.current = 'save';
         setPersistenceStatus('saving');
-        const operation = persistenceQueueRef.current.then(() => writePersistedSettings(next));
+        const pending = unmergedEdits.current && { ...unmergedEdits.current, ...edits };
+        unmergedEdits.current = pending;
+        const operation = persistenceQueueRef.current.then(async () => {
+            // Retry the read before an unrelated edit can overwrite saved settings.
+            const saved = pending && next !== DEFAULT_SETTINGS
+                ? { ...await readPersistedSettings(DEFAULT_SETTINGS), ...pending }
+                : next;
+            await writePersistedSettings(saved);
+            if (pending && revision === persistenceRevisionRef.current) acceptStoredSettings(saved);
+        });
         persistenceQueueRef.current = operation.catch(() => undefined);
         return operation.then(
             () => {
@@ -110,12 +127,12 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
                 throw new Error('Settings persistence failed');
             },
         );
-    }, []);
+    }, [acceptStoredSettings]);
 
     const updateSetting = useCallback(<K extends keyof Settings>(key: K, value: Settings[K]) => {
         setSettings(prev => {
             const next = { ...prev, [key]: value };
-            void persistSettings(next).catch(() => undefined);
+            void persistSettings(next, { [key]: value } as Partial<Settings>).catch(() => undefined);
             return next;
         });
     }, [persistSettings]);
@@ -123,7 +140,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     const updateSettings = useCallback((updates: Partial<Settings>) => {
         setSettings(prev => {
             const next = { ...prev, ...updates };
-            void persistSettings(next).catch(() => undefined);
+            void persistSettings(next, updates).catch(() => undefined);
             return next;
         });
     }, [persistSettings]);
@@ -138,7 +155,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         configureCrashTelemetry(false);
         setSettings(DEFAULT_SETTINGS);
         latestSettingsRef.current = DEFAULT_SETTINGS;
-        void persistSettings(DEFAULT_SETTINGS).catch(() => undefined);
+        void persistSettings(DEFAULT_SETTINGS, DEFAULT_SETTINGS).catch(() => undefined);
         void invoke('cmd_clear_proxy_secret').catch(() => {
             console.error('[Settings] Unable to remove the saved proxy credential.');
         });
@@ -150,7 +167,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     );
 
     return (
-        <SettingsContext.Provider value={{ settings, updateSetting, updateSettings, setCrashReportingConsent, resetSettings, isLoaded, persistenceStatus, retryPersistence }}>
+        <SettingsContext.Provider value={{ settings, updateSetting, updateSettings, setCrashReportingConsent, resetSettings, isLoaded, hasStoredSettings, persistenceStatus, retryPersistence }}>
             {children}
         </SettingsContext.Provider>
     );

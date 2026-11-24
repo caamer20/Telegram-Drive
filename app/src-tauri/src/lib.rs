@@ -1462,6 +1462,7 @@ pub fn run() {
             commands::cmd_get_startup_health,
             commands::cmd_get_storage_insight,
             commands::cmd_submit_crash_report,
+            commands::cmd_reload_missing_settings,
             commands::cmd_get_settings_sync_status,
             commands::cmd_upload_settings_sync,
             commands::cmd_download_settings_sync,

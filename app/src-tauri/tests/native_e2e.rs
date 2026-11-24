@@ -11554,6 +11554,70 @@ fn retry_upload_fixture(id: &str, owner: &str, status: &str) -> Value {
     })
 }
 
+fn verify_missing_settings_store_recovery() {
+    let fixture = Fixture::new();
+    let malformed = br#"{"settings":{"privateFixtureMarker":"truncated"#;
+    fixture.write("settings.json", malformed);
+    let mut app = Backend::start(&fixture.0);
+    let reload = json!({"command":"fixture_settings_store","operation":"reload"});
+    let registered = json!({"command":"fixture_settings_store","operation":"registered"});
+    let cached =
+        |key: &str| json!({"command":"fixture_settings_store","operation":"get","key":key});
+    assert_eq!(
+        app.ok(cached("settings")),
+        Value::Null,
+        "initial plugin load hides the malformed file"
+    );
+    assert_eq!(
+        app.failure(reload.clone()),
+        "Saved settings could not be read."
+    );
+    assert_eq!(
+        app.ok(registered.clone()),
+        false,
+        "a failed store must not be registered for save-on-exit"
+    );
+    app.stop();
+    assert_eq!(fixture.read("settings.json"), malformed);
+    let mut app = Backend::start(&fixture.0);
+    assert_eq!(
+        app.failure(reload.clone()),
+        "Saved settings could not be read."
+    );
+    assert_eq!(app.ok(registered.clone()), false);
+    assert_eq!(fixture.read("settings.json"), malformed);
+    std::fs::remove_file(fixture.path("settings.json")).unwrap();
+
+    assert_eq!(app.ok(reload.clone()), Value::Null);
+    assert!(
+        !fixture.path("settings.json").exists(),
+        "reading absent settings created a file"
+    );
+    fixture.write("settings.json", br#"{"legacyKey":"preserved"}"#);
+    assert_eq!(app.ok(reload.clone()), Value::Null);
+    assert_eq!(app.ok(cached("legacyKey")), "preserved");
+    // Even when the JS-held resource is already cached, a repaired file and
+    // cache-only unrelated fields must survive the fallback.
+    app.ok(json!({"command":"fixture_settings_store","operation":"set","key":"volatileKey","value":"unsaved"}));
+    let repaired = br#"{"settings":{"strictUploadOrder":true},"legacyKey":"preserved"}"#;
+    fixture.write("settings.json", repaired);
+    assert_eq!(app.ok(reload.clone()), json!({"strictUploadOrder":true}));
+    assert_eq!(
+        app.ok(cached("settings")),
+        json!({"strictUploadOrder":true})
+    );
+    assert_eq!(app.ok(cached("volatileKey")), "unsaved");
+    assert_eq!(app.ok(cached("legacyKey")), "preserved");
+    assert_eq!(fixture.read("settings.json"), repaired);
+    app.ok(json!({"command":"fixture_settings_store","operation":"set","key":"settings","value":{"strictUploadOrder":false}}));
+    assert_eq!(
+        app.ok(reload),
+        json!({"strictUploadOrder":false}),
+        "newer cached settings were replaced"
+    );
+    app.stop();
+}
+
 fn verify_ordered_upload_dispatch() {
     fn seed(
         app: &mut Backend,
@@ -11671,6 +11735,18 @@ fn verify_ordered_upload_dispatch() {
     );
     app.stop();
 
+    let invalid = Fixture::new();
+    invalid.write("settings.json", b"[]");
+    let mut app = Backend::start(&invalid.0);
+    app.ok(json!({"command":"seed_account","owner":101}));
+    seed(&mut app, "head", "101", "upload", "paused", 0);
+    seed(&mut app, "tail", "101", "upload", "pending", 1);
+    assert!(
+        claim(&mut app).is_empty(),
+        "an unreadable store must preserve queue order"
+    );
+    app.stop();
+
     let defaults = Fixture::new();
     defaults.write(
         "settings.json",
@@ -11697,6 +11773,7 @@ fn verify_ordered_upload_dispatch() {
 
 #[test]
 fn retry_failed_uploads_preserves_other_states_account_scope_and_durable_inputs() {
+    verify_missing_settings_store_recovery();
     verify_ordered_upload_dispatch();
     let fixture = Fixture::new();
     let mut app = Backend::start(&fixture.0);

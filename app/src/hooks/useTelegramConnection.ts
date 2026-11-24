@@ -1,7 +1,8 @@
 import i18n from '../i18n';
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { load, type Store } from '@tauri-apps/plugin-store';
+import type { Store } from '@tauri-apps/plugin-store';
+import { loadAppStore } from '../services/appStore';
 import { toast } from 'sonner';
 import { useConfirm } from '../context/ConfirmContext';
 import { TelegramFolder, FolderInviteInfo, FolderGroup } from '../types';
@@ -100,11 +101,11 @@ export function useTelegramConnection(onLogoutParent: () => void) {
     useEffect(() => {
         const initStore = async () => {
             try {
-                let _store = await load('config.json');
+                let _store = await loadAppStore('config.json');
                 let restoredFolderInventory = false;
                 const checkId = await _store.get<string>('api_id');
                 if (!checkId) {
-                    _store = await load('settings.json');
+                    _store = await loadAppStore('settings.json');
                 }
                 // Fetch local-first SQLite enriched folders
                 try {
@@ -236,7 +237,7 @@ export function useTelegramConnection(onLogoutParent: () => void) {
                 invoke('cmd_clean_cache'),
                 invoke('cmd_clear_api_hash'),
                 ...['config.json', 'settings.json'].map(async path => {
-                    const target = await load(path);
+                    const target = await loadAppStore(path);
                     const removals = await Promise.allSettled(['api_id', 'api_hash', 'folders'].map(key => target.delete(key)));
                     await target.save();
                     if (removals.some(result => result.status === 'rejected')) throw new Error('Sign-in field cleanup failed');

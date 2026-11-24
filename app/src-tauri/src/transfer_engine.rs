@@ -687,7 +687,9 @@ impl TransferLimits {
             strict_upload_order: false,
         };
         let settings = match std::fs::read(root.join("settings.json")) {
-            Ok(bytes) => serde_json::from_slice::<serde_json::Value>(&bytes).ok(),
+            Ok(bytes) => serde_json::from_slice::<serde_json::Value>(&bytes)
+                .ok()
+                .filter(serde_json::Value::is_object),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return defaults,
             Err(_) => None,
         };

@@ -114,8 +114,10 @@ test('a failed default save can be retried and persists only after recovery', as
 });
 
 test('a failed preference read requires an explicit choice rather than a saved automatic mode', async ({ page }) => {
-  await desktopFixture(page, { settingsReadFails: true, pickedUploadPaths: pickerPaths, settings: { uploadProtectionPreference: 'standard' } });
+  await desktopFixture(page, { settingsReadFails: true, pickedUploadPaths: pickerPaths, settings: { uploadProtectionPreference: 'standard', strictUploadOrder: true } });
   await ready(page);
+  expect((await nativeCalls(page, 'cmd_reload_missing_settings')).length).toBeGreaterThan(0);
+  expect(await nativeCalls(page, 'cmd_transfer_set_limits')).toHaveLength(0);
   await page.getByRole('button', { name: 'No thanks', exact: true }).click();
   await page.getByRole('button', { name: 'Skip drive introduction', exact: true }).click();
   await page.getByRole('button', { name: 'Upload', exact: true }).click();
@@ -123,6 +125,15 @@ test('a failed preference read requires an explicit choice rather than a saved a
   expect(await nativeCalls(page, 'cmd_transfer_enqueue_many')).toHaveLength(0);
   await chooser(page).getByRole('button', { name: /^Store Upload normally/ }).click();
   expect(await expectQueued(page)).toHaveLength(2);
+  expect(await nativeCalls(page, 'cmd_transfer_set_limits')).toHaveLength(0);
+  expect((await nativeCalls(page, 'plugin:store|load')).filter((call: { args: { path: string } }) => call.args.path === 'settings.json')).toHaveLength(0);
+  await page.evaluate(() => { (window as any).__desktopTest.settingsReadFails = false; });
+  await openSettings(page);
+  await page.getByRole('alert').getByRole('button', { name: 'Retry', exact: true }).click();
+  await expect(page.getByRole('switch', { name: 'Strict upload order' })).toBeChecked();
+  await expect.poll(async () => (await nativeCalls(page, 'cmd_transfer_set_limits')).at(-1)?.args.strictUploadOrder).toBe(true);
+  const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('desktop-e2e-stores')!)['settings.json'].settings);
+  expect(saved).toMatchObject({ strictUploadOrder: true, uploadProtectionPreference: 'standard', crashReportingConsentSeen: true, driveTourSeen: true });
 });
 
 for (const encryptionDefaultMode of ['standard', 'vault', 'passphrase', 'vault_and_passphrase']) {

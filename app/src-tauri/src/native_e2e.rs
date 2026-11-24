@@ -1345,6 +1345,32 @@ impl Driver {
     async fn dispatch(&mut self, request: Value) -> Result<Value, String> {
         let command = text(&request, "command")?.to_owned();
         match command.as_str() {
+            "fixture_settings_store" => {
+                use tauri_plugin_store::StoreExt;
+                let path = self.root.join("settings.json");
+                let app = self.sync_app()?.handle();
+                let operation = text(&request, "operation")?;
+                if operation == "registered" {
+                    return Ok(json!(app.get_store(&path).is_some()));
+                }
+                let store = app
+                    .store_builder(&path)
+                    .disable_auto_save()
+                    .build()
+                    .map_err(error)?;
+                match operation {
+                    "get" => Ok(store.get(text(&request, "key")?).unwrap_or(Value::Null)),
+                    "set" => {
+                        store.set(text(&request, "key")?, request["value"].clone());
+                        Ok(Value::Null)
+                    }
+                    "reload" => Ok(crate::commands::settings::reload_missing_settings_at(
+                        app, &path,
+                    )?
+                    .unwrap_or(Value::Null)),
+                    _ => Err("Unknown settings fixture operation".into()),
+                }
+            }
             "crash_attempt" => {
                 use tauri_plugin_store::StoreExt;
                 let path = self.root.join("crash-preferences.json");

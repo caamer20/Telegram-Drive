@@ -36,6 +36,7 @@ export async function desktopFixture(page: Page, options: {
       'settings.json': { settings: { crashReportingEnabled: false, crashReportingConsentSeen: true, driveTourSeen: true, language: 'en', viewMode: 'list', ...options.settings }, supporter_activation: 'preserve-existing-license' },
     };
     const persist = () => localStorage.setItem('desktop-e2e-stores', JSON.stringify(stores));
+    let missingSettingsCache = options.settingsReadFails === true;
     const callbacks = new Map<number, (value: any) => void>();
     const listeners = new Map<number, { event: string; handler: number }>();
     let nextId = 1;
@@ -126,10 +127,16 @@ export async function desktopFixture(page: Page, options: {
           if (command === 'plugin:event|listen') { if (options.failNativeDrop && args.event === 'tauri://drag-enter') throw new Error('Fixture drag registration unavailable'); const id = nextId++; listeners.set(id, { event: args.event, handler: args.handler }); return id; }
           if (command === 'plugin:event|unlisten') { listeners.delete(args.eventId); return; }
           if (command === 'plugin:store|load') { stores[args.path] ??= {}; return args.path; }
+          if (command === 'cmd_reload_missing_settings') {
+            if (state.settingsReadFails) throw new Error('Settings unavailable');
+            missingSettingsCache = false;
+            return null;
+          }
           const store = stores[args.rid];
           if (command === 'plugin:store|get') {
             if (state.holdSettings && args.key === 'settings' && args.rid === 'settings.json') await settingsGate;
-            if (state.settingsReadFails && args.key === 'settings' && args.rid === 'settings.json') throw new Error('Settings unavailable');
+            // The Store SDK initially reports an absent key when opening the file failed.
+            if (missingSettingsCache && args.key === 'settings' && args.rid === 'settings.json') return [null, false];
             return [store?.[args.key], args.key in (store ?? {})];
           }
           if (command === 'plugin:store|set') { store[args.key] = args.value; return; }

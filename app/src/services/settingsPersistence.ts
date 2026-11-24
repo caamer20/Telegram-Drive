@@ -1,4 +1,4 @@
-import { load } from '@tauri-apps/plugin-store';
+import { loadAppStore } from './appStore';
 import type { Settings } from '../types/settings';
 
 const SETTINGS_FILE = 'settings.json';
@@ -12,7 +12,7 @@ export interface SettingsStore {
 
 type StoreLoader = () => Promise<SettingsStore>;
 
-const loadSettingsStore: StoreLoader = () => load(SETTINGS_FILE);
+const loadSettingsStore: StoreLoader = () => loadAppStore(SETTINGS_FILE);
 
 // A legacy password is retained only until the Rust backend confirms that it
 // was migrated into secure credential storage. New passwords are never written
@@ -50,17 +50,11 @@ export function mergeStoredSettings(defaults: Settings, stored?: Partial<Setting
 export async function readPersistedSettings(
   defaults: Settings,
   loadStore: StoreLoader = loadSettingsStore,
-  onError?: (error: unknown) => void,
 ): Promise<Settings> {
-  try {
-    const store = await loadStore();
-    const stored = await store.get<Partial<Settings>>(SETTINGS_KEY);
-    unmigratedLegacyProxyPassword = stored?.proxyPassword || null;
-    return mergeStoredSettings(defaults, stored);
-  } catch (error) {
-    onError?.(error);
-    return defaults;
-  }
+  const store = await loadStore();
+  const stored = await store.get<Partial<Settings>>(SETTINGS_KEY);
+  unmigratedLegacyProxyPassword = stored?.proxyPassword || null;
+  return mergeStoredSettings(defaults, stored);
 }
 
 export async function writePersistedSettings(

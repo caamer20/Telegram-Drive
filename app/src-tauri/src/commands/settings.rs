@@ -4,6 +4,49 @@
 use crate::vpn_optimizer::{NetworkConfig, ProxyConfig, VpnConfig};
 use tauri::State;
 
+// Serialize fallback reads and disposal of failed resources. Healthy settings
+// continue using the SDK's shared store and its regular write path.
+static SETTINGS_RELOAD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+const SETTINGS_READ_ERROR: &str = "Saved settings could not be read.";
+
+pub(crate) fn reload_missing_settings_at(
+    app: &tauri::AppHandle,
+    path: &std::path::Path,
+) -> Result<Option<serde_json::Value>, String> {
+    use tauri_plugin_store::{Error, StoreExt};
+
+    let _reload = SETTINGS_RELOAD.lock().map_err(|_| SETTINGS_READ_ERROR)?;
+    let store = app.store(path).map_err(|_| SETTINGS_READ_ERROR)?;
+    let cached = || store.get("settings").filter(|value| !value.is_null());
+    if let Some(settings) = cached() {
+        return Ok(Some(settings));
+    }
+    match store.reload() {
+        Ok(()) => Ok(cached()),
+        Err(Error::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => Ok(cached()),
+        Err(_) => {
+            if let Some(settings) = cached() {
+                return Ok(Some(settings));
+            }
+            // The plugin saves every registered store on exit. Leaving this
+            // failed, empty settings resource registered could overwrite the file.
+            store.close_resource();
+            Err(SETTINGS_READ_ERROR.into())
+        }
+    }
+}
+
+/// Distinguish first launch from an SDK load that suppressed a disk error.
+/// The webview receives only readiness for the fixed AppData store.
+#[tauri::command]
+pub async fn cmd_reload_missing_settings(app: tauri::AppHandle) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        reload_missing_settings_at(&app, std::path::Path::new("settings.json")).map(|_| ())
+    })
+    .await
+    .map_err(|_| SETTINGS_READ_ERROR)?
+}
+
 #[derive(Debug, serde::Deserialize)]
 pub struct ProxySettingsRequest {
     enabled: bool,
