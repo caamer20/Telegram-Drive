@@ -17,6 +17,7 @@ use tokio::sync::Notify;
 
 pub(crate) struct NativeSyncFixture {
     pub root: PathBuf,
+    started: std::time::Instant,
     owner: Mutex<Option<i64>>,
     remote: Mutex<HashMap<i64, FileTree>>,
     pub scans: AtomicUsize,
@@ -33,6 +34,7 @@ impl NativeSyncFixture {
             .unwrap_or_default();
         Self {
             root,
+            started: std::time::Instant::now(),
             owner: Mutex::new(None),
             remote: Mutex::new(remote),
             scans: AtomicUsize::new(0),
@@ -85,7 +87,10 @@ impl NativeSyncFixture {
             let Some(fixture) = handle.try_state::<Arc<NativeSyncFixture>>() else {
                 return;
             };
-            let status = value;
+            // Timestamp the observed transitions in the test driver only. This
+            // lets the idle benchmark time real timer passes without polling.
+            let mut status = value;
+            status["fixtureElapsedUs"] = json!(fixture.started.elapsed().as_micros() as u64);
             fixture.history.lock().unwrap().push(status.clone());
             // Wake readers only after the engine has published the new snapshot.
             if status["running"] == false {

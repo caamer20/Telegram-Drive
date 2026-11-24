@@ -29,6 +29,18 @@ Create a private R2 bucket dedicated to backups and give its API token object re
 
 Run the workflow manually once and confirm that the archive and checksum appear in R2. Configure an R2 lifecycle rule appropriate for the project's recovery policy; 90 days is the minimum recommended starting point. Protect or replicate the bucket separately if the threat model includes account-wide Cloudflare loss.
 
+## Local recovery rehearsal
+
+From `supporter-service/`, run `node --test tests/e2e/restore-drill.mjs` after installing the locked dependencies. The drill creates synthetic purchases, exports local D1 SQL, checks a gzip archive against its SHA-256 sidecar, stops the source Worker, and imports into a fresh local D1. It compares schema and row contents, then exercises receipt delivery, refresh, device recovery, the three-device limit, pending checkout and refund redelivery. Key material and the database archive occupy separate, private temporary directories that are deleted after the drill.
+
+For an operational recovery, authorized custodians must be able to retrieve the original entitlement signing JWK, recovery lookup key and recovery encryption key from the approved secret store. Record who can restore them and where the access procedure is kept. Verify the signing public key against the one in the candidate, and exercise the restored keys on a dedicated test account. Keep secrets and recovery codes out of evidence and logs. Record the result of the real backup and signed-upgrade exercises separately.
+
+### Rehearsal on 2026-11-19
+
+The local drill restored the SQL archive into a fresh D1 and verified receipt delivery, refresh, device limits, pending checkout, and refusal of a refunded purchase using separately recovered synthetic keys. On an Android 36 emulator with WebView 133, the prior and candidate applications verified the same device-bound entitlement before and after a signed in-place upgrade and relaunch with networking disabled. Those builds shared a disposable signing certificate. A separate offline upgrade of the original distribution-signed Android 4.1.0 and 4.1.3 APKs on Android 7 preserved package identity, installation time, application data and permission.
+
+PayPal was simulated. Production archive availability, custodian access to production keys, physical devices, and desktop signed-upgrade acceptance require their own evidence.
+
 ## Quarterly restore drill
 
 Perform restore drills against a new D1 database. Never use the production database as a test target.

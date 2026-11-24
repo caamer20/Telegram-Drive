@@ -76,6 +76,7 @@ export function FileListItem({
             style={{ opacity: isDragging ? 0.45 : undefined }}
             {...(!isFolder ? attributes : {})}
             {...(!isFolder ? listeners : {})}
+            onKeyDown={event => { if (!isFolder && event.target === event.currentTarget) listeners?.onKeyDown?.(event); }}
             aria-disabled={undefined}
             role="group"
             aria-label={file.name}

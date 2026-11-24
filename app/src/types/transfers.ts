@@ -14,6 +14,7 @@ export interface QueueItem {
   folderId: number | null;
   status: 'pending' | 'paused' | 'waiting_for_network' | 'downloading' | 'uploading' | 'success' | 'error' | 'cancelled' | 'waiting_for_unlock' | 'encrypting' | 'decrypting' | 'verifying';
   error?: string;
+  errorCategory?: import('../services/transferActivity').TransferErrorCategory | null;
   progress?: number;
   uploadedBytes?: number;
   totalBytes?: number;
@@ -56,6 +57,7 @@ export interface DownloadItem {
   folderId: number | null;
   status: 'pending' | 'paused' | 'waiting_for_network' | 'cooldown' | 'downloading' | 'success' | 'error' | 'cancelled' | 'waiting_for_unlock' | 'decrypting' | 'verifying';
   error?: string;
+  errorCategory?: import('../services/transferActivity').TransferErrorCategory | null;
   progress?: number;
   downloadedBytes?: number;
   totalBytes?: number;

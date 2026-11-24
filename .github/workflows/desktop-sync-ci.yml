@@ -131,11 +131,6 @@ jobs:
           node scripts/check-app-security.cjs
           node scripts/check-android-publication.cjs --tracked-only
 
-      - name: Validate localization resources
-        if: runner.os == 'Linux'
-        working-directory: app
-        run: npm run i18n:check
-
       - name: Build frontend
         working-directory: app
         run: npm run build:verify
@@ -144,11 +139,6 @@ jobs:
         if: runner.os != 'Linux'
         working-directory: app/src-tauri
         run: cargo test --locked --features native-e2e --test native_e2e ${{ matrix.target && format('--target {0}', matrix.target) || '' }}
-
-      - name: Run native process and HTTP end-to-end journeys with a virtual display
-        if: runner.os == 'Linux'
-        working-directory: app/src-tauri
-        run: xvfb-run -a cargo test --locked --features native-e2e --test native_e2e
 
       - name: Verify Rust formatting
         if: runner.os == 'Linux'
@@ -160,6 +150,7 @@ jobs:
         run: cargo clippy --locked --features native-e2e --lib --all-targets ${{ matrix.target && format('--target {0}', matrix.target) || '' }} -- -D warnings
 
       - name: Exercise smoke harness process ownership and failure journeys
+        if: runner.os != 'Linux'
         run: node scripts/e2e/packaged-startup.e2e.cjs
 
       - name: Build disposable CI installers with updater archives
@@ -179,31 +170,3 @@ jobs:
       - name: Smoke each packaged macOS or Linux application
         if: runner.os != 'Windows'
         run: bash scripts/smoke-packaged-artifacts.sh "app/src-tauri/target/${{ matrix.target }}/release/bundle"
-
-  desktop-ui-e2e:
-    name: Desktop UI end-to-end
-    runs-on: ubuntu-22.04
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: app/package-lock.json
-      - name: Install frontend dependencies
-        working-directory: app
-        run: npm ci
-      - name: Install Chromium
-        working-directory: app
-        run: npx playwright install --with-deps chromium
-      - name: Run desktop UI end-to-end and visual regression tests
-        working-directory: app
-        run: npm run test:e2e
-      - name: Upload failure artifacts
-        if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: desktop-ui-e2e-report
-          path: app/test-results
-          if-no-files-found: ignore

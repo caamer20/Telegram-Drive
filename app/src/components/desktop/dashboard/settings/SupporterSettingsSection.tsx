@@ -1,3 +1,4 @@
+import { SupporterRecoveryReceipt } from '../../../shared/SupporterRecoveryReceipt';
 import { useEffect, useState } from 'react';
 import { Trans, useTranslation } from 'react-i18next';
 import { AlertTriangle, CheckCircle2, CreditCard, Heart, KeyRound, Megaphone } from 'lucide-react';
@@ -9,12 +10,11 @@ import { supporterErrorMessage, supporterPaymentMessage, supporterStatusMessage 
 
 export function SupporterSettingsSection() {
   const { t } = useTranslation();
-  const { status, latestRecoveryCode, beginCheckout, pollCheckout, activate, refreshEntitlement } = useSupporter();
+  const { status, beginCheckout, pollCheckout, activate, refreshEntitlement } = useSupporter();
   const [acceptedTerms, setAcceptedTerms] = useState(false);
   const [checkoutPending, setCheckoutPending] = useState(false);
   const [busy, setBusy] = useState(false);
   const [recoveryCode, setRecoveryCode] = useState('');
-  const [newRecoveryCode, setNewRecoveryCode] = useState('');
   const termsUrl = status.terms_url ?? 'https://github.com/caamer20/Telegram-Drive/blob/main/SUPPORTER_TERMS.md';
   const supportUrl = 'https://github.com/caamer20/Telegram-Drive/issues/new/choose';
   const canPurchase = shouldOfferNewSupporterPurchase(status) && !status.checkout_pending;
@@ -38,7 +38,6 @@ export function SupporterSettingsSection() {
     try {
       const result = await pollCheckout();
       if (result.status === 'completed') {
-        if (result.recovery_code) setNewRecoveryCode(result.recovery_code);
         toast.success(supporterPaymentMessage(result, t));
       } else if (!quiet) {
         toast.info(supporterPaymentMessage(result, t));
@@ -79,13 +78,9 @@ export function SupporterSettingsSection() {
     }
   };
 
-  const recoveryNotice = (newRecoveryCode || latestRecoveryCode) && (
-    <div className="mt-4 rounded-lg border border-app-warning/30 bg-app-warning/5 p-3 text-xs leading-5 text-app-text-secondary">
-      <strong className="text-app-text">{t('supporter_license.save_recovery')}</strong>
-      <code dir="ltr" className="mt-2 block select-all break-all rounded bg-app-surface-sunken px-3 py-2 font-mono text-sm text-app-text">{newRecoveryCode || latestRecoveryCode}</code>
-      <p className="mt-2">{t('supporter_license.recovery_storage_desktop')}</p>
-    </div>
-  );
+  const recoveryNotice = (status.ad_free || status.recovery_code_saved)
+    ? <SupporterRecoveryReceipt deliveryPending={Boolean(status.checkout_pending)} storageHelp={t('supporter_license.recovery_storage_desktop')} />
+    : null;
 
   if (status.ad_free) {
     return (

@@ -58,7 +58,10 @@ async function main() {
   if (!options.service) throw new Error('Provide --service-url or SUPPORTER_SERVICE_URL; use --skip-network for explicit incomplete local checks');
   const url = new URL(options.service);
   const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
-  if ((url.protocol !== 'https:' && !(url.protocol === 'http:' && loopback)) || url.username || url.password || url.search || url.hash) throw new Error('Service URL must be HTTPS (HTTP allowed only for local fixtures), without credentials, query or fragment');
+  if (!(options.unreleased && loopback && url.protocol === 'http:')) {
+    return require('./check-supporter-release.cjs').verifySupporterRelease(options.service, options.key);
+  }
+  if (url.username || url.password || url.search || url.hash) throw new Error('Local fixture URL must omit credentials, query and fragment');
   url.pathname = `${url.pathname.replace(/\/$/, '').replace(/\/health$/, '')}/health`;
   // Redirects are refused: a preflight makes exactly one GET and never follows another endpoint.
   const response = await fetch(url, { method: 'GET', redirect: 'error', signal: AbortSignal.timeout(10_000) });

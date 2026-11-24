@@ -69,6 +69,10 @@ pub mod startup;
 pub mod storage_insights;
 pub mod streaming;
 #[cfg(not(target_os = "ios"))]
+#[cfg_attr(
+    any(target_os = "macos", target_os = "windows", target_os = "linux"),
+    path = "supporter_desktop.rs"
+)]
 pub mod supporter;
 pub mod sync;
 pub mod utils;

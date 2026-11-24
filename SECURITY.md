@@ -35,3 +35,5 @@ See [TDENC2 format and review boundaries](Docs/TDENC2_FORMAT.md) and the [recove
 ## Release provenance
 
 After downloading a release artifact, compare its SHA-256 with the same release's `SHA256SUMS.txt`, then run `gh attestation verify ./ARTIFACT --repo caamer20/Telegram-Drive`. Inspect the verified workflow and tag/ref for the intended release. Refuse installation if verification fails or identifies an unexpected producer. See the [release-notes template](Docs/RELEASE_NOTES_TEMPLATE.md). Preflight accepts `--verify-attestation FILE --attestation-repo OWNER/REPO`; no published artifact verification has been run for this tree.
+
+The maintainer coordinates containment, recovery and release decisions using the [incident and release recovery playbook](Docs/INCIDENT_AND_RELEASE_RECOVERY.md).

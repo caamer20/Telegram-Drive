@@ -1611,5 +1611,18 @@
     "this_device": "na-upload ng device na ito",
     "other_device": "na-upload ng ibang device",
     "none": "Walang naka-encrypt na settings backup sa pinakabagong 1,000 Saved Messages."
+  },
+  "action_errors": {
+    "credentials": "Suriin ang API ID at API Hash.",
+    "disabled": "Hindi na pinapagana ng Telegram ang API ID na ito. Gumawa ng bagong kredensiyal sa API.",
+    "phone": "Suriin ang numero ng telepono at country code.",
+    "banned": "Hinarang ng Telegram ang numerong ito.",
+    "register": "Irehistro muna ang numerong ito sa opisyal na Telegram app.",
+    "code": "Suriin ang code sa pag-sign in at subukang muli.",
+    "expired": "Nag-expire na ang code. Humiling ng bago.",
+    "password": "Hindi maberipika ang password.",
+    "verify_bundle": "Suriin ang passphrase at ang kopya mo ng bundle.",
+    "replace_keys": "May mga susi na wala sa bundle na ito. Kapag pinalitan ang vault, maaaring hindi na mabasa ang mga file na gumagamit ng mga susing iyon. Magpatuloy?",
+    "file_limit": "Lampas ang file sa limitasyon ng laki ng Telegram. Hatiin ito bago i-upload."
   }
 }

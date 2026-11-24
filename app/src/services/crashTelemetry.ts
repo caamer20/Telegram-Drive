@@ -15,6 +15,7 @@ interface CrashEnvelope {
 
 const QUEUE_KEY = 'telegram-drive-crash-reports';
 let enabled = false;
+let consentId: string | undefined;
 
 function safeFrames(error: unknown): string[] {
     if (!(error instanceof Error) || !error.stack) return [];
@@ -28,7 +29,7 @@ function safeFrames(error: unknown): string[] {
 function readQueue(): CrashEnvelope[] {
     try {
         const parsed = JSON.parse(localStorage.getItem(QUEUE_KEY) || '[]');
-        return Array.isArray(parsed) ? parsed.slice(-9) : [];
+        return Array.isArray(parsed) ? parsed.slice(-10) : [];
     } catch {
         return [];
     }
@@ -43,15 +44,17 @@ function writeQueue(queue: CrashEnvelope[]) {
 }
 
 async function deliver(envelope: CrashEnvelope) {
+    const grant = consentId;
     try {
-        await invoke('cmd_submit_crash_report', { report: envelope });
+        await invoke('cmd_submit_crash_report', { report: envelope, consentId: grant });
     } catch {
-        writeQueue([...readQueue(), envelope]);
+        if (enabled && consentId === grant) writeQueue([...readQueue(), envelope]);
     }
 }
 
-export function configureCrashTelemetry(isEnabled: boolean) {
+export function configureCrashTelemetry(isEnabled: boolean, grant?: string) {
     enabled = isEnabled;
+    consentId = grant;
     if (!enabled) {
         writeQueue([]);
         return;

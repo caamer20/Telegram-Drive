@@ -31,3 +31,11 @@ passing browser suite proves the entire system defect-free.
 New regression coverage should exercise an observable user journey. Keep build,
 type, localization, configuration-policy and dependency checks as static validation;
 do not introduce another unit runner or isolated function assertion suite.
+
+## Consolidated browser journeys
+
+| Former standalone coverage | Owning journey | Checks to retain |
+| --- | --- | --- |
+| All presets and Default Dark border (two registrations) | `settings-themes.spec.ts` base modes and presets | All 15 stable IDs, selected state, label contrast, Default Dark border and Sky after reload. Exercise manual Performance Mode on and off, plus the OS reduced-motion setting. |
+| OS preference changes with a saved-off manual setting (one registration) | `motion-policy.spec.ts` saved Performance Mode | Wait two animation frames and verify the saved-off switch, persistence after restart and the separately exercised manually toggled-off state. |
+| Rapid settings categories and immediate dismissal (one registration) | `settings-themes.spec.ts` rapid categories and nested explanation | Check exiting panes, input release on Done, reopening, Escape, nested explanation dismissal and return focus. |

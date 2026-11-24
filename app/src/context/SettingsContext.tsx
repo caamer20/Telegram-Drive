@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, useEffect, ReactNode, useCallback, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { DEFAULT_SETTINGS } from '../config/defaultSettings';
+import { configureCrashTelemetry } from '../services/crashTelemetry';
 import {
     markProxySecretMigrated,
     readPersistedSettings,
@@ -14,6 +15,7 @@ interface SettingsContextType {
     settings: Settings;
     updateSetting: <K extends keyof Settings>(key: K, value: Settings[K]) => void;
     updateSettings: (updates: Partial<Settings>) => void;
+    setCrashReportingConsent: (allow: boolean) => void;
     resetSettings: () => void;
     isLoaded: boolean;
     persistenceStatus: 'loading' | 'saved' | 'saving' | 'error';
@@ -71,6 +73,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
             setIsLoaded(true);
             if (revision !== persistenceRevisionRef.current) return;
             if (!readFailed) {
+                configureCrashTelemetry(loaded.crashReportingConsentSeen === true && loaded.crashReportingEnabled === true, loaded.crashReportingConsentId);
                 setSettings(loaded);
                 latestSettingsRef.current = loaded;
             }
@@ -125,7 +128,14 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         });
     }, [persistSettings]);
 
+    const setCrashReportingConsent = useCallback((allow: boolean) => {
+        const grant = allow ? crypto.getRandomValues(new Uint32Array(4)).join('-') : undefined;
+        configureCrashTelemetry(allow, grant);
+        updateSettings({ crashReportingEnabled: allow, crashReportingConsentSeen: true, crashReportingConsentId: grant });
+    }, [updateSettings]);
+
     const resetSettings = useCallback(() => {
+        configureCrashTelemetry(false);
         setSettings(DEFAULT_SETTINGS);
         latestSettingsRef.current = DEFAULT_SETTINGS;
         void persistSettings(DEFAULT_SETTINGS).catch(() => undefined);
@@ -140,7 +150,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     );
 
     return (
-        <SettingsContext.Provider value={{ settings, updateSetting, updateSettings, resetSettings, isLoaded, persistenceStatus, retryPersistence }}>
+        <SettingsContext.Provider value={{ settings, updateSetting, updateSettings, setCrashReportingConsent, resetSettings, isLoaded, persistenceStatus, retryPersistence }}>
             {children}
         </SettingsContext.Provider>
     );

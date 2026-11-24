@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useId } from 'react';
 import { Pencil, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useModalFocus } from '../../../hooks/useModalFocus';
@@ -15,6 +15,7 @@ export function RenameFolderModal({ folderId, currentName, onRename, onClose }: 
     const [isSubmitting, setIsSubmitting] = useState(false);
     const inputRef = useRef<HTMLInputElement>(null);
     const panelRef = useRef<HTMLDivElement>(null);
+    const titleId = useId();
     const { t } = useTranslation();
     useModalFocus(panelRef, onClose);
 
@@ -58,17 +59,19 @@ export function RenameFolderModal({ folderId, currentName, onRename, onClose }: 
                 ref={panelRef}
                 role="dialog"
                 aria-modal="true"
+                aria-labelledby={titleId}
                 tabIndex={-1}
                 className="bg-telegram-surface border border-telegram-border rounded-xl w-[360px] shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150"
                 onClick={e => e.stopPropagation()}
             >
                 {/* Header */}
                 <div className="p-4 border-b border-telegram-border flex items-center justify-between">
-                    <h3 className="text-telegram-text font-medium flex items-center gap-2">
+                    <h3 id={titleId} className="text-telegram-text font-medium flex items-center gap-2">
                         <Pencil className="w-4 h-4 text-blue-400" />
                         {t('files.rename_folder')}
                     </h3>
                     <button
+                        aria-label={t('common.close')}
                         onClick={onClose}
                         className="text-telegram-subtext hover:text-telegram-text transition-colors"
                         disabled={isSubmitting}
@@ -85,6 +88,7 @@ export function RenameFolderModal({ folderId, currentName, onRename, onClose }: 
                     <input
                         ref={inputRef}
                         type="text"
+                        aria-label={t('files.folder_name')}
                         value={name}
                         onChange={e => setName(e.target.value)}
                         onKeyDown={handleKeyDown}

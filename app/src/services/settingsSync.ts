@@ -10,6 +10,7 @@ export const SYNCABLE_SETTING_KEYS = [
   'maxConcurrentDownloads',
   'zipFolders',
   'videoUploadMode',
+  'videoFilenameCaption',
   'language',
   'sidebarCollapsed',
   'hideGroups',

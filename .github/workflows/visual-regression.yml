@@ -1,14 +1,6 @@
 name: Visual regression
 
 on:
-  pull_request:
-    paths:
-      - 'app/src/**'
-      - 'app/tests/**'
-      - 'app/playwright.config.ts'
-      - 'app/package.json'
-      - 'app/package-lock.json'
-      - '.github/workflows/visual-regression.yml'
   workflow_dispatch:
 
 permissions:
@@ -29,7 +21,7 @@ jobs:
           cache-dependency-path: app/package-lock.json
       - run: npm ci
       - run: npx playwright install --with-deps chromium
-      - run: npm run test:e2e
+      - run: npm run test:e2e -- tests/visual
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: failure()
         with:

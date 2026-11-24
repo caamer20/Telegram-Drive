@@ -15,6 +15,8 @@ export function localeCatalogPacking():Plugin {
   let root='';
   let keys:string[]=[];
   let id='';
+  let shared: string[] = [];
+  const stringIndices = new Map<string, number>();
   let reference:string|undefined;
   const catalogs=new Map<string,Record<string,string>>();
   function flatten(value:Record<string,unknown>,prefix='',output:Record<string,string>={}):Record<string,string> {
@@ -39,8 +41,17 @@ export function localeCatalogPacking():Plugin {
         catalogs.set(filename,flatten(JSON.parse(await readFile(path,'utf8'))));
       }
       keys=[...new Set([...catalogs.values()].flatMap(catalog=>Object.keys(catalog)))].sort();
-      id=createHash('sha256').update(JSON.stringify(keys)).digest('hex');
-      reference=this.emitFile({type:'asset',name:'translation-keys.json',source:JSON.stringify({format:'td-keys-v1',id,keys})});
+      // A repeated translated value is stored once across the shipped catalogs.
+      // Include an entry only when replacing its occurrences pays for its slot.
+      const counts = new Map<string, number>();
+      for (const catalog of catalogs.values()) {
+        for (const value of Object.values(catalog)) counts.set(value, (counts.get(value) ?? 0) + 1);
+      }
+      shared = [...counts].filter(([value, count]) => count > 1 && (Buffer.byteLength(JSON.stringify(value)) - 5) * (count - 1) > 5).map(([value]) => value);
+      stringIndices.clear();
+      shared.forEach((value, index) => stringIndices.set(value, index));
+      id=createHash('sha256').update(JSON.stringify([keys, shared])).digest('hex');
+      reference=this.emitFile({type:'asset',name:'translation-keys.json',source:JSON.stringify({format:'td-keys-v2',id,keys,shared})});
     },
     resolveId(value){if(value===virtualId)return resolvedId;if(value===bootstrapId)return resolvedBootstrap;},
     async load(value){
@@ -61,7 +72,7 @@ export function localeCatalogPacking():Plugin {
       if(!building||!/[\\/]src[\\/]i18n[\\/]locales[\\/][^\\/]+\.json\?url$/.test(value))return;
       const filename=basename(value.slice(0,-4));
       const catalog=catalogs.get(filename);if(!catalog)throw new Error(`Unregistered language catalog: ${filename}`);
-      const asset=this.emitFile({type:'asset',name:filename,source:JSON.stringify({format:'td-locale-v1',language:filename.slice(0,-5),id,values:keys.map(key=>catalog[key]??null)})});
+      const asset=this.emitFile({type:'asset',name:filename,source:JSON.stringify({format:'td-locale-v2',language:filename.slice(0,-5),id,values:keys.map(key => stringIndices.get(catalog[key]) ?? catalog[key] ?? null)})});
       return `export default import.meta.ROLLUP_FILE_URL_${asset};`;
     },
   };

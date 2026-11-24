@@ -67,7 +67,7 @@ export function SettingsModal(props: SettingsModalProps) {
 }
 
 function OwnedSettingsModal({ ownerId, isOpen, onClose, initialTab = 'general', focusSupporter = false }: SettingsModalProps) {
-    const { settings, updateSetting, updateSettings, resetSettings, isLoaded, persistenceStatus } = useSettings();
+    const { settings, updateSetting, updateSettings, setCrashReportingConsent, resetSettings, isLoaded, persistenceStatus } = useSettings();
     const { confirm } = useConfirm();
     const { reducedMotion, transition } = useMotionPolicy();
     const { t } = useTranslation();
@@ -1272,7 +1272,7 @@ function OwnedSettingsModal({ ownerId, isOpen, onClose, initialTab = 'general', 
                                 {activeTab === 'privacy' && (
                                     <PrivacySettingsTab
                                         crashReportingEnabled={settings.crashReportingEnabled}
-                                        onCrashReportingChange={() => updateSettings({ crashReportingEnabled: !settings.crashReportingEnabled, crashReportingConsentSeen: true })}
+                                        onCrashReportingChange={() => setCrashReportingConsent(!settings.crashReportingEnabled)}
                                         settings={settings}
                                         onSettingsChange={updateSettings}
                                         onSettingsSyncEnabledChange={enabled => updateSetting('telegramSettingsSyncEnabled', enabled)}

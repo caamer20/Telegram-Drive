@@ -39,6 +39,8 @@ export async function desktopFixture(page: Page, options: {
     const callbacks = new Map<number, (value: any) => void>();
     const listeners = new Map<number, { event: string; handler: number }>();
     let nextId = 1;
+    let releaseArchive: () => void = () => {};
+    const archiveGate = new Promise<void>(resolve => { releaseArchive = resolve; });
     let releaseRetry: (() => void) | undefined;
     const retryGate = new Promise<void>(resolve => { releaseRetry = resolve; });
     let releaseFiles: (() => void) | undefined;
@@ -53,6 +55,7 @@ export async function desktopFixture(page: Page, options: {
     const encryptionCapabilitiesGate = new Promise<void>(resolve => { releaseEncryptionCapabilities = resolve; });
     const state = {
       holdRetry: options.holdRetry ?? false, failRetryIds: options.failRetryIds ?? [], nextPromptToken: 700,
+      archiveFailIndex: -1, archiveHoldIndex: -1, releaseArchive: () => releaseArchive(),
       releaseRetry: () => { state.holdRetry = false; releaseRetry?.(); },
       owner: '101', accountFailures: options.accountFailures ?? 0, holdFiles: options.holdFiles ?? false,
       holdSupporter: options.holdSupporter ?? false, holdSettings: options.holdSettings ?? false,
@@ -134,6 +137,14 @@ export async function desktopFixture(page: Page, options: {
           if (command === 'plugin:store|save') { if (state.saveFails) throw new Error('Storage unavailable'); persist(); return; }
           if (command === 'plugin:dialog|open') return args.options?.directory ? options.pickedUploadFolder ?? null : options.pickedUploadPaths ?? null;
           if (command === 'cmd_zip_folder') return '/fixtures/Archive.zip';
+          if (command === 'cmd_list_archive_contents') return ['one.txt', 'two.txt', 'three.txt'].map(filename => ({ filename, size: 3, compressed_size: 3, is_dir: false }));
+          if (command === 'cmd_open_archive_batch') return nextId++;
+          if (command === 'cmd_extract_archive_entry' || command === 'cmd_extract_archive_batch_entry') {
+            if (args.entryIndex === state.archiveHoldIndex) await archiveGate;
+            if (args.entryIndex === state.archiveFailIndex) throw new Error('Damaged archive entry');
+            const filename = ['one.txt', 'two.txt', 'three.txt'][args.entryIndex];
+            return { temp_path: '/fixtures/archive/' + crypto.randomUUID() + '/' + filename, filename, size: 3 };
+          }
           if (command === 'cmd_transfer_list') return state.transfers;
           if (command === 'cmd_validate_dropped_paths') return { accepted: args.paths, rejected: [] };
           if (command === 'cmd_transfer_enqueue_many') {

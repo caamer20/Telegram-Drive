@@ -1611,5 +1611,18 @@
     "this_device": "이 기기에서 업로드됨",
     "other_device": "다른 기기에서 업로드됨",
     "none": "최근 1,000개의 저장한 메시지에서 암호화 설정 백업을 찾지 못했습니다."
+  },
+  "action_errors": {
+    "credentials": "API ID와 API Hash를 확인하세요.",
+    "disabled": "Telegram에서 이 API ID를 비활성화했습니다. 새 API 자격 증명을 만드세요.",
+    "phone": "전화번호와 국가 코드를 확인하세요.",
+    "banned": "Telegram에서 이 전화번호를 차단했습니다.",
+    "register": "먼저 공식 Telegram 앱에 이 번호를 등록하세요.",
+    "code": "로그인 코드를 확인하고 다시 시도하세요.",
+    "expired": "코드가 만료되었습니다. 새 코드를 요청하세요.",
+    "password": "비밀번호를 확인할 수 없습니다.",
+    "verify_bundle": "암호 문구와 보관한 번들 사본을 확인하세요.",
+    "replace_keys": "이 번들에는 일부 키가 없습니다. 보관함을 교체하면 해당 키를 사용하는 파일을 읽지 못할 수 있습니다. 계속할까요?",
+    "file_limit": "파일이 Telegram의 크기 제한을 초과합니다. 업로드하기 전에 분할하세요."
   }
 }

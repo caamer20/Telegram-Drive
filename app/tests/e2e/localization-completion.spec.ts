@@ -87,7 +87,8 @@ test('encrypted settings warnings, entered passphrase and badge explanation surv
   const calls = await nativeCalls(page, 'cmd_upload_settings_sync');
   expect(calls).toHaveLength(1);
   expect(calls[0].args.passphrase).toBe('fixture-sync-passphrase');
-  for (const excluded of ['supporter_activation', 'proxyPassword', 'crashReportingEnabled', 'videoFilenameCaption']) expect(calls[0].args.settings).not.toHaveProperty(excluded);
+  expect(calls[0].args.settings.videoFilenameCaption).toBe(false);
+  for (const excluded of ['supporter_activation', 'proxyPassword', 'crashReportingEnabled']) expect(calls[0].args.settings).not.toHaveProperty(excluded);
 });
 
 

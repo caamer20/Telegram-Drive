@@ -47,6 +47,7 @@ export interface DesktopTransferJob {
     totalBytes: number;
     speedBytesPerSec: number;
     error?: string;
+    errorCategory?: import('./transferActivity').TransferErrorCategory | null;
     retryAt?: number;
     queuePosition: number;
     revision: number;
@@ -99,6 +100,7 @@ export const transferJobToUploadItem = (job: DesktopTransferJob): QueueItem => (
     folderId: job.folderId,
     status: uploadStatus(job.status),
     error: job.error,
+    errorCategory: job.errorCategory,
     progress: job.progress,
     uploadedBytes: job.transferredBytes,
     totalBytes: job.totalBytes,
@@ -121,6 +123,7 @@ export const transferJobToDownloadItem = (job: DesktopTransferJob): DownloadItem
     folderId: job.folderId,
     status: downloadStatus(job.status),
     error: job.error,
+    errorCategory: job.errorCategory,
     progress: job.progress,
     downloadedBytes: job.transferredBytes,
     totalBytes: job.totalBytes,

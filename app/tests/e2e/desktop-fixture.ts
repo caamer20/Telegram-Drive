@@ -5,13 +5,16 @@ import type { SyncPair, SyncStatus } from '../../src/types/sync';
  * These browser journeys do not validate SQLite, Keychain, Telegram, or payment cryptography.
  */
 export async function desktopFixture(page: Page, options: {
+  exerciseFolderMutations?: boolean;
   pickedUploadPaths?: string[];
   syncPairs?: SyncPair[];
   syncStatus?: SyncStatus;
   accountFailures?: number;
+  searchJourney?: boolean;
   holdFiles?: boolean;
   holdStartupHealth?: boolean;
   holdSupporter?: boolean;
+  simulateCheckout?: boolean;
   supporterState?: 'active' | 'needs_refresh' | 'expired' | 'inactive';
   update?: boolean;
   packageManaged?: boolean;
@@ -24,6 +27,7 @@ export async function desktopFixture(page: Page, options: {
   settings?: Record<string, unknown>;
   /** Base64 PDF listed as "Fixture report.pdf" and served through the preview command. */
   pdfBase64?: string;
+  rejectPdfStream?: boolean;
   heicBase64?: string;
   heicJpegBase64?: string;
   heicDecoderMissing?: boolean;
@@ -47,6 +51,7 @@ export async function desktopFixture(page: Page, options: {
       'settings.json': { settings: { crashReportingEnabled: false, crashReportingConsentSeen: true, driveTourSeen: true, language: 'en', viewMode: 'list', ...(options.settings ?? {}) }, supporter_activation: 'preserve-existing-license' },
     };
     const persist = () => localStorage.setItem('desktop-e2e-stores', JSON.stringify(stores));
+    const searchAttempts = new Set<number>();
     const callbacks = new Map<number, (value: any) => void>();
     const listeners = new Map<number, { event: string; handler: number }>();
     let nextId = 1;
@@ -61,6 +66,7 @@ export async function desktopFixture(page: Page, options: {
     const startupHealthGate=new Promise<void>(resolve=>{releaseStartupHealth=resolve;});
     const savedTransfers = options.persistTransfersAcrossReload ? JSON.parse(sessionStorage.getItem('desktop-e2e-native-transfers') || 'null') : null;
     const state = {
+      folderServiceOnline: false,
       vaultExists:options.vaultState !== undefined && options.vaultState !== 'none',
       jobs: savedTransfers?.jobs ?? (options.populatedTransfers ? [
         {id:'upload-active',direction:'upload',kind:'local_upload',status:'uploading',filename:'Fixture upload.bin',path:'/fixture/Fixture upload.bin'},
@@ -73,7 +79,8 @@ export async function desktopFixture(page: Page, options: {
       searchHold:false, searchFails:false, searchPageSize:256, searchBuilding:0, searchDuplicateIds:false, releaseSearch:()=>{state.searchHold=false;releaseSearch?.();},
       quotaSaveFails:false, weeklyQuota:Number(localStorage.getItem('desktop-e2e-weekly-quota') ?? 250 * 1024 ** 3),
       owner: '101', accountFailures: options.accountFailures ?? 0, holdFiles: options.holdFiles ?? false,
-      holdSupporter: options.holdSupporter ?? false, supporterState: options.supporterState ?? 'active',
+      holdSupporter: options.holdSupporter ?? false, supporterState: options.simulateCheckout && localStorage.getItem('fixture-checkout') === 'completed' ? 'active' : options.supporterState ?? 'active',
+      rejectReceiptAck: false, settleCheckout: false,
       supporterRefreshFails: options.supporterState === 'needs_refresh',
       logoutFails: false, remoteSignOutUnconfirmed: false, saveFails: false, installFails: true, incompleteDownload: false,
       update: options.update ?? false, stores, calls: (savedTransfers?.calls ?? []) as { command: string; args: any }[],
@@ -99,7 +106,7 @@ export async function desktopFixture(page: Page, options: {
       state: state.supporterState, ad_free: ['active', 'needs_refresh'].includes(state.supporterState),
       message: 'Fixture entitlement', terms_version: '2026-08-11', terms_url: 'https://example.invalid/terms',
       expires_at: Date.now() / 1000 + (state.supporterState === 'active' ? 86400 : -86400),
-      offline_until: Date.now() / 1000 + 6 * 86400, recovery_code_saved: state.supporterState !== 'inactive', checkout_pending: false,
+      offline_until: Date.now() / 1000 + 6 * 86400, recovery_code_saved: state.supporterState !== 'inactive', checkout_pending: options.simulateCheckout && localStorage.getItem('fixture-checkout') === 'pending',
     });
     Object.assign(window, {
       __desktopTest: state,
@@ -136,7 +143,21 @@ export async function desktopFixture(page: Page, options: {
             return { success: true };
           }
           if (command === 'cmd_get_android_transfer_environment') return {isTelevision: options.isTelevision ?? false};
-          if (command === 'cmd_check_connection' || command === 'cmd_is_network_available') return true;
+          if (command === 'cmd_check_connection') return true;
+          if (command === 'cmd_is_network_available') return options.exerciseFolderMutations ? state.folderServiceOnline : true;
+          if (command === 'cmd_search_local' && options.searchJourney) {
+            const query = args.query.query;
+            const offset = args.query.offset ?? 0;
+            const match = query.toLowerCase() === 'match';
+            if (match && !searchAttempts.has(offset)) {
+              searchAttempts.add(offset);
+              throw new Error('Fixture search interrupted');
+            }
+            // Different source peers can have the same Telegram message number on consecutive pages.
+            const rows = match ? [{ ...file(81, offset === 0 ? 9 : null), name: offset === 0 ? 'Match first.pdf' : 'Match second.pdf', file_ext: 'pdf' }] : [];
+            const next = match && offset === 0;
+            return { files: rows, total: match ? 2 : 0, indexed: true, complete: query.toLowerCase() !== 'partial', offline: false, indexId: 'fixture-search', nextOffset: next ? 1 : null };
+          }
           if (command === 'cmd_search_local') {
             const owner=state.owner;
             if(args.ownerId!==owner)throw new Error('ACCOUNT_CHANGED');
@@ -150,6 +171,20 @@ export async function desktopFixture(page: Page, options: {
           if (command === 'cmd_workspace_account') {
             if (state.accountFailures-- > 0) throw new Error('ACCOUNT_UNAVAILABLE: Session temporarily busy');
             return state.owner;
+          }
+          if (options.exerciseFolderMutations && ['cmd_create_folder', 'cmd_rename_folder', 'cmd_delete_folder', 'cmd_scan_folders', 'cmd_get_enriched_folders'].includes(command)) {
+            if (args.ownerId != null && args.ownerId !== state.owner) throw new Error('ACCOUNT_CHANGED');
+            const key = 'fixture-telegram-folders-' + state.owner;
+            const remote: { id: number; name: string }[] = JSON.parse(sessionStorage.getItem(key) ?? '[{"id":9,"name":"Photos"}]');
+            if (command === 'cmd_get_enriched_folders') return remote;
+            if (!state.folderServiceOnline) throw new Error('[FOLDER_OFFLINE] Telegram is disconnected');
+            if (command === 'cmd_scan_folders') return remote;
+            const created = { id: 10, name: args.name };
+            const next = command === 'cmd_create_folder' ? [...remote, created]
+              : command === 'cmd_rename_folder' ? remote.map(f => f.id === args.folderId ? { ...f, name: args.newName } : f)
+                : remote.filter(f => f.id !== args.folderId);
+            sessionStorage.setItem(key, JSON.stringify(next));
+            return command === 'cmd_create_folder' ? created : true;
           }
           if (command === 'cmd_get_enriched_folders' || command === 'cmd_scan_folders') return [{ id: 9, name: 'Photos', file_count: 1 }];
           // Folder Sync: settings and mappings are kept by this fixture; the
@@ -187,6 +222,7 @@ export async function desktopFixture(page: Page, options: {
             if (state.holdFiles && owner === '101') await fileGate;
             const files = [{ ...file(42, args.folderId, owner), ...(state.inventoryName ? { name: state.inventoryName } : {}) }];
             if (options.extraPhoto) files.push({...file(43,args.folderId,owner),name:'Holiday second photo.jpg'});
+            if (options.rejectPdfStream) files.push({ ...file(78, args.folderId, owner), name: 'Unavailable.pdf', file_ext: 'pdf', mime_type: 'application/pdf', size: 200 * 1024 * 1024, type: 'document' });
             if (options.pdfBase64) files.push({ ...file(77, args.folderId, owner), name: 'Fixture report.pdf', mime_type: 'application/pdf', file_ext: 'pdf', type: 'document' });
             const result = { ownerId: owner, folderId: args.folderId, requestId: args.requestId, files };
             state.emit('folder-load-chunk', result);
@@ -198,6 +234,8 @@ export async function desktopFixture(page: Page, options: {
             return `data:image/jpeg;base64,${options.heicJpegBase64}`;
           }
           if (command === 'cmd_get_preview' && options.heicBase64) return `data:image/heic;base64,${options.heicBase64}`;
+          if (command === 'cmd_get_stream_info' && options.rejectPdfStream) throw new Error('Fixture stream unavailable');
+          if (command === 'cmd_get_preview' && args.messageId === 78 && options.rejectPdfStream) return '/fixture/external.pdf';
           if (command === 'cmd_get_preview' && args.messageId === 77 && options.pdfBase64) return `data:application/pdf;base64,${options.pdfBase64}`;
           if (command === 'cmd_get_stream_info') return { token: 'browser-fixture-token', base_url: `http://localhost:${options.streamingPort ?? 14201}`, operation_token: null };
           if (command === 'cmd_get_thumbnail' && options.video) {
@@ -212,6 +250,26 @@ export async function desktopFixture(page: Page, options: {
           if (command === 'cmd_get_storage_insight') return { files: [file(80, 1)], scanned_count: 1200, duplicate_groups: 0, complete: false };
           if (command === 'cmd_get_supporter_status') { if (state.holdSupporter) await supporterGate; return status(); }
           if (command === 'cmd_refresh_supporter') { if (state.supporterRefreshFails) throw new Error('Network offline'); return status(); }
+          if (command === 'cmd_begin_supporter_checkout' && options.simulateCheckout) {
+            if (state.supporterState !== 'inactive' || args.acceptedTermsVersion !== '2026-08-11') throw new Error('Checkout forbidden in browser fixtures');
+            localStorage.setItem('fixture-checkout', 'pending');
+            return { approval_url: 'https://www.sandbox.paypal.com/checkoutnow?token=fixture-order', expires_at: Date.now() / 1000 + 900 };
+          }
+          if (command === 'cmd_pending_supporter_receipt') {
+            return options.simulateCheckout && localStorage.getItem('fixture-checkout') === 'completed'
+              && !localStorage.getItem('fixture-receipt-ack') ? { id: 'fixture-id', code: 'FIXTURE-RECEIPT' } : null;
+          }
+          if (command === 'cmd_acknowledge_supporter_receipt') {
+            if (state.rejectReceiptAck || args.receiptId !== 'fixture-id') throw new Error('Receipt acknowledgement unavailable');
+            localStorage.setItem('fixture-receipt-ack', 'yes');
+            return;
+          }
+          if (command === 'cmd_poll_supporter_checkout' && options.simulateCheckout) {
+            if (!state.settleCheckout) return { status: 'pending', message: 'Fixture payment pending' };
+            state.supporterState = 'active';
+            localStorage.setItem('fixture-checkout', 'completed');
+            return { status: 'completed', recovery_code: 'FIXTURE-RECEIPT', message: 'Fixture payment verified' };
+          }
           if (command === 'cmd_begin_supporter_checkout') { if (state.allowCheckoutFixture) return { approval_url: 'https://www.sandbox.paypal.com/checkoutnow?token=PUBLIC-FIXTURE', checkout_id: 'public-fixture' }; throw new Error('Checkout forbidden in browser fixtures'); }
           if (command === 'cmd_activate_supporter') { state.supporterState = 'active'; return status(); }
           if (command === 'cmd_logout') {

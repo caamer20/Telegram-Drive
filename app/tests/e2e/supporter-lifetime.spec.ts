@@ -48,8 +48,27 @@ test('an expired existing purchase restores ad-free access without a second chec
   expect(await nativeCalls(page, 'cmd_activate_supporter')).toHaveLength(1);
 });
 
-test('a free account can browse files and settings before accepting any optional purchase', async ({ page }) => {
+test('an open sponsor gateway closes automatically for verified active and offline-grace supporters', async ({ page }) => {
   await desktopFixture(page, { supporterState: 'inactive', gatewaySeen: false });
+  for (const target of ['active', 'needs_refresh']) {
+    await page.goto('/');
+    const gateway = page.getByRole('dialog', { name: 'A quick message from our sponsor' });
+    await expect(gateway).toBeVisible();
+    await page.evaluate(value => {
+      (window as any).__desktopTest.supporterState = value;
+      window.dispatchEvent(new Event('online'));
+    }, target);
+    await expect(gateway).toHaveCount(0);
+    await expect(page.getByText('Holiday folder photo.jpg', { exact: true })).toBeVisible();
+    await expect(page.getByRole('complementary', { name: /Sponsored advertisement/ })).toHaveCount(0);
+    expect((await nativeCalls(page, 'plugin:store|set')).some(call => ['ad_gateway_passed', 'ad_click_thanks'].includes(call.args.key))).toBe(false);
+    expect(await nativeCalls(page, 'plugin:shell|open')).toHaveLength(0);
+    expect(await nativeCalls(page, 'cmd_begin_supporter_checkout')).toHaveLength(0);
+  }
+});
+
+test('a free account can browse, accept the terms, resume the same checkout, and activate its lifetime receipt', async ({ page }) => {
+  await desktopFixture(page, { supporterState: 'inactive', gatewaySeen: false, simulateCheckout: true });
   await page.goto('/');
   await page.getByRole('button', { name: 'Continue to files', exact: true }).click();
   await expect(page.getByText('Holiday folder photo.jpg', { exact: true })).toBeVisible();
@@ -60,5 +79,40 @@ test('a free account can browse files and settings before accepting any optional
   const section = page.locator('#desktop-supporter-section');
   await expect(section).toContainText('$5');
   await expect(section.getByRole('button', { name: 'Get lifetime ad-free · $5', exact: true })).toBeDisabled();
+  expect(await nativeCalls(page, 'cmd_begin_supporter_checkout')).toHaveLength(0);
+  await section.getByRole('checkbox').check();
+  await section.getByRole('button', { name: 'Get lifetime ad-free · $5', exact: true }).click();
+  const approval = 'https://www.sandbox.paypal.com/checkoutnow?token=fixture-order';
+  await expect.poll(async () => (await nativeCalls(page, 'plugin:shell|open')).map(call => call.args.path)).toEqual([approval]);
+  expect((await nativeCalls(page, 'cmd_begin_supporter_checkout'))[0].args.acceptedTermsVersion).toBe('2026-08-11');
+  await page.reload();
+  await openSettings(page);
+  await page.getByRole('button', { name: /Lifetime (?:License|license purchased)/ }).click();
+  await expect(section.getByRole('button', { name: 'Get lifetime ad-free · $5', exact: true })).toHaveCount(0);
+  await section.getByRole('button', { name: 'Continue existing checkout', exact: true }).click();
+  await expect.poll(async () => (await nativeCalls(page, 'plugin:shell|open')).map(call => call.args.path)).toEqual([approval]);
+  await section.getByRole('button', { name: /check payment/i }).click();
+  await expect(section.getByRole('button', { name: 'Get lifetime ad-free · $5', exact: true })).toHaveCount(0);
+  await page.evaluate(() => { (window as any).__desktopTest.settleCheckout = true; });
+  await expect(section.getByRole('heading', { name: 'Lifetime license purchased' })).toBeVisible({ timeout: 30_000 });
+  await expect(section.getByText('FIXTURE-RECEIPT', { exact: true })).toBeVisible();
+  await page.reload();
+  await openSettings(page);
+  await page.getByRole('button', { name: /Lifetime (?:License|license purchased)/ }).click();
+  await expect(section.getByRole('heading', { name: 'Lifetime license purchased' })).toBeVisible();
+  const receipt = section.getByText('FIXTURE-RECEIPT', { exact: true });
+  await expect(receipt).toBeVisible();
+  const confirm = section.getByRole('button', { name: 'Confirm', exact: true });
+  await page.evaluate(() => { (window as any).__desktopTest.rejectReceiptAck = true; });
+  await confirm.click();
+  await expect(receipt).toBeVisible();
+  await page.evaluate(() => { (window as any).__desktopTest.rejectReceiptAck = false; });
+  await confirm.click();
+  await expect(receipt).toHaveCount(0);
+  await page.reload();
+  await openSettings(page);
+  await page.getByRole('button', { name: /Lifetime (?:License|license purchased)/ }).click();
+  await expect(section.getByRole('heading', { name: 'Lifetime license purchased' })).toBeVisible();
+  await expect(receipt).toHaveCount(0);
   expect(await nativeCalls(page, 'cmd_begin_supporter_checkout')).toHaveLength(0);
 });

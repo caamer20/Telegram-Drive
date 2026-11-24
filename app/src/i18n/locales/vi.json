@@ -1611,5 +1611,18 @@
     "this_device": "được tải lên bởi thiết bị này",
     "other_device": "được tải lên bởi thiết bị khác",
     "none": "Không tìm thấy bản sao lưu cài đặt mã hóa trong 1,000 Tin nhắn đã lưu gần nhất."
+  },
+  "action_errors": {
+    "credentials": "Kiểm tra API ID và API Hash.",
+    "disabled": "Telegram đã vô hiệu hóa API ID này. Hãy tạo thông tin xác thực API mới.",
+    "phone": "Kiểm tra số điện thoại và mã quốc gia.",
+    "banned": "Telegram đã cấm số điện thoại này.",
+    "register": "Trước tiên hãy đăng ký số này trong ứng dụng Telegram chính thức.",
+    "code": "Kiểm tra mã đăng nhập rồi thử lại.",
+    "expired": "Mã đã hết hạn. Hãy yêu cầu mã mới.",
+    "password": "Không thể xác minh mật khẩu.",
+    "verify_bundle": "Kiểm tra cụm mật khẩu và bản sao gói khôi phục của bạn.",
+    "replace_keys": "Gói này thiếu một số khóa. Việc thay thế kho có thể khiến các tệp dùng những khóa đó không đọc được. Tiếp tục?",
+    "file_limit": "Tệp vượt quá giới hạn kích thước của Telegram. Hãy chia nhỏ trước khi tải lên."
   }
 }

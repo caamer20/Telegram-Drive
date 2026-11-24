@@ -20,6 +20,9 @@ jobs:
 
   verify-release:
     name: Verify release invariants
+    outputs:
+      supporter_origin: ${{ steps.supporter.outputs.origin }}
+      supporter_public_key: ${{ steps.supporter.outputs.public_key }}
     runs-on: ubuntu-22.04
     timeout-minutes: 60
     permissions:
@@ -55,13 +58,19 @@ jobs:
         working-directory: app
         run: npm run release:version:check -- --tag "$GITHUB_REF_NAME" --changelog ../CHANGELOG.md
 
+      - name: Exercise supporter release checks with loopback TLS
+        run: node --test --test-name-pattern="release gate checks the exact supporter contract" scripts/e2e/assurance.e2e.cjs
+
       - name: Run read-only release preflight
+        id: supporter
         env:
           TELEGRAM_DRIVE_SUPPORTER_SERVICE_URL: ${{ vars.SUPPORTER_SERVICE_URL }}
           TELEGRAM_DRIVE_SUPPORTER_PUBLIC_KEY: ${{ vars.SUPPORTER_PUBLIC_KEY }}
         run: |
           node scripts/check-workflow-pins.cjs
           node scripts/release-preflight.cjs
+          printf 'origin=%s\n' "$TELEGRAM_DRIVE_SUPPORTER_SERVICE_URL" >> "$GITHUB_OUTPUT"
+          printf 'public_key=%s\n' "$TELEGRAM_DRIVE_SUPPORTER_PUBLIC_KEY" >> "$GITHUB_OUTPUT"
 
 
       - name: Validate E2E-only testing policy and app security configuration
@@ -155,12 +164,12 @@ jobs:
             return await upsertDraft(github, context, context.ref.replace('refs/tags/', ''), body);
 
   build-tauri:
-    needs: create-release
+    needs: [create-release, verify-release]
     permissions:
       contents: write
     env:
-      TELEGRAM_DRIVE_SUPPORTER_SERVICE_URL: ${{ vars.SUPPORTER_SERVICE_URL }}
-      TELEGRAM_DRIVE_SUPPORTER_PUBLIC_KEY: ${{ vars.SUPPORTER_PUBLIC_KEY }}
+      TELEGRAM_DRIVE_SUPPORTER_SERVICE_URL: ${{ needs.verify-release.outputs.supporter_origin }}
+      TELEGRAM_DRIVE_SUPPORTER_PUBLIC_KEY: ${{ needs.verify-release.outputs.supporter_public_key }}
       TELEGRAM_DRIVE_CRASH_REPORT_ENDPOINT: ${{ vars.CRASH_REPORT_ENDPOINT }}
     strategy:
       fail-fast: false
@@ -195,6 +204,13 @@ jobs:
         with:
           node-version: 22
 
+      - name: Require verified supporter inputs before building
+        shell: node {0}
+        run: |
+          if (!process.env.TELEGRAM_DRIVE_SUPPORTER_SERVICE_URL || !process.env.TELEGRAM_DRIVE_SUPPORTER_PUBLIC_KEY) {
+            throw new Error('Verified supporter configuration did not reach this build.');
+          }
+
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
         with:
@@ -224,18 +240,6 @@ jobs:
       - name: Install frontend dependencies
         working-directory: app
         run: npm ci
-
-      - name: Verify supporter release configuration
-        shell: node {0}
-        run: |
-          const serviceUrl = process.env.TELEGRAM_DRIVE_SUPPORTER_SERVICE_URL || '';
-          const publicKey = process.env.TELEGRAM_DRIVE_SUPPORTER_PUBLIC_KEY || '';
-          if (!serviceUrl.startsWith('https://') || serviceUrl.endsWith('/')) {
-            throw new Error('Set SUPPORTER_SERVICE_URL to the deployed HTTPS origin without a trailing slash.');
-          }
-          if (!/^[A-Za-z0-9_-]{43}$/.test(publicKey)) {
-            throw new Error('Set SUPPORTER_PUBLIC_KEY to the 32-byte Ed25519 public key in unpadded base64url form.');
-          }
 
       - name: Prepare Windows runtime prerequisite
         if: matrix.platform == 'windows-latest'

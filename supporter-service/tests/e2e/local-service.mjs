@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
-import { createHash, createPrivateKey, generateKeyPairSync, randomBytes, sign, verify } from 'node:crypto';
+import { createHash, createPrivateKey, createPublicKey, generateKeyPairSync, randomBytes, sign, verify } from 'node:crypto';
 import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
+import { unstable_splitSqlQuery } from 'wrangler';
 import { Miniflare, convertV4MiniflareOptions, Log, LogLevel } from 'miniflare';
 
 export const terms = '2026-08-11';
@@ -96,20 +97,20 @@ export class PayPalSandbox {
   }
 }
 
-export async function startService() {
+export async function startService({ escrow, restoredSql, paypal = new PayPalSandbox() } = {}) {
   const project = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
   const directory = await mkdtemp(join(tmpdir(), 'td-supporter-http-e2e-'));
-  const signing = generateKeyPairSync('ed25519');
+  const privateKey = escrow ? createPrivateKey({ key: JSON.parse(escrow.signing), format: 'jwk' }) : generateKeyPairSync('ed25519').privateKey;
+  const signing = { privateKey, publicKey: createPublicKey(privateKey) };
   const signingJwk = signing.privateKey.export({ format: 'jwk' });
   // Retain compatibility with the key-generator label used by existing installs.
   signingJwk.alg = 'Ed25519';
-  const paypal = new PayPalSandbox();
   const env = {
     PAYPAL_ENVIRONMENT: 'sandbox', PAYPAL_CLIENT_ID: 'e2e-client', PAYPAL_CLIENT_SECRET: 'e2e-secret',
     PAYPAL_MERCHANT_ID: 'e2e-merchant', PAYPAL_WEBHOOK_ID: 'e2e-webhook', PUBLIC_ORIGIN: 'https://supporter.example.invalid',
     SUPPORTER_PRICE: '5.00', SUPPORTER_CURRENCY: 'USD', MAX_ACTIVE_DEVICES: '3', TERMS_VERSION: terms,
     ENTITLEMENT_TTL_DAYS: '30', OFFLINE_GRACE_DAYS: '7', ENTITLEMENT_SIGNING_JWK: JSON.stringify(signingJwk),
-    RECOVERY_LOOKUP_KEY: randomBytes(32).toString('base64url'), RECOVERY_ENCRYPTION_KEY: randomBytes(32).toString('base64url'),
+    RECOVERY_LOOKUP_KEY: escrow?.lookup ?? randomBytes(32).toString('base64url'), RECOVERY_ENCRYPTION_KEY: escrow?.encryption ?? randomBytes(32).toString('base64url'),
   };
   let runtime;
   let origin;
@@ -134,10 +135,15 @@ export async function startService() {
   }
   try {
     await boot();
-    for (const migration of (await readdir(join(project, 'migrations'))).filter(name => name.endsWith('.sql')).sort()) {
-      // Migrations currently contain no triggers or quoted semicolons.
-      const statements = (await readFile(join(project, 'migrations', migration), 'utf8')).split(';').map(value => value.trim()).filter(Boolean);
+    if (restoredSql !== undefined) {
+      const statements = unstable_splitSqlQuery(restoredSql);
       await db.batch(statements.map(statement => db.prepare(statement)));
+    } else {
+      for (const migration of (await readdir(join(project, 'migrations'))).filter(name => name.endsWith('.sql')).sort()) {
+        // Migrations currently contain no triggers or quoted semicolons.
+        const statements = (await readFile(join(project, 'migrations', migration), 'utf8')).split(';').map(value => value.trim()).filter(Boolean);
+        await db.batch(statements.map(statement => db.prepare(statement)));
+      }
     }
   } catch (error) {
     await runtime?.dispose();
@@ -146,6 +152,11 @@ export async function startService() {
   }
   return {
     env, paypal, logs, sql,
+    async exportSql() {
+      // Wrangler's local D1 export operation, against this fixture's own binding.
+      const [lines] = await db.prepare('PRAGMA miniflare_d1_export(?,?,?);').bind(false, false).raw();
+      return lines.join('\n');
+    },
     async request(path, { method = 'GET', body, raw, bearer, headers = {} } = {}) {
       return fetch(new URL(path, origin), {
         method, headers: { ...(body !== undefined || raw !== undefined ? { 'content-type': 'application/json' } : {}), ...(bearer ? { authorization: `Bearer ${bearer}` } : {}), ...headers },

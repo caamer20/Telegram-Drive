@@ -1611,5 +1611,18 @@
     "this_device": "von diesem Gerät hochgeladen",
     "other_device": "von einem anderen Gerät hochgeladen",
     "none": "Keine verschlüsselte Einstellungssicherung in den neuesten 1,000 Gespeicherten Nachrichten gefunden."
+  },
+  "action_errors": {
+    "credentials": "API-ID und API-Hash prüfen.",
+    "disabled": "Telegram hat diese API-ID deaktiviert. Erstelle neue API-Zugangsdaten.",
+    "phone": "Telefonnummer und Landesvorwahl prüfen.",
+    "banned": "Telegram hat diese Telefonnummer gesperrt.",
+    "register": "Registriere diese Nummer zuerst in der offiziellen Telegram-App.",
+    "code": "Anmeldecode prüfen und erneut versuchen.",
+    "expired": "Der Code ist abgelaufen. Fordere einen neuen an.",
+    "password": "Das Passwort konnte nicht bestätigt werden.",
+    "verify_bundle": "Passphrase und Kopie des Pakets prüfen.",
+    "replace_keys": "Im Paket fehlen Schlüssel. Beim Ersetzen des Tresors können Dateien, die diese Schlüssel verwenden, unlesbar werden. Fortfahren?",
+    "file_limit": "Die Datei überschreitet das Größenlimit von Telegram. Teile sie vor dem Hochladen auf."
   }
 }

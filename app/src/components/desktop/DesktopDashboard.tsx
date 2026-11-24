@@ -31,10 +31,8 @@ import { TransferCenter } from './dashboard/TransferCenter';
 import { MoveToFolderModal } from './dashboard/MoveToFolderModal';
 import { ExternalDropBlocker } from './dashboard/ExternalDropBlocker';
 import type { SettingsTab } from './dashboard/SettingsModal';
-import { RenameFolderModal } from './dashboard/RenameFolderModal';
 import { RenameFileModal } from './dashboard/RenameFileModal';
 import { DesktopAdBanner } from './dashboard/DesktopAdBanner';
-import { RemoteUploadModal } from './dashboard/RemoteUploadModal';
 import { KeyboardShortcutsDialog } from './dashboard/KeyboardShortcutsDialog';
 import { DriveConceptTour } from './dashboard/DriveConceptTour';
 import { LazyFeatureBoundary } from '../shared/LazyFeatureBoundary';
@@ -60,7 +58,9 @@ import { fileQueryKey, invalidateFolderFileQueries, refreshFolderFiles, updateFi
 import { getAdjacentPreview, previewFileKey, samePreviewFile as sameFile } from '../../services/previewNavigation';
 import i18n from '../../i18n';
 
+const LazyRenameFolderModal = lazy(() => import('./dashboard/RenameFolderModal').then(module => ({ default: module.RenameFolderModal })));
 const LazyShareDialog = lazy(() => import('./dashboard/ShareDialog').then(module => ({ default: module.ShareDialog })));
+const RemoteUploadModal = lazy(() => import('./dashboard/RemoteUploadModal').then(module => ({ default: module.RemoteUploadModal })));
 const LazyPreviewModal = lazy(() => import('./dashboard/PreviewModal').then((module) => ({ default: module.PreviewModal })));
 const LazyMediaPlayer = lazy(() => import('./dashboard/MediaPlayer').then((module) => ({ default: module.MediaPlayer })));
 const LazyPdfViewer = lazy(() => import('./dashboard/PdfViewer').then((module) => ({ default: module.PdfViewer })));
@@ -135,7 +135,8 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
     const [insightSummary, setInsightSummary] = useState<{ scope: string; count: number; complete: boolean } | null>(null);
     const [searchTerm, setSearchTerm] = useState("");
     const [searchFilters, setSearchFilters] = useState<FileSearchFilters>(DEFAULT_SEARCH_FILTERS);
-    const { results: searchResults, isSearching, reply: searchReply, error: searchError } = useGlobalFileSearch(searchTerm, searchFilters, accountId);
+    const search = useGlobalFileSearch(searchTerm, searchFilters, accountId);
+    const searchResults = search.results;
     const [folderSyncProgress, setFolderSyncProgress] = useState({ active: false, count: 0 });
     const fileLoadSequenceRef = useRef(0);
     const fileLoadScope = JSON.stringify([accountId, activeSmartView, activeFolderId]);
@@ -310,6 +311,7 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
         refetchOnReconnect: false,
     });
 
+    const filteringFiles = searchTerm.trim().length > 0 || searchFilters.type !== 'all' || searchFilters.size !== 'any' || searchFilters.date !== 'any';
     const displayedFiles = useMemo(() => {
         if (searchFilters.scope === 'all') return searchResults;
         return filterAndRankFiles(allFiles, searchTerm, searchFilters);
@@ -842,13 +844,15 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
                     </LazyFeatureBoundary>
                 )}
                 {showRemoteUpload && (
-                    <RemoteUploadModal
-                        isOpen={showRemoteUpload}
-                        onClose={() => setShowRemoteUpload(false)}
-                        folders={folders}
-                        onUpload={handleUrlUpload}
-                        key="remote-upload-modal"
-                    />
+                    <LazyFeatureBoundary>
+                        <RemoteUploadModal
+                            isOpen={showRemoteUpload}
+                            onClose={() => setShowRemoteUpload(false)}
+                            folders={folders}
+                            onUpload={handleUrlUpload}
+                            key="remote-upload-modal"
+                        />
+                    </LazyFeatureBoundary>
                 )}
             </>
 
@@ -921,7 +925,7 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
                     onShowShortcuts={() => setShowShortcuts(true)}
                     onShowHelp={() => setShowHelp(true)}
                 />
-                {(searchTerm.trim().length > 0 || searchFilters.type !== 'all' || searchFilters.size !== 'any' || searchFilters.date !== 'any') && (
+                {!search.enabled && filteringFiles && (
                     <div className="px-3 pb-0 pt-3">
                         <h2 className="text-ui font-medium text-app-text-secondary">
                             {displayedFiles.length.toLocaleString()} result{displayedFiles.length === 1 ? '' : 's'}{searchTerm.trim() ? <> for <span className="text-app-accent">"{searchTerm}"</span></> : null}
@@ -929,14 +933,24 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
                     </div>
                 )}
                 {insightSummary?.scope === fileLoadScope && !insightSummary.complete && <p role="status" className="px-3 text-xs text-app-text-secondary">{t('workspace.search_partial', { count: insightSummary.count })}</p>}
-                {searchError && <p role="alert" className="px-3 text-xs text-app-danger">{t('workspace.error_operation')}</p>}
-                {searchReply && <p role="status" className="px-3 text-xs text-app-text-secondary">{t(searchReply.complete ? 'workspace.search_complete' : 'workspace.search_partial', { count: searchReply.total })}{searchReply.offline ? ` · ${t('settings.offline')}` : ''}</p>}
+                {search.enabled && (
+                    <div className="flex items-center gap-2 px-3 text-ui text-app-text-secondary">
+                        {search.error ? <span role="alert">{t('workspace.error_operation')}</span> :
+                            <span role="status">{search.busy ? t('common.loading') :
+                                !displayedFiles.length && search.complete && !search.more ? t('workspace.no_matches') :
+                                t(search.complete ? 'workspace.search_complete' : 'workspace.search_partial', { count: search.total }) + (search.offline ? ' · ' + t('settings.offline') : '')}</span>}
+                        {(search.more || search.error) && <button type="button" className="quiet-control" disabled={search.busy} onClick={search.request}>
+                            {t(search.error ? 'common.retry' : 'workspace.show_more')}
+                        </button>}
+                    </div>
+                )}
                 <FileExplorer
                     key={accountId ?? 'signed-out'}
                     folders={folders}
                     files={displayedFiles}
-                    loading={(isLoading && allFiles.length === 0) || isSearching}
-                    error={searchError ? new Error(t('workspace.error_operation')) : error}
+                    loading={search.enabled ? search.busy && !displayedFiles.length : isLoading && allFiles.length === 0}
+                    error={search.enabled ? null : error}
+                    showEmptyFolder={!filteringFiles && !search.enabled}
                     viewMode={viewMode}
                     selectedIds={selectedIds}
                     activeFolderId={activeFolderId}
@@ -957,7 +971,7 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
                     onSortChange={handleSortChange}
                     onToggleFavorite={(file) => void updateActivityFlag(file, 'favorite')}
                     onTogglePinned={(file) => void updateActivityFlag(file, 'pinned')}
-                    syncProgress={folderSyncProgress}
+                    syncProgress={search.enabled ? undefined : folderSyncProgress}
                     selectionDisabled={isCrossFolderView}
                 />
             </section>
@@ -1076,12 +1090,14 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
             )}
 
             {renameFolder && (
-                <RenameFolderModal
-                    folderId={renameFolder.id}
-                    currentName={renameFolder.name}
-                    onRename={handleFolderRename}
-                    onClose={() => setRenameFolder(null)}
-                />
+                <LazyFeatureBoundary>
+                    <LazyRenameFolderModal
+                        folderId={renameFolder.id}
+                        currentName={renameFolder.name}
+                        onRename={handleFolderRename}
+                        onClose={() => setRenameFolder(null)}
+                    />
+                </LazyFeatureBoundary>
             )}
 
             {renameFileTarget && (

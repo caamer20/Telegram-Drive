@@ -1611,5 +1611,18 @@
     "this_device": "dimuat naik oleh peranti ini",
     "other_device": "dimuat naik oleh peranti lain",
     "none": "Tiada sandaran tetapan disulitkan dalam 1,000 Mesej Tersimpan terkini."
+  },
+  "action_errors": {
+    "credentials": "Semak API ID dan API Hash.",
+    "disabled": "Telegram telah menyahaktifkan API ID ini. Cipta kelayakan API baharu.",
+    "phone": "Semak nombor telefon dan kod negara.",
+    "banned": "Telegram telah menyekat nombor telefon ini.",
+    "register": "Daftarkan nombor ini dalam aplikasi rasmi Telegram terlebih dahulu.",
+    "code": "Semak kod log masuk dan cuba lagi.",
+    "expired": "Kod telah tamat tempoh. Minta kod baharu.",
+    "password": "Kata laluan tidak dapat disahkan.",
+    "verify_bundle": "Semak frasa laluan dan salinan berkas pemulihan anda.",
+    "replace_keys": "Berkas ini tidak mengandungi semua kunci. Menggantikan peti besi boleh menyebabkan fail yang menggunakan kunci tersebut tidak dapat dibaca. Teruskan?",
+    "file_limit": "Fail melebihi had saiz Telegram. Bahagikannya sebelum dimuat naik."
   }
 }

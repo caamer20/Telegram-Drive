@@ -624,7 +624,7 @@
           <p class="eyebrow">Android and Google TV</p>
           <h2>Your workspace, away from the desk.</h2>
           <p class="section-lede">The signed Android release supports phones, tablets, Android TV, and Google TV on Android 7.0 and newer, including in-app media playback and resilient background transfers.</p>
-          <p><a class="text-link" href="https://github.com/caamer20/Telegram-Drive/releases/tag/Androidv4.1.2" target="_blank" rel="noopener noreferrer">View Android 4.1.2 ↗</a></p>
+          <p><a class="text-link" href="https://github.com/caamer20/Telegram-Drive/releases/tag/Androidv4.1.3" target="_blank" rel="noopener noreferrer">View Android 4.1.3 ↗</a></p>
         </div>
         <div class="phones" aria-label="Android app screenshots">
           <div class="phone"><img src="assets/android-folders.webp" width="560" height="1247" loading="lazy" alt="Telegram-Drive file workspace on Android" data-lightbox></div>
@@ -674,7 +674,7 @@
           <article class="download-card" data-platform="windows"><span class="download-label">Desktop</span><h3>Windows</h3><p>Windows 10 or 11 · x64</p><div class="download-links"><a class="button primary" href="https://github.com/caamer20/Telegram-Drive/releases" target="_blank" rel="noopener noreferrer">View Windows download</a></div></article>
           <article class="download-card" data-platform="macos"><span class="download-label">Desktop</span><h3>macOS</h3><p>Apple silicon and Intel</p><div class="download-links"><a class="button primary" href="https://github.com/caamer20/Telegram-Drive/releases" target="_blank" rel="noopener noreferrer">View macOS downloads</a></div></article>
           <article class="download-card" data-platform="linux"><span class="download-label">Desktop</span><h3>Linux</h3><p>AppImage, Debian, RPM, and Arch</p><div class="download-links"><a class="button primary" href="https://github.com/caamer20/Telegram-Drive/releases" target="_blank" rel="noopener noreferrer">View Linux downloads</a></div></article>
-          <article class="download-card" data-platform="android"><span class="download-label">Sideload</span><h3>Android + Google TV</h3><p>Android 7.0+ · signed universal APK</p><div class="download-links"><a class="button" href="https://github.com/caamer20/Telegram-Drive/releases/tag/Androidv4.1.2" target="_blank" rel="noopener noreferrer">View Android 4.1.2</a></div></article>
+          <article class="download-card" data-platform="android"><span class="download-label">Sideload</span><h3>Android + Google TV</h3><p>Android 7.0+ · signed universal APK</p><div class="download-links"><a class="button" href="https://github.com/caamer20/Telegram-Drive/releases/tag/Androidv4.1.3" target="_blank" rel="noopener noreferrer">View Android 4.1.3</a></div></article>
         </div>
       </div>
     </section>
@@ -719,7 +719,6 @@
 
   <script>
     const REPO_RELEASES = 'https://github.com/caamer20/Telegram-Drive/releases';
-    const ANDROID_RELEASE = 'https://github.com/caamer20/Telegram-Drive/releases/tag/Androidv4.1.2';
     const RELEASE_API = 'https://api.github.com/repos/caamer20/Telegram-Drive/releases/latest';
     const header = document.getElementById('siteHeader');
     const menuButton = document.getElementById('menuToggle');
@@ -886,14 +885,22 @@
 
     const detectPlatform = () => {
       const value = `${navigator.platform || ''} ${navigator.userAgent || ''}`.toLowerCase();
+      if (value.includes('android')) return 'android';
       if (value.includes('win')) return 'windows';
       if (value.includes('mac')) return 'macos';
-      if (value.includes('android')) return 'android';
       if (value.includes('linux')) return 'linux';
       return null;
     };
 
     async function loadRelease() {
+      const detected = detectPlatform();
+      const heroDownload = document.getElementById('heroDownload');
+      if (detected) document.querySelector(`[data-platform="${detected}"]`)?.classList.add('recommended');
+      if (detected === 'android') {
+        const releaseLink = document.querySelector('[data-platform="android"] .download-links a');
+        heroDownload.href = releaseLink.href;
+        heroDownload.textContent = releaseLink.textContent;
+      }
       try {
         const response = await fetch(RELEASE_API, { headers: { Accept: 'application/vnd.github+json' } });
         if (!response.ok) throw new Error(`GitHub returned ${response.status}`);
@@ -932,13 +939,7 @@
           }
         }
 
-        const detected = detectPlatform();
-        if (detected) document.querySelector(`[data-platform="${detected}"]`)?.classList.add('recommended');
-        const heroDownload = document.getElementById('heroDownload');
-        if (detected === 'android') {
-          heroDownload.href = ANDROID_RELEASE;
-          heroDownload.textContent = 'View Android 4.1.2';
-        } else if (detected) {
+        if (detected && detected !== 'android') {
           const asset = preferredAsset(assets, detected);
           if (asset) {
             heroDownload.href = asset.browser_download_url;

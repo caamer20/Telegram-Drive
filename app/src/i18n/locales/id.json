@@ -1611,5 +1611,18 @@
     "this_device": "diunggah oleh perangkat ini",
     "other_device": "diunggah oleh perangkat lain",
     "none": "Tidak ditemukan cadangan pengaturan terenkripsi dalam 1,000 Pesan Tersimpan terbaru."
+  },
+  "action_errors": {
+    "credentials": "Periksa API ID dan API Hash.",
+    "disabled": "Telegram menonaktifkan API ID ini. Buat kredensial API baru.",
+    "phone": "Periksa nomor telepon dan kode negara.",
+    "banned": "Telegram telah memblokir nomor telepon ini.",
+    "register": "Daftarkan nomor ini dahulu di aplikasi resmi Telegram.",
+    "code": "Periksa kode masuk dan coba lagi.",
+    "expired": "Kode sudah kedaluwarsa. Minta kode baru.",
+    "password": "Kata sandi tidak dapat diverifikasi.",
+    "verify_bundle": "Periksa frasa sandi dan salinan bundel Anda.",
+    "replace_keys": "Beberapa kunci tidak ada dalam bundel ini. Mengganti brankas dapat membuat berkas yang memakai kunci tersebut tidak bisa dibaca. Lanjutkan?",
+    "file_limit": "Berkas melebihi batas ukuran Telegram. Pecah berkas sebelum mengunggah."
   }
 }

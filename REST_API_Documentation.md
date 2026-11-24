@@ -198,7 +198,7 @@ Search files by filename with optional filtering.
 | `folder_id` | Integer | Search one folder. Omit to search every folder |
 | `refresh` | Boolean | `true` reads Telegram again instead of reusing a recent reading |
 
-The response is an array of every matching file, in the same shape as **Get File Details**.
+The response is an array of matching files in the same shape as **Get File Details**. The response header `X-Inventory-Complete` is `false` when results cover only the retained inventory.
 
 ---
 
@@ -339,12 +339,12 @@ Retrieve total storage consumed, file counts, and breakdown by folders and MIME 
 ```
 
 #### Duplicate Files Finder
-List groups of files with identical uploaded filenames and sizes. A file renamed in Telegram Drive is still matched by the name it was uploaded with.
+List groups of files with identical uploaded filenames and sizes. A file renamed in Telegram Drive is still matched by the name it was uploaded with. The response header `X-Inventory-Complete` reports whether all folders were fully inspected.
 * **URL:** `/storage/duplicates`
 * **Method:** `GET`
 
 #### Empty Folders
-List folders that contain no file anywhere in their history.
+List folders whose complete inventory proves that they contain no files. The response omits Saved Messages and any folder whose scan was incomplete. The response header `X-Inventory-Complete` reports whether every folder was fully inspected.
 * **URL:** `/folders/empty`
 * **Method:** `GET`
 

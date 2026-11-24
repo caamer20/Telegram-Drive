@@ -1,3 +1,4 @@
+import { useModalFocus } from '../../../hooks/useModalFocus';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ChevronLeft, ChevronRight, File, Maximize, Scan, X, ZoomIn, ZoomOut } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -69,6 +70,8 @@ export function PreviewModal({
     localPath,
     onDownload,
 }: PreviewModalProps) {
+    const viewerRef = useRef<HTMLDivElement>(null);
+    useModalFocus(viewerRef, onClose);
     const { t } = useTranslation();
     const { settings } = useSettings();
     const [thumbnailSrc, setThumbnailSrc] = useState<string | null>(null);
@@ -449,7 +452,7 @@ export function PreviewModal({
     }, [onClose, onNext, onPrev, imagePreview, zoomImageTo, fitImage, showActualImageSize, panImageBy]);
 
     return (
-        <div className="viewer-overlay fixed inset-0 z-[150] flex items-center justify-center p-4" onClick={onClose}>
+        <div ref={viewerRef} role="dialog" aria-modal="true" aria-label={file.name} className="viewer-overlay fixed inset-0 z-[150] flex items-center justify-center p-4" onClick={onClose}>
             <div className="relative flex max-h-screen w-full max-w-5xl flex-col items-center justify-center" onClick={(event) => event.stopPropagation()}>
                 <button
                     onClick={onPrev}

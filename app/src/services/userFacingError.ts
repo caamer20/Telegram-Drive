@@ -1,6 +1,7 @@
 type Translate = (key: string, options?: Record<string, unknown>) => string;
 
 const SAFE_ERROR_KEYS: Record<string, string> = {
+  FOLDER_OFFLINE: 'workspace.error_network',
   VAULT_LOCKED: 'settings.vault_is_locked',
   ENCRYPTED_SHARE_UNAVAILABLE: 'common.operation_failed',
   ENCRYPTED_PREVIEW_UNAVAILABLE: 'archive.failed_read',
@@ -27,4 +28,26 @@ export function userFacingError(error: unknown, t: Translate): string {
   }
 
   return t('common.operation_failed');
+}
+
+/** Native crypto errors retain both legacy CamelCase and wire-code spellings. */
+export function recoveryError(error: unknown, t: Translate): string {
+  const message = serializedError(error);
+  const code = message.match(/^\[([a-z_]+)\]/i)?.[1].replace(/_/g, '').toLowerCase();
+  switch (code) {
+    case 'wrongkeyorcorrupt':
+    case 'authfailed':
+    case 'headerinvalid':
+    case 'truncated':
+    case 'kdflimitexceeded':
+      return t('action_errors.verify_bundle');
+    case 'vaultlocked':
+      return t('settings.vault_is_locked');
+    case 'ioerror':
+      return t('activity.category_storage');
+    case 'unsupportedversion':
+      return t('settings.check_for_updates');
+    default:
+      return userFacingError(error, t);
+  }
 }

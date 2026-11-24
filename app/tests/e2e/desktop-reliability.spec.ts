@@ -1,6 +1,73 @@
 import { expect, test } from '@playwright/test';
 import { desktopFixture, nativeCalls, openSettings } from './desktop-fixture';
 
+test('disconnected folder changes preserve the list and can be retried after reconnection', async ({ page }) => {
+  await desktopFixture(page, { exerciseFolderMutations: true });
+  await page.goto('/');
+  const folder = (name: string) => page.getByRole('group', { name, exact: true });
+  const connect = (online: boolean) => page.evaluate(online => { (window as any).__desktopTest.folderServiceOnline = online; }, online);
+  const error = page.getByText('Telegram is unavailable. Reconnect and retry; your saved organization is safe.', { exact: true }).last();
+  await expect(folder('Photos')).toBeVisible();
+  await page.getByRole('button', { name: 'Create Folder', exact: true }).first().click();
+  const create = page.getByRole('dialog', { name: 'Create Folder' });
+  await create.getByRole('textbox').fill('Drafts');
+  await create.getByRole('button', { name: /create/i }).click();
+  await expect(error).toBeVisible();
+  await expect(create.getByRole('textbox')).toHaveValue('Drafts');
+  await expect(folder('Drafts')).toHaveCount(0);
+  await connect(true);
+  await create.getByRole('button', { name: /create/i }).click();
+  await expect(folder('Drafts')).toBeVisible();
+
+  await connect(false);
+  await folder('Drafts').getByRole('button', { name: 'Folder settings' }).click();
+  await page.getByRole('button', { name: 'Rename', exact: true }).click();
+  const rename = page.getByRole('dialog', { name: 'Rename Folder', exact: true });
+  const nameField = rename.getByRole('textbox', { name: 'Folder name', exact: true });
+  await expect(rename.getByRole('button', { name: 'Close', exact: true })).toBeVisible();
+  await expect(nameField).toBeFocused();
+  await nameField.press('Escape');
+  await expect(rename).toHaveCount(0);
+  await folder('Drafts').getByRole('button', { name: 'Folder settings' }).click();
+  await page.getByRole('button', { name: 'Rename', exact: true }).click();
+  await expect(nameField).toBeFocused();
+  await nameField.fill('Documents');
+  await rename.getByRole('button', { name: 'Rename', exact: true }).click();
+  await expect.poll(async () => (await nativeCalls(page, 'cmd_rename_folder')).length).toBe(1);
+  await expect(nameField).toBeEnabled();
+  await expect(folder('Drafts')).toBeVisible();
+  await expect(folder('Documents')).toHaveCount(0);
+  await connect(true);
+  await nameField.press('Enter');
+  await expect(folder('Documents')).toBeVisible();
+  await connect(false);
+  const remove = async () => {
+    await folder('Documents').getByRole('button', { name: 'Folder settings' }).click();
+    await page.getByRole('button', { name: 'Delete', exact: true }).click();
+    await page.getByRole('dialog', { name: 'Delete Folder' }).getByRole('button', { name: 'Delete', exact: true }).click();
+  };
+  await remove();
+  await expect.poll(async () => (await nativeCalls(page, 'cmd_delete_folder')).length).toBe(1);
+  await expect(folder('Documents')).toBeVisible();
+  await page.reload();
+  await expect(folder('Documents')).toBeVisible();
+  await connect(true);
+  await remove();
+  await expect(folder('Documents')).toHaveCount(0);
+  await page.clock.install();
+  await page.reload();
+  await expect(folder('Photos')).toBeVisible();
+  await expect(folder('Documents')).toHaveCount(0);
+  await expect(page.getByText('Disconnected from Telegram', { exact: true })).toBeVisible();
+  await page.evaluate(() => {
+    sessionStorage.setItem('fixture-telegram-folders-101', JSON.stringify([{ id: 9, name: 'Photos from another device' }]));
+    (window as any).__desktopTest.folderServiceOnline = true;
+  });
+  await page.clock.fastForward(10_001);
+  await expect(folder('Photos from another device')).toBeVisible();
+  await expect(folder('Photos')).toHaveCount(0);
+});
+
 test('a busy account read retries, and an empty cache stays loading until its folder completes', async ({ page }) => {
   await desktopFixture(page, { accountFailures: 100, holdFiles: true });
   await page.goto('/');
@@ -328,13 +395,14 @@ test('switching accounts closes an already displayed preview from the previous a
 
 test('global Drive search collects pages and shows offline index coverage and errors', async ({ page }) => {
   await desktopFixture(page); await page.goto('/');
-  await expect(page.getByText('Holiday folder photo.jpg', { exact: true })).toBeVisible();
+  await expect(page.getByText('Holiday folder photo.jpg', { exact: true })).toBeVisible({ timeout: 30_000 });
   await page.evaluate(() => { (window as any).__desktopTest.searchPageSize = 1; });
   await page.getByPlaceholder('Search files...').fill('Holiday');
   await page.getByRole('button', { name: 'Search filters', exact: true }).click();
   await page.getByLabel('Search scope').selectOption('all');
   await page.getByLabel('Protection', { exact: true }).selectOption('plain');
   await page.getByRole('button', { name: 'Close', exact: true }).click();
+  await page.getByRole('button', { name: 'Show more files', exact: true }).click();
   await expect(page.getByText('Holiday saved photo.jpg', { exact: true })).toBeVisible();
   await expect(page.getByRole('status').filter({ hasText: 'partial inventory' })).toContainText('Offline');
   expect((await nativeCalls(page, 'cmd_search_local')).some(call => call.args.query.offset === 1 && call.args.query.indexId === 'search-101')).toBe(true);

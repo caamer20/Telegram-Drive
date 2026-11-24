@@ -1187,47 +1187,52 @@ fn disconnected_folder_stand_in(
     Err("Client not connected".to_string())
 }
 
+// A scan and a remote mutation must publish their results in the same order.
+// Otherwise a scan taken before a create/delete can overwrite its confirmed result.
+static FOLDER_OPERATIONS: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+async fn folder_client(
+    state: &TelegramState,
+    account: &crate::workspace::AccountGuard,
+) -> Result<grammers_client::Client, String> {
+    let client = state
+        .client
+        .lock()
+        .await
+        .clone()
+        .ok_or_else(|| "[FOLDER_OFFLINE] Reconnect to Telegram and retry".to_string())?;
+    account.validate_client(&client).await?;
+    Ok(client)
+}
+
 #[tauri::command]
 pub async fn cmd_create_folder(
     name: String,
+    app: tauri::AppHandle,
+    owner_id: Option<String>,
     state: State<'_, TelegramState>,
     db_pool: State<'_, DbConnection>,
 ) -> Result<FolderMetadata, String> {
-    create_folder(name, state.inner(), db_pool.inner().clone()).await
+    let account = file_mutation_account(&app, owner_id.as_deref())?;
+    create_folder(name, state.inner(), db_pool.inner().clone(), account).await
 }
 
 pub(crate) async fn create_folder(
     name: String,
     state: &TelegramState,
     db_pool: DbConnection,
+    account: crate::workspace::AccountGuard,
 ) -> Result<FolderMetadata, String> {
-    let client_opt = { state.client.lock().await.clone() };
-
-    let mut folder = match client_opt {
-        Some(client) => create_folder_inner(&name, &client, &state.peer_cache).await?,
-        None => {
-            let stand_in_id = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs() as i64;
-            disconnected_folder_stand_in(
-                "Created",
-                FolderMetadata {
-                    id: stand_in_id,
-                    name,
-                    parent_id: None,
-                    username: None,
-                    is_public: false,
-                    group_id: None,
-                    display_order: 0,
-                },
-            )?
-        }
-    };
+    let _lock = FOLDER_OPERATIONS.lock().await;
+    let client = folder_client(state, &account).await?;
+    let mut folder = create_folder_inner(&name, &client, &state.peer_cache).await?;
 
     // Save to SQLite
     let folder_for_db = folder.clone();
     let display_order = crate::db::with_connection(db_pool, move |conn| {
+        account.validate()?;
+        crate::commands::folder_groups::prepare_layout(conn, Some(&(account.root.clone(), Some(account.owner))))?;
+
     // Calculate new display order
     let mut max_stmt = conn.prepare("SELECT MAX(display_order) FROM folder_metadata").map_err(|e: sqlite::Error| e.to_string())?;
     let mut display_order = 0;
@@ -1284,42 +1289,33 @@ pub async fn delete_folder_inner(
 #[tauri::command]
 pub async fn cmd_delete_folder(
     folder_id: i64,
+    app: tauri::AppHandle,
+    owner_id: Option<String>,
     state: State<'_, TelegramState>,
     db_pool: State<'_, DbConnection>,
 ) -> Result<bool, String> {
-    delete_folder(folder_id, state.inner(), db_pool.inner().clone()).await
-}
-
-fn folder_stand_in(folder_id: i64, name: String) -> FolderMetadata {
-    FolderMetadata {
-        id: folder_id,
-        name,
-        parent_id: None,
-        username: None,
-        is_public: false,
-        group_id: None,
-        display_order: 0,
-    }
+    let account = file_mutation_account(&app, owner_id.as_deref())?;
+    delete_folder(folder_id, state.inner(), db_pool.inner().clone(), account).await
 }
 
 pub(crate) async fn delete_folder(
     folder_id: i64,
     state: &TelegramState,
     db_pool: DbConnection,
+    account: crate::workspace::AccountGuard,
 ) -> Result<bool, String> {
-    let client_opt = { state.client.lock().await.clone() };
-
-    match client_opt {
-        Some(client) => {
-            delete_folder_inner(folder_id, &client, &state.peer_cache).await?;
-        }
-        None => {
-            disconnected_folder_stand_in("Deleted", folder_stand_in(folder_id, String::new()))?;
-        }
-    }
+    let _lock = FOLDER_OPERATIONS.lock().await;
+    let client = folder_client(state, &account).await?;
+    delete_folder_inner(folder_id, &client, &state.peer_cache).await?;
 
     // Delete from SQLite
     crate::db::with_connection(db_pool, move |conn| {
+        account.validate()?;
+        crate::commands::folder_groups::prepare_layout(
+            conn,
+            Some(&(account.root.clone(), Some(account.owner))),
+        )?;
+
         let mut stmt = conn
             .prepare("DELETE FROM folder_metadata WHERE channel_id = ?")
             .map_err(|e: sqlite::Error| e.to_string())?;
@@ -1369,10 +1365,20 @@ pub async fn rename_folder_inner(
 pub async fn cmd_rename_folder(
     folder_id: i64,
     new_name: String,
+    app: tauri::AppHandle,
+    owner_id: Option<String>,
     state: State<'_, TelegramState>,
     db_pool: State<'_, DbConnection>,
 ) -> Result<bool, String> {
-    rename_folder(folder_id, new_name, state.inner(), db_pool.inner().clone()).await
+    let account = file_mutation_account(&app, owner_id.as_deref())?;
+    rename_folder(
+        folder_id,
+        new_name,
+        state.inner(),
+        db_pool.inner().clone(),
+        account,
+    )
+    .await
 }
 
 pub(crate) async fn rename_folder(
@@ -1380,21 +1386,21 @@ pub(crate) async fn rename_folder(
     new_name: String,
     state: &TelegramState,
     db_pool: DbConnection,
+    account: crate::workspace::AccountGuard,
 ) -> Result<bool, String> {
-    let client_opt = { state.client.lock().await.clone() };
-
-    match client_opt {
-        Some(client) => {
-            rename_folder_inner(folder_id, &new_name, &client, &state.peer_cache).await?;
-        }
-        None => {
-            disconnected_folder_stand_in("Renamed", folder_stand_in(folder_id, new_name.clone()))?;
-        }
-    }
+    let _lock = FOLDER_OPERATIONS.lock().await;
+    let client = folder_client(state, &account).await?;
+    rename_folder_inner(folder_id, &new_name, &client, &state.peer_cache).await?;
 
     // Update SQLite
     let new_name_for_db = new_name.clone();
     crate::db::with_connection(db_pool, move |conn| {
+        account.validate()?;
+        crate::commands::folder_groups::prepare_layout(
+            conn,
+            Some(&(account.root.clone(), Some(account.owner))),
+        )?;
+
         let mut stmt = conn
             .prepare("UPDATE folder_metadata SET name = ? WHERE channel_id = ?")
             .map_err(|e: sqlite::Error| e.to_string())?;
@@ -4891,22 +4897,14 @@ pub async fn cmd_search_global(
 #[tauri::command]
 pub async fn cmd_scan_folders(
     app: tauri::AppHandle,
+    owner_id: Option<String>,
     state: State<'_, TelegramState>,
     db_pool: State<'_, DbConnection>,
 ) -> Result<Vec<FolderMetadata>, String> {
     let scan_started_at = std::time::Instant::now();
-    let client_opt = { state.client.lock().await.clone() };
-    #[cfg(debug_assertions)]
-    if client_opt.is_none() {
-        // If not connected, return whatever is already in the database
-        return crate::commands::folder_groups::cmd_get_enriched_folders(app, db_pool).await;
-    }
-    let client = client_opt.ok_or_else(|| "Client not connected".to_string())?;
-
-    // The scan merges into the signed-in account's own folder list. Without
-    // this, one account's scan would prune another account's folders.
-    let account = file_mutation_account(&app, None)?;
-    account.validate_client(&client).await?;
+    let account = file_mutation_account(&app, owner_id.as_deref())?;
+    let _lock = FOLDER_OPERATIONS.lock().await;
+    let client = folder_client(&state, &account).await?;
     let layout_scope = Some((account.root.clone(), Some(account.owner)));
     let scope_for_known = layout_scope.clone();
     let known_account = account.clone();

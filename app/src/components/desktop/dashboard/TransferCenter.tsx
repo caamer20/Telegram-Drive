@@ -1,3 +1,4 @@
+import { transferError } from '../../../services/transferError';
 import { useEffect, useMemo, useState } from 'react';
 import { RetryFailedUploadsButton } from '../../shared/RetryFailedUploadsButton';
 import { TransferSortControl } from '../../shared/TransferSortControl';
@@ -153,7 +154,7 @@ function TransferRow({
             <Badge tone={isSkipped(item) ? 'neutral' : statusTone(item.status)}>{t(isSkipped(item) ? 'downloadCollision.skipped' : statusKey(item.status))}</Badge>
             {speed && <span className="text-metadata tabular-nums text-app-text-secondary">{speed}/s</span>}
           </div>
-          {item.error && <p className="mt-1 break-words text-metadata text-app-danger" role={item.status === 'error' ? 'alert' : 'status'}>{item.error}</p>}
+          {(item.error || item.errorCategory) && <p className="mt-1 break-words text-metadata text-app-danger" role={item.status === 'error' ? 'alert' : 'status'}>{transferError(item, t)}</p>}
         </div>
         <div className="flex shrink-0 items-center gap-1">
           {retryable && <Button size="sm" variant="primary" disabled={retryBusy} aria-label={`${retryLabel}: ${name}`} onClick={onRetry}>{retryLabel}</Button>}

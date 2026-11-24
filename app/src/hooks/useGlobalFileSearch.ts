@@ -1,3 +1,6 @@
+import { usePagedFileSearch } from './usePagedFileSearch';
+import { invoke } from '@tauri-apps/api/core';
+import { normalizeListedFile } from '../services/fileListRefresh';
 import { useEffect, useRef, useState } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import { searchLocal, type LocalSearchQuery, type LocalSearchReply } from '../services/localSearch';
@@ -35,5 +38,27 @@ export function useLocalFileSearch(query: LocalSearchQuery, ownerId: string | nu
     return { results: visible?.reply?.files ?? [], isSearching: visible?.busy ?? false, reply: visible?.reply, error: visible?.error };
 }
 export function useGlobalFileSearch(query: string, filters: FileSearchFilters, ownerId: string | null) {
-    return useLocalFileSearch({ ...filters, query: query.trim() }, ownerId, filters.scope === 'all');
+    const term = query.trim();
+    const key = ownerId && filters.scope === 'all' ? JSON.stringify([ownerId, term, filters]) : null;
+    type Cursor = { offset: number; indexId: string; total: number };
+    return usePagedFileSearch<Cursor>(key, async (cursor, current) => {
+        const deadline = Date.now() + 12 * 60_000;
+        for (;;) {
+            try {
+                const page = await invoke<LocalSearchReply>('cmd_search_local', { ownerId, query: {
+                    ...filters, query: term, limit: 256, offset: cursor?.offset ?? 0, indexId: cursor?.indexId,
+                } });
+                if (cursor && (cursor.indexId !== page.indexId || cursor.total !== page.total)) throw new Error('SEARCH_CHANGED');
+                const end = (cursor?.offset ?? 0) + page.files.length;
+                if (page.nextOffset !== null && (page.nextOffset !== end || !page.files.length)) throw new Error('SEARCH_CHANGED');
+                if (page.nextOffset === null && end !== page.total) throw new Error('SEARCH_CHANGED');
+                const next = page.nextOffset === null ? null : { offset: page.nextOffset, indexId: page.indexId, total: page.total };
+                return { files: page.files.map(normalizeListedFile), next, total: page.total, complete: page.complete, offline: page.offline };
+            } catch (error) {
+                if (!String(error).includes('INVENTORY_BUILDING') || !current() || Date.now() >= deadline) throw error;
+                await new Promise(resolve => window.setTimeout(resolve, 2000));
+                if (!current()) throw error;
+            }
+        }
+    });
 }

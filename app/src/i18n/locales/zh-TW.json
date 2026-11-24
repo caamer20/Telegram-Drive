@@ -1611,5 +1611,18 @@
     "this_device": "由此裝置上傳",
     "other_device": "由另一台裝置上傳",
     "none": "最近 1,000 則已儲存的訊息中未找到加密設定備份。"
+  },
+  "action_errors": {
+    "credentials": "請檢查 API ID 和 API Hash。",
+    "disabled": "Telegram 已停用這個 API ID。請建立新的 API 憑證。",
+    "phone": "請檢查電話號碼和國碼。",
+    "banned": "Telegram 已封鎖這個電話號碼。",
+    "register": "請先在 Telegram 官方應用程式註冊這個號碼。",
+    "code": "請檢查登入驗證碼並重試。",
+    "expired": "驗證碼已過期，請重新取得。",
+    "password": "密碼驗證失敗。",
+    "verify_bundle": "請檢查通關密語和已儲存的復原套件副本。",
+    "replace_keys": "此套件缺少部分金鑰。取代保險庫可能導致使用這些金鑰的檔案無法讀取。要繼續嗎？",
+    "file_limit": "檔案超過 Telegram 的大小限制，請分割後再上傳。"
   }
 }

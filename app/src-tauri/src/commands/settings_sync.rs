@@ -93,6 +93,9 @@ struct EncryptedSettingsEnvelope {
 struct SettingsPayload {
     schema_version: u8,
     settings: Value,
+    // v3.9 readers ignore optional payload fields, but reject unknown settings keys.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    video_filename_caption: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]
@@ -173,10 +176,15 @@ fn encrypt_settings(
     device_id: String,
 ) -> Result<String, String> {
     validate_passphrase(passphrase)?;
-    let settings = sanitize_settings(settings)?;
+    let mut settings = sanitize_settings(settings)?;
+    let caption = settings
+        .as_object_mut()
+        .and_then(|values| values.remove("videoFilenameCaption"))
+        .and_then(|value| value.as_bool());
     let payload = serde_json::to_vec(&SettingsPayload {
         schema_version: 1,
         settings,
+        video_filename_caption: caption,
     })
     .map_err(|error| format!("Unable to encode settings: {error}"))?;
     let mut salt = [0_u8; 16];
@@ -276,10 +284,17 @@ fn decrypt_settings(message: &str, passphrase: &str) -> Result<SettingsSyncDownl
             },
         )
         .map_err(|_| "The sync passphrase is incorrect or the backup is damaged".to_string())?;
-    let payload: SettingsPayload = serde_json::from_slice(&plaintext)
+    let mut payload: SettingsPayload = serde_json::from_slice(&plaintext)
         .map_err(|_| "Decrypted settings payload is malformed".to_string())?;
     if payload.schema_version != 1 {
         return Err("Decrypted settings schema is unsupported".to_string());
+    }
+    if let Some(caption) = payload.video_filename_caption {
+        let values = payload
+            .settings
+            .as_object_mut()
+            .ok_or_else(|| "Settings sync payload must be an object".to_string())?;
+        values.insert("videoFilenameCaption".into(), Value::Bool(caption));
     }
     Ok(SettingsSyncDownload {
         settings: sanitize_settings(payload.settings)?,

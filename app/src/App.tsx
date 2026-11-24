@@ -27,7 +27,6 @@ const AccessibilityFixtures = import.meta.env.DEV
 import { Toaster, toast } from "sonner";
 import { useTheme } from "./context/ThemeContext";
 import { CrashReportingConsent } from "./components/shared/CrashReportingConsent";
-import { configureCrashTelemetry } from "./services/crashTelemetry";
 import { TelegramCooldownBanner } from "./components/shared/TelegramCooldownBanner";
 const WhatsNewDialog = React.lazy(() => import("./components/shared/WhatsNewDialog").then(m => ({ default: m.WhatsNewDialog })));
 import { useSettings } from "./context/SettingsContext";
@@ -68,11 +67,6 @@ function AppContent() {
   const { settings, isLoaded, persistenceStatus, retryPersistence } = useSettings();
   const { status: supporterStatus } = useSupporter();
   const { i18n, t } = useTranslation();
-
-  useEffect(() => {
-    if (!isLoaded) return;
-    configureCrashTelemetry(settings.crashReportingEnabled);
-  }, [isLoaded, settings.crashReportingEnabled]);
 
   // Handle active language and RTL direction changes
   useEffect(() => {
@@ -176,15 +170,15 @@ function AppContent() {
   // gateway is eligible. This prevents any sponsor surface from flashing
   // while a lifetime entitlement or offline-grace token is still loading.
   useEffect(() => {
-    if (authStatus !== "sponsor-check" || supporterStatus.state === "loading") return;
+    if ((authStatus !== "sponsor-check" && authStatus !== "ad-gateway") || supporterStatus.state === "loading") return;
+    if (!shouldShowSponsorContent(supporterStatus)) {
+      setAuthStatus("authenticated");
+      return;
+    }
+    if (authStatus === "ad-gateway") return;
 
     let cancelled = false;
     const finishSponsorCheck = async () => {
-      if (!shouldShowSponsorContent(supporterStatus)) {
-        if (!cancelled) setAuthStatus("authenticated");
-        return;
-      }
-
       try {
         const store = await load("config.json");
         const gatewayPassed = await store.get<boolean>(AD_GATEWAY_PASSED_KEY);
@@ -272,7 +266,7 @@ function AppContent() {
       )}
       {whatsNew && <Suspense fallback={null}><WhatsNewDialog details={whatsNew} onClose={() => setWhatsNew(null)} /></Suspense>}
       {isLoaded && <CrashReportingConsent />}
-      {authStatus === "ad-gateway" && (
+      {authStatus === "ad-gateway" && shouldShowSponsorContent(supporterStatus) && (
         <Suspense fallback={<div className="h-screen bg-telegram-bg" />}>
           <AdGateway onContinue={() => setAuthStatus("authenticated")} />
         </Suspense>

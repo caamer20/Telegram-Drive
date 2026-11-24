@@ -54,3 +54,24 @@ WebDAV, the REST API, and Folder Sync all operate against the same Telegram chan
 - Encrypted files remain subject to the vault and scoped-credential rules described in the WebDAV and REST API guides.
 
 See [WEBDAV_GUIDE.md](WEBDAV_GUIDE.md) and [REST_API_Documentation.md](REST_API_Documentation.md) for connection and authentication details.
+
+## Maintainer measurement of idle sync
+
+On 2026-11-19 the native debug driver ran the production timer, local filesystem scanner, planner and SQLite against one active synthetic mapping on Intel macOS. Each file contained 64 KiB, had an existing matching remote entry and SQLite mapping, and remained untouched. No process polled the engine or triggered a wake during the passive window. The remote fixture counted complete tree requests and readiness probes. The observer timed native running-to-idle transitions with a monotonic clock. Each trial finished with every original file recorded as synced, zero pending operations and zero conflicts.
+
+| Scanner | Files | Idle window | Remote tree reads / readiness probes | Native idle cycle durations | Startup to ready | Median of 5 additional unchanged-library wakes |
+| --- | ---: | ---: | ---: | --- | ---: | ---: |
+| Full | 1 | 65 s | 2 / 2 | 14, 21 ms | 166 ms | 24 ms |
+| Full | 256 | 65 s | 2 / 2 | 1378, 2276 ms | 1445 ms | 1453 ms |
+| Incremental | 256 | 337 s | 1 / 1 | 103 ms | 1444 ms | 83 ms |
+
+The full scanner calls the file hash reader for each eligible file. For the 256-file fixture that accounts for 16 MiB of payload per full pass and 32 MiB over the measured idle window. These are application reads derived from the fixture size. The OS may serve them from memory. One tree request in production can require multiple Telegram history pages. The in-memory remote supplies neither network bytes nor network latency, and its matching algorithm can also affect local timings. Debug builds and concurrent verification work limit throughput comparisons.
+
+To reproduce from the repository root with the locked dependencies available locally:
+
+```sh
+cargo build --locked --offline --manifest-path app/src-tauri/Cargo.toml --features native-e2e --bin native-e2e-driver
+python3 -B scripts/measure-idle-sync.py app/src-tauri/target/debug/native-e2e-driver --files 256 --seconds 65
+```
+
+If Cargo uses another target directory, pass its driver path to the script. To sample the existing incremental setting, append `--scanner incremental` and set `--seconds 337` to span its five-minute remote check. The script creates and removes its own private synthetic profile. Before changing a timer, measure release-build page counts, network bytes, scan duration and remote-edit discovery latency on an approved test account. Record only aggregate counts, compare similar channel sizes and verify watcher wake, offline reconnect and mass-deletion protection.

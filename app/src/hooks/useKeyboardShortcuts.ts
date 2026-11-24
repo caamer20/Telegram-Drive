@@ -77,6 +77,7 @@ export function useKeyboardShortcuts({
         }
         // Enter - Open / Preview
         if (e.key === 'Enter') {
+            if (target.closest('button, a[href], select, summary, [role="menuitem"]')) return;
             e.preventDefault();
             onEnter?.();
             return;

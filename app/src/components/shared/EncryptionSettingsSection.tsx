@@ -8,6 +8,7 @@ import { useSettings } from '../../context/SettingsContext';
 import { useEncryption } from '../../hooks/useEncryption';
 import { EncryptionTransparencyDialog } from './EncryptionTransparencyDialog';
 import { requireAndroidReauthentication } from '../../services/androidReauthentication';
+import { recoveryError } from '../../services/userFacingError';
 import { useConfirm } from '../../context/ConfirmContext';
 import type { UploadProtectionPreference } from '../../types/settings';
 
@@ -28,7 +29,7 @@ function RecoveryDrillPanel({ encryption, onComplete }: { encryption: ReturnType
             await requireAndroidReauthentication(t('protection_labels.auth_export'));
             setBundle(await encryption.exportRecovery(recoveryPassphrase));
         } catch (error) {
-            toast.error(t('recovery_copy.export_failed', { error: String(error) }));
+            toast.error(t('recovery_copy.export_failed', { error: recoveryError(error, t) }));
         } finally {
             setBusy(false);
         }
@@ -49,7 +50,7 @@ function RecoveryDrillPanel({ encryption, onComplete }: { encryption: ReturnType
             onComplete();
             toast.success(t('recovery_copy.drill_passed'));
         } catch (error) {
-            toast.error(t('recovery_copy.test_failed', { error: String(error) }));
+            toast.error(t('recovery_copy.test_failed', { error: recoveryError(error, t) }));
         } finally {
             setBusy(false);
         }
@@ -100,7 +101,7 @@ function ExportRecoverySection({ encryption }: { encryption: ReturnType<typeof u
             setExportedBundle(bundle);
             toast.success(t('settings.export_success'));
         } catch (e) {
-            toast.error(t('settings.export_failed', { error: String(e) }));
+            toast.error(t('settings.export_failed', { error: recoveryError(e, t) }));
         } finally {
             setExporting(false);
         }
@@ -208,7 +209,7 @@ function ImportRecoverySection({ encryption, vaultUnlocked }: { encryption: Retu
                 // separate, explicit decision; the old vault file is archived.
                 const replace = await confirm({
                     title: t('settings.import_recovery_bundle'),
-                    message: message.replace(/^.*\[RECOVERY_BUNDLE_MISMATCH\]\s*/, ''),
+                    message: t('action_errors.replace_keys'),
                     confirmText: t('settings.import'),
                     variant: 'danger',
                 });
@@ -222,7 +223,7 @@ function ImportRecoverySection({ encryption, vaultUnlocked }: { encryption: Retu
             setVaultPassphrase('');
             setConfirmVaultPassphrase('');
         } catch (e) {
-            toast.error(t('settings.import_failed', { error: String(e) }));
+            toast.error(t('settings.import_failed', { error: recoveryError(e, t) }));
         } finally {
             setImporting(false);
         }
@@ -341,7 +342,7 @@ export function EncryptionSettingsSection({ vaultOnly = false }: { vaultOnly?: b
             setConfirmPassphrase('');
             setKeyLossAcknowledged(false);
         } catch (e) {
-            toast.error(t('settings.vault_create_failed', { error: String(e) }));
+            toast.error(t('settings.vault_create_failed', { error: recoveryError(e, t) }));
         } finally {
             setCreatingVault(false);
         }
@@ -384,7 +385,7 @@ export function EncryptionSettingsSection({ vaultOnly = false }: { vaultOnly?: b
             setConfirmNewVaultPassphrase('');
             toast.success(t('settings.vault_passphrase_changed'));
         } catch (error) {
-            toast.error(t('settings.vault_passphrase_change_failed', { error: String(error) }));
+            toast.error(t('settings.vault_passphrase_change_failed', { error: recoveryError(error, t) }));
         } finally {
             setChangingVaultPassphrase(false);
         }

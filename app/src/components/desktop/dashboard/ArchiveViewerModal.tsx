@@ -90,6 +90,7 @@ export function ArchiveViewerModal({
             // Cancel any running extract-all so orphaned uploads don't continue
             extractAllCancelledRef.current = true;
             extractAllProgressUnlisten.current?.();
+            extractAllProgressUnlisten.current = null;
             if (extractAllCurrentTransferRef.current) {
                 invoke('cmd_cancel_transfer', { transferId: extractAllCurrentTransferRef.current }).catch(() => {});
             }
@@ -142,86 +143,100 @@ export function ArchiveViewerModal({
         extractAllCancelledRef.current = false;
         extractAllEntryStatuses.current = new Map();
 
-        // Subscribe to upload-progress once for the entire batch
-        const unlisten = await listen<UploadProgress>('upload-progress', (event) => {
-            if (event.payload.id === extractAllCurrentTransferRef.current) {
-                setExtractAllProgress({
-                    id: event.payload.id,
-                    percent: event.payload.percent,
-                    uploaded_bytes: event.payload.uploaded_bytes,
-                    total_bytes: event.payload.total_bytes,
-                    speed_bytes_per_sec: event.payload.speed_bytes_per_sec,
-                });
-            }
-        });
-        extractAllProgressUnlisten.current = unlisten;
-
         let done = 0;
         let failed = 0;
         let wasCancelled = false;
 
-        for (let i = 0; i < entries.length; i++) {
-            if (extractAllCancelledRef.current) {
-                wasCancelled = true;
-                break;
+        let batchId: number | undefined;
+        try {
+            // Subscribe to upload-progress once for the entire batch
+            const unlisten = await listen<UploadProgress>('upload-progress', (event) => {
+                if (event.payload.id === extractAllCurrentTransferRef.current) {
+                    setExtractAllProgress({
+                        id: event.payload.id,
+                        percent: event.payload.percent,
+                        uploaded_bytes: event.payload.uploaded_bytes,
+                        total_bytes: event.payload.total_bytes,
+                        speed_bytes_per_sec: event.payload.speed_bytes_per_sec,
+                    });
+                }
+            });
+            extractAllProgressUnlisten.current = unlisten;
+
+            if (!extractAllCancelledRef.current) {
+                batchId = await invoke<number>('cmd_open_archive_batch', { messageId: file.id, folderId: activeFolderId ?? null });
             }
-
-            const entry = entries[i];
-            if (entry.is_dir) continue;
-
-            const transferId = `arch-extract-all-${Date.now()}-${i}`;
-            extractAllCurrentTransferRef.current = transferId;
-            setExtractAllCurrentEntryIndex(i);
-            setExtractAllProgress(null);
-            let extracted: ExtractedFile | null = null;
-
-            try {
-                // Step 1: Extract
-                extracted = await invoke<ExtractedFile>('cmd_extract_archive_entry', {
-                    messageId: file.id,
-                    folderId: activeFolderId ?? null,
-                    entryIndex: i,
-                });
-
-                if (extractAllCancelledRef.current) { wasCancelled = true; break; }
-
-                // Step 2: Upload
-                await invoke('initiate_upload', {
-                    path: extracted.temp_path,
-                    folderId: extractAllTargetFolderId,
-                    transferId,
-                });
-
-                done++;
-                extractAllEntryStatuses.current.set(i, 'done');
-            } catch (e) {
-                const msg = String(e);
-                if (msg.includes('cancelled') || msg.includes('canceled')) {
+            for (let i = 0; i < entries.length; i++) {
+                if (extractAllCancelledRef.current) {
                     wasCancelled = true;
                     break;
                 }
-                failed++;
-                extractAllEntryStatuses.current.set(i, 'failed');
-                console.error(`Extract-all failed for "${entry.filename}":`, msg);
-            } finally {
-                // Clean up temp file
-                if (extracted?.temp_path) {
-                    try { await invoke('cmd_delete_temp_zip', { path: extracted.temp_path }); } catch {}
-                }
-            }
 
-            setExtractAllDone(done);
+                const entry = entries[i];
+                if (entry.is_dir) continue;
+
+                const transferId = `arch-extract-all-${Date.now()}-${i}`;
+                extractAllCurrentTransferRef.current = transferId;
+                setExtractAllCurrentEntryIndex(i);
+                setExtractAllProgress(null);
+                let extracted: ExtractedFile | null = null;
+
+                try {
+                    // Step 1: Extract
+                    extracted = await invoke<ExtractedFile>('cmd_extract_archive_batch_entry', { batchId, entryIndex: i });
+
+                    if (extractAllCancelledRef.current) { wasCancelled = true; break; }
+
+                    // Step 2: Upload
+                    await invoke('initiate_upload', {
+                        path: extracted.temp_path,
+                        folderId: extractAllTargetFolderId,
+                        transferId,
+                    });
+
+                    done++;
+                    extractAllEntryStatuses.current.set(i, 'done');
+                } catch (e) {
+                    const msg = String(e);
+                    if (msg.includes('cancelled') || msg.includes('canceled')) {
+                        wasCancelled = true;
+                        break;
+                    }
+                    failed++;
+                    extractAllEntryStatuses.current.set(i, 'failed');
+                    console.error(`Extract-all failed for "${entry.filename}":`, msg);
+                } finally {
+                    // Clean up temp file
+                    if (extracted?.temp_path) {
+                        try { await invoke('cmd_delete_temp_zip', { path: extracted.temp_path }); } catch {}
+                    }
+                }
+
+                setExtractAllDone(done);
+            }
+        } catch (reason) {
+            wasCancelled = extractAllCancelledRef.current;
+            if (!wasCancelled) {
+                failed = fileEntries.length - done;
+                toast.error(userFacingError(reason, t));
+            }
+        } finally {
+            if (batchId !== undefined) {
+                await invoke('cmd_close_archive_batch', { batchId }).catch(() => {
+                    if (mountedRef.current) toast.error(t('common.operation_failed'));
+                });
+            }
+            setExtractAllBusy(false);
+            extractAllCurrentTransferRef.current = '';
+            setExtractAllProgress(null);
+            setExtractAllCurrentEntryIndex(null);
+            extractAllProgressUnlisten.current?.();
+            extractAllProgressUnlisten.current = null;
         }
 
-        setExtractAllBusy(false);
-        extractAllCurrentTransferRef.current = '';
-        setExtractAllProgress(null);
-        setExtractAllCurrentEntryIndex(null);
-        extractAllProgressUnlisten.current?.();
-        extractAllProgressUnlisten.current = null;
-
-        // Refresh the file list (debounced)
+        // A completed transfer may need a folder refresh after the viewer closes.
         debouncedInvalidate(extractAllTargetFolderId);
+        if (!mountedRef.current) return;
 
         // Summary toast
         const destName = extractAllTargetFolderId === null ? t('common.saved_messages') : extractAllTargetName;

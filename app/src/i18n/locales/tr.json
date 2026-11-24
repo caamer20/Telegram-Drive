@@ -1611,5 +1611,18 @@
     "this_device": "bu cihaz tarafından yüklendi",
     "other_device": "başka bir cihaz tarafından yüklendi",
     "none": "Son 1,000 Kayıtlı Mesaj içinde şifreli ayar yedeği bulunamadı."
+  },
+  "action_errors": {
+    "credentials": "API ID ve API Hash değerlerini kontrol edin.",
+    "disabled": "Telegram bu API ID değerini devre dışı bıraktı. Yeni API kimlik bilgileri oluşturun.",
+    "phone": "Telefon numarasını ve ülke kodunu kontrol edin.",
+    "banned": "Telegram bu telefon numarasını yasakladı.",
+    "register": "Önce bu numarayı resmî Telegram uygulamasında kaydedin.",
+    "code": "Giriş kodunu kontrol edip yeniden deneyin.",
+    "expired": "Kodun süresi doldu. Yeni bir kod isteyin.",
+    "password": "Parola doğrulanamadı.",
+    "verify_bundle": "Parola ifadesini ve paketin elinizdeki kopyasını kontrol edin.",
+    "replace_keys": "Pakette bazı anahtarlar eksik. Kasayı değiştirirseniz bu anahtarları kullanan dosyalar okunamayabilir. Devam edilsin mi?",
+    "file_limit": "Dosya Telegram boyut sınırını aşıyor. Yüklemeden önce bölün."
   }
 }

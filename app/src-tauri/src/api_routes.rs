@@ -217,6 +217,20 @@ fn account_response(
     api_scope_error(account).unwrap_or(response)
 }
 
+/// Preserve the array payload used by existing clients while exposing whether
+/// a bounded catalog inspected the entire requested history.
+fn inventory_array(account: &AccountGuard, complete: bool, items: impl Serialize) -> HttpResponse {
+    account_response(
+        account,
+        HttpResponse::Ok()
+            .insert_header((
+                "x-inventory-complete",
+                if complete { "true" } else { "false" },
+            ))
+            .json(items),
+    )
+}
+
 async fn api_protected_response(
     account: &crate::workspace::AccountGuard,
     client: &grammers_client::Client,
@@ -1221,7 +1235,7 @@ async fn api_search_files(
     if query.refresh == Some(true) {
         api_catalog::invalidate(account.owner);
     }
-    let (files, _) = match api_catalog::files(&account, tg_state.get_ref(), scope).await {
+    let (files, complete) = match api_catalog::files(&account, tg_state.get_ref(), scope).await {
         Ok(listing) => listing,
         Err(error) => return catalog_error(error),
     };
@@ -1230,7 +1244,7 @@ async fn api_search_files(
         .filter(|file| file.name.to_lowercase().contains(&search))
         .collect();
 
-    account_response(&account, HttpResponse::Ok().json(matching))
+    inventory_array(&account, complete, matching)
 }
 
 #[delete("/api/v1/files/{message_id}")]
@@ -2129,6 +2143,7 @@ async fn api_storage_duplicates(
         };
 
     // Same uploaded name and same size. A rename does not hide a duplicate.
+    let complete = listings.iter().all(|(_, listing)| listing.complete);
     let mut file_groups: HashMap<(String, u64), Vec<ApiFile>> = HashMap::new();
     for (_, listing) in &listings {
         for file in listing.files.iter().filter(|file| file.is_document) {
@@ -2146,7 +2161,7 @@ async fn api_storage_duplicates(
         .collect();
     duplicates.sort_by(|a, b| (&a.name, a.size).cmp(&(&b.name, b.size)));
 
-    account_response(&account, HttpResponse::Ok().json(duplicates))
+    inventory_array(&account, complete, duplicates)
 }
 
 #[get("/api/v1/folders/empty")]
@@ -2168,9 +2183,10 @@ async fn api_empty_folders(
 
     // Empty means no file anywhere in the folder, not only at its newest
     // message. Saved Messages is not a folder that can be removed.
+    let complete = listings.iter().all(|(_, listing)| listing.complete);
     let empty_folders: Vec<FolderMetadata> = listings
         .into_iter()
-        .filter(|(_, listing)| listing.files.is_empty())
+        .filter(|(_, listing)| listing.complete && listing.files.is_empty())
         .filter_map(|(folder, _)| {
             folder.id.map(|id| FolderMetadata {
                 id,
@@ -2184,7 +2200,7 @@ async fn api_empty_folders(
         })
         .collect();
 
-    account_response(&account, HttpResponse::Ok().json(empty_folders))
+    inventory_array(&account, complete, empty_folders)
 }
 
 #[get("/api/v1/files/{message_id}/thumbnail")]
@@ -2370,7 +2386,8 @@ pub fn serve(
                 crate::local_cors::is_allowed_origin_header(origin)
             })
             .allow_any_method()
-            .allow_any_header();
+            .allow_any_header()
+            .expose_headers(["x-inventory-complete"]);
         actix_web::App::new()
             // The key is checked before a request body, query or path is
             // parsed, so an unauthenticated caller learns nothing from how

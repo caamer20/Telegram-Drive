@@ -1618,5 +1618,18 @@
     "this_device": "enviado por este dispositivo",
     "other_device": "enviado por outro dispositivo",
     "none": "Nenhum backup criptografado de configurações nas últimas 1,000 Mensagens salvas."
+  },
+  "action_errors": {
+    "credentials": "Confira o API ID e o API Hash.",
+    "disabled": "O Telegram desativou este API ID. Crie novas credenciais de API.",
+    "phone": "Confira o número de telefone e o código do país.",
+    "banned": "O Telegram baniu este número de telefone.",
+    "register": "Primeiro cadastre este número no aplicativo oficial do Telegram.",
+    "code": "Confira o código de acesso e tente novamente.",
+    "expired": "O código expirou. Solicite outro.",
+    "password": "Não foi possível verificar a senha.",
+    "verify_bundle": "Confira a frase secreta e a sua cópia do pacote.",
+    "replace_keys": "Faltam chaves neste pacote. Substituir o cofre pode tornar ilegíveis os arquivos que usam essas chaves. Continuar?",
+    "file_limit": "O arquivo excede o limite de tamanho do Telegram. Divida-o antes de enviar."
   }
 }

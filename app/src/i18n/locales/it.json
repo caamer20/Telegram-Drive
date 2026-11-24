@@ -1618,5 +1618,18 @@
     "this_device": "caricato da questo dispositivo",
     "other_device": "caricato da un altro dispositivo",
     "none": "Nessun backup cifrato delle impostazioni negli ultimi 1,000 Messaggi salvati."
+  },
+  "action_errors": {
+    "credentials": "Verifica API ID e API Hash.",
+    "disabled": "Telegram ha disattivato questo API ID. Crea nuove credenziali API.",
+    "phone": "Verifica il numero e il prefisso internazionale.",
+    "banned": "Telegram ha bloccato questo numero di telefono.",
+    "register": "Registra prima il numero nell’app ufficiale di Telegram.",
+    "code": "Controlla il codice di accesso e riprova.",
+    "expired": "Il codice è scaduto. Richiedine un altro.",
+    "password": "Verifica della password non riuscita.",
+    "verify_bundle": "Controlla la passphrase e la tua copia del pacchetto.",
+    "replace_keys": "Nel pacchetto mancano delle chiavi. Sostituendo la cassaforte potresti rendere illeggibili i file che le usano. Continuare?",
+    "file_limit": "Il file supera il limite di dimensione di Telegram. Dividilo prima del caricamento."
   }
 }

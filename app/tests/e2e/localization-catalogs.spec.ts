@@ -9,10 +9,16 @@ import {desktopFixture,nativeCalls} from './desktop-fixture';
 
 // Serve the actual production artifacts, not Vite's development JSON transform.
 // The native application boundary remains controlled by desktopFixture.
-test('all 24 built language catalogs load losslessly through the real application',async ({browser})=>{
+test('all 24 built language catalogs load losslessly through the real application',async ({browser}, testInfo)=>{
   test.setTimeout(240_000);
-  execFileSync(process.execPath,[resolve(appRoot,'node_modules/vite/bin/vite.js'),'build'],{cwd:appRoot,timeout:120_000,stdio:'pipe'});
-  const dist=resolve(appRoot,'dist');
+  const verifiedDist = process.env.TELEGRAM_DRIVE_E2E_DIST;
+  const dist = verifiedDist ? resolve(appRoot, verifiedDist) : testInfo.outputPath('production');
+  if (!verifiedDist) {
+    execFileSync(process.execPath, [resolve(appRoot, 'node_modules/vite/bin/vite.js'), 'build', '--outDir', dist], {
+      cwd: appRoot, timeout: 120_000, stdio: 'pipe',
+    });
+  }
+  await readFile(resolve(dist, 'index.html'));
   const server=createServer(async(request,response)=>{
     try {
       const pathname=decodeURIComponent(new URL(request.url!,'http://localhost').pathname);
@@ -90,13 +96,13 @@ test('all 24 built language catalogs load losslessly through the real applicatio
         await expect(page.getByRole('dialog')).toBeVisible();
         await expect(page.getByRole('dialog').getByRole('button',{name:catalog.settings.tab_encryption,exact:true})).toBeVisible();
         {
-          await expect.poll(()=>packets.filter(packet=>packet.format==='td-locale-v1').length).toBe(language==='en'?1:2);
-          const keys=packets.find(packet=>packet.format==='td-keys-v1');expect(keys).toBeTruthy();
-          const packed=packets.find(packet=>packet.format==='td-locale-v1'&&packet.language===language);expect(packed.id).toBe(keys.id);
+          await expect.poll(()=>packets.filter(packet=>packet.format==='td-locale-v2').length).toBe(language==='en'?1:2);
+          const keys=packets.find(packet=>packet.format==='td-keys-v2');expect(keys).toBeTruthy();
+          const packed=packets.find(packet=>packet.format==='td-locale-v2'&&packet.language===language);expect(packed.id).toBe(keys.id);
           const flat:Record<string,string>={};
           const flatten=(value:Record<string,unknown>,prefix='')=>{for(const [name,entry]of Object.entries(value)){const key=prefix?prefix+'.'+name:name;if(typeof entry==='string')flat[key]=entry;else flatten(entry as Record<string,unknown>,key);}};
           flatten(catalog);
-          const unpacked=Object.fromEntries(keys.keys.flatMap((key:string,index:number)=>packed.values[index]===null?[]:[[key,packed.values[index]]]));
+          const unpacked=Object.fromEntries(keys.keys.flatMap((key:string,index:number)=>packed.values[index]===null?[]:[[key,typeof packed.values[index]==='number'?keys.shared[packed.values[index]]:packed.values[index]]]));
           expect(unpacked).toEqual(flat);
         }
       } finally {await context.close();}

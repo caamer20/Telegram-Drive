@@ -1611,5 +1611,18 @@
     "this_device": "uploaded by this device",
     "other_device": "uploaded by another device",
     "none": "No encrypted settings backup was found in the latest 1,000 Saved Messages."
+  },
+  "action_errors": {
+    "credentials": "Check the API ID and API Hash.",
+    "disabled": "Telegram disabled this API ID. Create new API credentials.",
+    "phone": "Check the phone number and country code.",
+    "banned": "Telegram has banned this phone number.",
+    "register": "Register this number in the official Telegram app first.",
+    "code": "Check the login code and try again.",
+    "expired": "This code expired. Request another.",
+    "password": "That two-step verification password is incorrect. Check it and try again.",
+    "verify_bundle": "Check the passphrase and your copy of the bundle.",
+    "replace_keys": "This bundle lacks keys used by your vault. Replacing the vault can make files using those keys unreadable. Continue?",
+    "file_limit": "This file exceeds the Telegram size limit. Split it before uploading."
   }
 }

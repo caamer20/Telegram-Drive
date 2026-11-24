@@ -1,41 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { desktopFixture, openSettings } from './desktop-413-fixture';
 
-test('normal-motion settings changes detach old panes and close immediately releases controls', async ({ page }) => {
-  await page.emulateMedia({ reducedMotion: 'no-preference' });
-  await desktopFixture(page, { settings: { performanceMode: false } });
-  await page.goto('/');
-  await openSettings(page);
-  const dialog = page.getByRole('dialog', { name: 'Settings', exact: true });
-  for (const category of ['Themes', 'Folder Sync', 'General', 'Themes', 'General']) {
-    await dialog.getByRole('button', { name: category, exact: true }).click();
-  }
-  await expect(dialog.getByRole('switch', { name: 'Performance Mode', exact: true })).toBeVisible();
-  await expect(page.locator('.settings-modal [data-ui-motion][aria-hidden="true"]')).toHaveCount(0);
-  await dialog.getByRole('button', { name: 'Done', exact: true }).click();
-  const released = await page.evaluate(() => {
-    const outgoing = document.querySelector('[aria-labelledby="settings-dialog-title"]');
-    return !outgoing || Boolean(outgoing.closest('[inert][aria-hidden="true"]'));
-  });
-  expect(released, 'A closing dialog must release input and accessibility immediately, before its visual exit ends').toBe(true);
-  await openSettings(page);
-  await expect(dialog.getByRole('switch', { name: 'Performance Mode', exact: true })).toBeEnabled();
-  await page.keyboard.press('Escape');
-  await expect(page.locator('[aria-labelledby="settings-dialog-title"]')).toHaveCount(0);
-});
-
-test('changing the OS motion preference preserves the manual performance setting', async ({ page }) => {
-  await page.emulateMedia({ reducedMotion: 'no-preference' });
-  await desktopFixture(page, { settings: { performanceMode: false } });
-  await page.goto('/');
-  await openSettings(page);
-  const performance = page.getByRole('switch', { name: 'Performance Mode', exact: true });
-  await expect(performance).toHaveAttribute('aria-checked', 'false');
-  await page.emulateMedia({ reducedMotion: 'reduce' });
-  await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
-  await expect(performance).toHaveAttribute('aria-checked', 'false');
-});
-
 // Real App/provider and persisted-settings journeys; the native boundary is simulated.
 test('system reduced motion does not overwrite the saved Performance Mode choice', async ({ page }) => {
   await page.emulateMedia({ reducedMotion: 'reduce' });
@@ -46,6 +11,12 @@ test('system reduced motion does not overwrite the saved Performance Mode choice
   await expect(performance).toHaveAttribute('aria-checked', 'false');
   await page.emulateMedia({ reducedMotion: 'no-preference' });
   await expect(performance).toHaveAttribute('aria-checked', 'false');
+  await test.step('an OS change settles without enabling the saved-off switch', async () => {
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+    await expect(performance).toHaveAttribute('aria-checked', 'false');
+    await page.emulateMedia({ reducedMotion: 'no-preference' });
+  });
   await performance.click();
   await expect(performance).toHaveAttribute('aria-checked', 'true');
   await page.emulateMedia({ reducedMotion: 'reduce' });

@@ -399,7 +399,13 @@
         ],
         "responses": {
           "200": {
-            "description": "Every matching file",
+            "description": "Matching files in the inspected inventory",
+            "headers": {
+              "X-Inventory-Complete": {
+                "description": "True when every requested folder was fully inspected. False means that older files may lie outside the retained inventory.",
+                "schema": { "type": "boolean" }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -1414,7 +1420,13 @@
         ],
         "responses": {
           "200": {
-            "description": "Folders with no file anywhere in their history",
+            "description": "Folders proven empty by complete folder listings",
+            "headers": {
+              "X-Inventory-Complete": {
+                "description": "True when every requested folder was fully inspected. False means that older files may lie outside the retained inventory.",
+                "schema": { "type": "boolean" }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -1693,7 +1705,13 @@
         ],
         "responses": {
           "200": {
-            "description": "Groups of two or more files",
+            "description": "Groups of two or more matching files in the inspected inventory",
+            "headers": {
+              "X-Inventory-Complete": {
+                "description": "True when every requested folder was fully inspected. False means that older files may lie outside the retained inventory.",
+                "schema": { "type": "boolean" }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {

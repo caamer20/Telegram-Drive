@@ -1,3 +1,4 @@
+import { transferError } from '../services/transferError';
 import i18n from '../i18n';
 import { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import { useActionScope } from './useActionScope';
@@ -201,7 +202,7 @@ export function useFileUpload(
                     announceSupporterValueMoment('upload_completed');
                     void invalidateFolderFileQueries(queryClient, job.folderId, job.ownerId);
                 } else if (job.status === 'failed') {
-                    toast.error(i18n.t('transfer_copy.upload_failed',{name:job.filename,error:job.error||i18n.t('transfer_copy.unknown_error')}));
+                    toast.error(t('transfer_copy.upload_failed', { name: job.filename, error: transferError(job, t) }));
                 } else if (job.status === 'waiting_for_unlock') {
                     toast.warning(t('settings.encryption_mode_passphrase'));
                 }
@@ -485,7 +486,7 @@ export function useFileUpload(
                     toast.warning(t('settings.encryption_mode_passphrase'));
                 } else if (errMsg.includes('FILE_TOO_BIG') || errMsg.includes('too large') || errMsg.includes('2 GB')) {
                     setUploadQueue(q => q.map(i => i.id === item.id ? { ...i, status: 'error', error: errMsg } : i));
-                    toast.error(`Upload failed: Telegram has a 2 GB file size limit. Try splitting large folders.`);
+                    toast.error(t('action_errors.file_limit'));
                 } else if (isAndroidPlatform && isTransientNetworkError(errMsg)) {
                     keepTemporaryFileForResume = true;
                     setUploadQueue(q => q.map(i => i.id === item.id ? {
@@ -497,7 +498,7 @@ export function useFileUpload(
                     keepTemporaryFileForResume = Boolean(item.tempZipPath || item.androidStaged);
                     const displayPath = item.url || item.path;
                     setUploadQueue(q => q.map(i => i.id === item.id ? { ...i, status: 'error', error: errMsg } : i));
-                    toast.error(i18n.t('transfer_copy.upload_failed',{name:displayPath.split('/').pop(),error:String(e)}));
+                    toast.error(t('transfer_copy.upload_failed', { name: displayPath.split('/').pop(), error: transferError({ error: errMsg }, t) }));
                 }
             } else if (cancelledRef.current.has(item.id)) {
                 cancelledRef.current.delete(item.id);
@@ -559,7 +560,7 @@ export function useFileUpload(
         } catch (error) {
             requireCurrent();
             if (throwOnFailure) throw error;
-            toast.error(`Could not prepare encrypted upload: ${String(error)}`);
+            toast.error(userFacingError(error, t));
             return null;
         }
     };
@@ -597,7 +598,7 @@ export function useFileUpload(
                 .filter(candidate => candidate.androidStaged)
                 .map(candidate => invoke('cmd_delete_android_staged_upload', { path: candidate.path }).catch(() => undefined)));
             if (!isCurrent()) throw new Error('ACCOUNT_CHANGED');
-            toast.error(`Android could not preserve the selected file for background recovery: ${String(error)}`);
+            toast.error(t('activity.category_persistence'));
             return 0;
         }
         const newItems: QueueItem[] = preparedPaths.map((prepared, index) => ({
@@ -660,7 +661,7 @@ export function useFileUpload(
             requireCurrent();
         } catch (error) {
             requireCurrent();
-            toast.error(t('settings.failed_prefix', { error: String(error) }));
+            toast.error(userFacingError(error, t));
             return { queued: 0, rejected: [] };
         }
 
@@ -751,7 +752,7 @@ export function useFileUpload(
             } catch (e) {
                 if (!isCurrent()) return;
                 console.error('[Upload] Zip error:', e);
-                toast.error(`Failed to zip folder: ${e}`);
+                toast.error(userFacingError(e, t));
             }
         } else {
             toast.info(`Folder upload without zipping is not supported. Enable "Zip folders before upload" in Settings.`);

@@ -1,3 +1,4 @@
+import { useModalFocus } from '../../../hooks/useModalFocus';
 import {useTranslation} from 'react-i18next';
 import { useEffect, useState, useRef } from 'react';
 import { X, ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Maximize } from 'lucide-react';
@@ -37,7 +38,8 @@ interface PdfViewerProps {
 
 export function PdfViewer({ file, onClose, onNext, onPrev, currentIndex, totalItems, activeFolderId, localPath }: PdfViewerProps) {
     useTranslation();
-    const [streamInfo, setStreamInfo] = useState<StreamInfo | null>(null);
+    const viewerRef = useRef<HTMLDivElement>(null);
+    useModalFocus(viewerRef, onClose);
     const [pdf, setPdf] = useState<pdfjsLib.PDFDocumentProxy | null>(null);
     const [numPages, setNumPages] = useState<number>(0);
     const [scale, setScale] = useState<number>(1.2);
@@ -69,14 +71,6 @@ export function PdfViewer({ file, onClose, onNext, onPrev, currentIndex, totalIt
     };
 
     useEffect(() => {
-        if (isAndroidPlatform || localPath) return;
-        invoke<StreamInfo>('cmd_get_stream_info').then(setStreamInfo).catch((err) => {
-            console.error("Failed to get stream info:", err);
-            setError(i18n.t('viewer.stream_failed'));
-        });
-    }, [localPath]);
-
-    useEffect(() => {
         let cancelled = false;
         let activeLoadingTask: pdfjsLib.PDFDocumentLoadingTask | null = null;
         setLoading(true);
@@ -96,11 +90,20 @@ export function PdfViewer({ file, onClose, onNext, onPrev, currentIndex, totalIt
             setLoading(false);
         };
 
-        const loadStream = () => {
-            if (!streamInfo || cancelled) {
-                if (!streamInfo) setError(i18n.t('viewer.stream_failed'));
+        const loadStream = async () => {
+            if (cancelled) return;
+            let streamInfo: StreamInfo;
+            try {
+                streamInfo = await invoke<StreamInfo>('cmd_get_stream_info');
+                if (!streamInfo?.base_url || !streamInfo.token) throw new Error('Missing stream information');
+            } catch {
+                if (!cancelled) {
+                    setError(i18n.t('viewer.stream_failed'));
+                    setLoading(false);
+                }
                 return;
             }
+            if (cancelled) return;
             const folderIdParam = activeFolderId !== null ? activeFolderId.toString() : 'home';
             const credential = streamInfo.operation_token
                 ? `&credential=${encodeURIComponent(streamInfo.operation_token)}`
@@ -152,9 +155,6 @@ export function PdfViewer({ file, onClose, onNext, onPrev, currentIndex, totalIt
             loadLocalFile(localPath);
             return () => { cancelled = true; void activeLoadingTask?.destroy(); };
         }
-        if (!isAndroidPlatform && !streamInfo) {
-            return;
-        }
 
         // Small PDFs are loaded from the bounded plaintext preview cache so a
         // recently viewed document remains available offline. Large desktop
@@ -191,7 +191,7 @@ export function PdfViewer({ file, onClose, onNext, onPrev, currentIndex, totalIt
             cancelled = true;
             void activeLoadingTask?.destroy();
         };
-    }, [streamInfo, activeFolderId, file.id, file.size, localPath]);
+    }, [activeFolderId, file.id, file.size, localPath]);
 
     useEffect(() => {
         return () => {
@@ -261,7 +261,7 @@ export function PdfViewer({ file, onClose, onNext, onPrev, currentIndex, totalIt
     };
 
     return (
-        <div className="viewer-overlay fixed inset-0 z-[200] flex flex-col p-4 animate-in fade-in duration-150" onClick={onClose}>
+        <div ref={viewerRef} role="dialog" aria-modal="true" aria-label={file.name} className="viewer-overlay fixed inset-0 z-[200] flex flex-col p-4 animate-in fade-in duration-150" onClick={onClose}>
             {/* Header / Controls */}
             <div className="pointer-events-none absolute inset-x-0 top-0 z-50 flex items-center justify-between px-4 pt-[calc(1rem+env(safe-area-inset-top))] md:px-6">
                 <div className="viewer-toolbar pointer-events-auto px-2">
@@ -328,7 +328,7 @@ export function PdfViewer({ file, onClose, onNext, onPrev, currentIndex, totalIt
                 onClick={(e) => e.stopPropagation()}
             >
                 {loading && (
-                    <div className="absolute inset-0 flex flex-1 flex-col items-center justify-center text-white">
+                    <div role="status" className="absolute inset-0 flex flex-1 flex-col items-center justify-center text-white">
                         <div className="mb-3 h-6 w-6 animate-spin rounded-full border-2 border-white/20 border-t-app-accent"></div>
                         <p className="text-ui font-medium">{i18n.t('viewer.loading_document')}</p>
                         <p className="mt-1 text-badge text-white/45">{i18n.t('viewer.downloading_telegram')}</p>
@@ -336,7 +336,7 @@ export function PdfViewer({ file, onClose, onNext, onPrev, currentIndex, totalIt
                 )}
 
                 {error && (
-                    <div className="viewer-panel mt-20 flex max-w-md flex-col items-center justify-center border-app-danger/30 bg-app-danger/10 p-5 text-center text-white">
+                    <div role="alert" className="viewer-panel mt-20 flex max-w-md flex-col items-center justify-center border-app-danger/30 bg-app-danger/10 p-5 text-center text-white">
                         <p className="mb-1 text-ui font-semibold text-app-danger">{i18n.t('viewer.unable_pdf')}</p>
                         <p className="mb-5 text-metadata leading-relaxed text-white/60">{error}</p>
                         <button
@@ -425,6 +425,18 @@ function PdfPage({ pageNumber, pdf, scale }: { pageNumber: number; pdf: pdfjsLib
         };
     }, [isVisible, pdf, pageNumber]);
 
+    const [text, setText] = useState('');
+    useEffect(() => {
+        let current = true;
+        setText('');
+        if (page) {
+            void page.getTextContent().then(content => {
+                if (current) setText(content.items.map(item => 'str' in item ? item.str : '').join(' '));
+            }).catch(() => { /* A scanned or unreadable text layer still has a visual preview. */ });
+        }
+        return () => { current = false; };
+    }, [page]);
+
     // Render the page to canvas — re-runs when page loads or scale changes
     useEffect(() => {
         if (!page || !canvasRef.current || !isVisible) return;
@@ -473,13 +485,17 @@ function PdfPage({ pageNumber, pdf, scale }: { pageNumber: number; pdf: pdfjsLib
     return (
         <div
             ref={containerRef}
+            role="region"
+            aria-label={i18n.t('syncPreview.page', { current: pageNumber, total: pdf.numPages })}
+            tabIndex={0}
             className="relative my-2 flex flex-col items-center overflow-hidden rounded-control bg-white/5 shadow-[0_8px_28px_rgba(0,0,0,0.32)]"
             style={{
                 minHeight: !page ? `${estimatedHeight}px` : undefined,
                 minWidth: !page ? `${estimatedWidth}px` : undefined,
             }}
         >
-            <canvas ref={canvasRef} className="max-w-full h-auto bg-white" />
+            <span className="sr-only">{text}</span>
+            <canvas aria-hidden="true" ref={canvasRef} className="max-w-full h-auto bg-white" />
 
             {!page && isVisible && (
                 <div className="absolute inset-0 flex items-center justify-center pointer-events-none text-white/30">

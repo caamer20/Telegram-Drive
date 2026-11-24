@@ -11,9 +11,10 @@ const job = (id: string, status = 'failed', extra: Record<string, unknown> = {})
   revision: 1, createdAt: 1, updatedAt: 1, ...extra,
 });
 const retryAll = (page: Page) => page.getByRole('button', { name: /^Retry all failed/ });
-async function ready(page: Page) {
+async function openTransfers(page: Page) {
   await page.goto('/');
-  await expect(page.getByText('Holiday folder photo.jpg', { exact: true })).toBeVisible();
+  // The transfer list can be empty or have no eligible retries.
+  await expect.poll(async () => (await nativeCalls(page, 'cmd_transfer_list')).length, { timeout: 30_000 }).toBeGreaterThan(0);
 }
 async function release(page: Page) {
   await page.evaluate(() => (window as any).__desktopTest.releaseRetry());
@@ -32,7 +33,7 @@ test('one keyboard action retries 100 failed uploads without changing other work
       job('failed-download', 'failed', { direction: 'download', kind: 'download', messageId: 42 }),
       job('other-owner', 'failed', { ownerId: '202' }),
     ]);
-  await desktopFixture(page, { transfers: [...failures, ...unaffected] }); await ready(page);
+  await desktopFixture(page, { transfers: [...failures, ...unaffected] }); await openTransfers(page);
   const before = await states(page);
   await retryAll(page).focus(); await page.keyboard.press('Enter');
   await expect.poll(async () => (await nativeCalls(page, command)).length).toBe(100);
@@ -41,19 +42,25 @@ test('one keyboard action retries 100 failed uploads without changing other work
   expect(new Set(calls.map((call: any) => call.args.id)).size).toBe(100);
   expect(calls.every((call: any) => call.args.ownerId === '101')).toBe(true);
   const after = await states(page);
-  for (const previous of before) {
-    const current = after.find((candidate: any) => candidate.id === previous.id);
-    if (!previous.id.startsWith('failed-') || previous.id === 'failed-download') expect(current).toEqual(previous);
-    else {
-      expect(current).toMatchObject({ status: 'pending', revision: 2, progress: 0, transferredBytes: 0 });
-      for (const key of ['id', 'ownerId', 'path', 'url', 'folderId', 'protectionMode', 'protectMetadata', 'videoUploadMode', 'videoFilenameCaption', 'queuePosition']) expect(current[key]).toEqual(previous[key]);
-    }
-  }
+  type JobSnapshot = { id: string; [key: string]: unknown };
+  const retriedIds = new Set(failures.map(job => job.id));
+  const retryFields = [
+    'id', 'ownerId', 'path', 'url', 'folderId', 'protectionMode', 'protectMetadata',
+    'videoUploadMode', 'videoFilenameCaption', 'queuePosition', 'status', 'revision', 'progress', 'transferredBytes',
+  ];
+  const jobsById = (jobs: JobSnapshot[]) => new Map(jobs.map(job => [
+    job.id,
+    retriedIds.has(job.id) ? Object.fromEntries(retryFields.map(field => [field, job[field]])) : job,
+  ]));
+  const expected = before.map((job: JobSnapshot) => retriedIds.has(job.id)
+    ? { ...job, status: 'pending', revision: 2, progress: 0, transferredBytes: 0 }
+    : job);
+  expect({ count: after.length, jobs: jobsById(after) }).toEqual({ count: before.length, jobs: jobsById(expected) });
   await expect(page.getByRole('dialog')).toHaveCount(0);
 });
 
 test('rapid activation and per-file Retry cannot submit overlapping retries', async ({ page }) => {
-  await desktopFixture(page, { holdRetry: true, transfers: [job('first'), job('second')] }); await ready(page);
+  await desktopFixture(page, { holdRetry: true, transfers: [job('first'), job('second')] }); await openTransfers(page);
   await retryAll(page).evaluate(element => { (element as HTMLButtonElement).click(); (element as HTMLButtonElement).click(); });
   await expect.poll(async () => (await nativeCalls(page, command)).length).toBe(1);
   await expect(retryAll(page)).toBeDisabled();
@@ -67,7 +74,7 @@ test('rapid activation and per-file Retry cannot submit overlapping retries', as
 
 test('a failed request does not prevent later failures from being queued', async ({ page }) => {
   const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
-  await desktopFixture(page, { failRetryIds: ['broken'], transfers: [job('first'), job('broken'), job('last')] }); await ready(page);
+  await desktopFixture(page, { failRetryIds: ['broken'], transfers: [job('first'), job('broken'), job('last')] }); await openTransfers(page);
   await retryAll(page).click();
   await expect(page.getByText('Queued: 2 · Skipped: 0 · Failed: 1 · Not attempted: 0', { exact: true })).toBeVisible();
   await expect(retryAll(page)).toBeEnabled();
@@ -76,7 +83,7 @@ test('a failed request does not prevent later failures from being queued', async
 });
 
 test('a batch respects cancellation, removal, and failures arriving after its snapshot', async ({ page }) => {
-  await desktopFixture(page, { holdRetry: true, transfers: [job('cancelled-during-request'), job('removed'), job('new-failure', 'uploading')] }); await ready(page);
+  await desktopFixture(page, { holdRetry: true, transfers: [job('cancelled-during-request'), job('removed'), job('new-failure', 'uploading')] }); await openTransfers(page);
   await retryAll(page).click();
   await expect.poll(async () => (await nativeCalls(page, command)).length).toBe(1);
   await page.evaluate(() => {
@@ -94,7 +101,7 @@ test('a batch respects cancellation, removal, and failures arriving after its sn
 });
 
 test('an account change stops the old batch and cannot retry the new account work', async ({ page }) => {
-  await desktopFixture(page, { holdRetry: true, transfers: [job('first'), job('second'), job('new-owner', 'failed', { ownerId: '202' })] }); await ready(page);
+  await desktopFixture(page, { holdRetry: true, transfers: [job('first'), job('second'), job('new-owner', 'failed', { ownerId: '202' })] }); await openTransfers(page);
   await retryAll(page).click(); await expect.poll(async () => (await nativeCalls(page, command)).length).toBe(1);
   await page.evaluate(() => { (window as any).__desktopTest.owner = '202'; document.dispatchEvent(new Event('visibilitychange')); });
   await expect(page.getByText('Work folder photo.jpg', { exact: true })).toBeVisible();
@@ -107,7 +114,7 @@ test('an account change stops the old batch and cannot retry the new account wor
 
 for (const action of ['Pause', 'Cancel']) {
   test(`${action} during retry stops the remaining batch before controlling the queue`, async ({ page }) => {
-    await desktopFixture(page, { holdRetry: true, transfers: [job('first'), job('second'), job('active', 'uploading')] }); await ready(page);
+    await desktopFixture(page, { holdRetry: true, transfers: [job('first'), job('second'), job('active', 'uploading')] }); await openTransfers(page);
     await retryAll(page).click(); await expect.poll(async () => (await nativeCalls(page, command)).length).toBe(1);
     await page.getByRole('button', { name: `${action} Uploads`, exact: true }).click();
     await release(page);
@@ -120,7 +127,7 @@ for (const action of ['Pause', 'Cancel']) {
 }
 
 test('protected retries receive fresh per-file tokens and cancellation stops remaining prompts', async ({ page }) => {
-  await desktopFixture(page, { transfers: [job('secret-a', 'failed', { protectionMode: 'passphrase', protectMetadata: true }), job('secret-b', 'failed', { protectionMode: 'vault_and_passphrase' }), job('secret-c', 'failed', { protectionMode: 'passphrase' }), job('later')] }); await ready(page);
+  await desktopFixture(page, { transfers: [job('secret-a', 'failed', { protectionMode: 'passphrase', protectMetadata: true }), job('secret-b', 'failed', { protectionMode: 'vault_and_passphrase' }), job('secret-c', 'failed', { protectionMode: 'passphrase' }), job('later')] }); await openTransfers(page);
   await retryAll(page).click();
   for (let index = 0; index < 2; index++) {
     const disclaimer = page.getByRole('dialog', { name: 'Keep your encryption credentials safe', exact: true });

@@ -155,7 +155,7 @@ const expectedCatalogs = fs.readdirSync(path.join(appRoot, 'src/i18n/locales'))
   .filter(file => file.endsWith('.json'));
 const dictionaries = localeData.filter(asset => /^assets\/translation-keys-[^/]+\.json$/.test(asset.file));
 const catalogs = localeData.filter(asset => !dictionaries.includes(asset));
-const packedCatalogs = catalogs.filter(asset => JSON.parse(fs.readFileSync(path.join(distRoot, asset.file), 'utf8')).format === 'td-locale-v1');
+const packedCatalogs = catalogs.filter(asset => JSON.parse(fs.readFileSync(path.join(distRoot, asset.file), 'utf8')).format === 'td-locale-v2');
 if (catalogs.length !== expectedCatalogs.length) {
   fail(`Expected ${expectedCatalogs.length} locally bundled language catalogs, found ${catalogs.length}.`);
 }
@@ -165,10 +165,11 @@ if (expectedCatalogs.length && (packedCatalogs.length !== expectedCatalogs.lengt
 if (!packedCatalogs.length && dictionaries.length) fail('A language key table has no packed catalogs.');
 if (packedCatalogs.length && dictionaries.length === 1) {
   const table = JSON.parse(fs.readFileSync(path.join(distRoot, dictionaries[0].file), 'utf8'));
-  const validTable = table.format === 'td-keys-v1' && Array.isArray(table.keys)
+  const validTable = table.format === 'td-keys-v2' && Array.isArray(table.keys)
     && table.keys.every(key => typeof key === 'string' && key && key.split('.').every(part => part && !['__proto__', 'prototype', 'constructor'].includes(part)))
+    && Array.isArray(table.shared) && table.shared.every(value => typeof value === 'string')
     && new Set(table.keys).size === table.keys.length
-    && table.id === crypto.createHash('sha256').update(JSON.stringify(table.keys)).digest('hex');
+    && table.id === crypto.createHash('sha256').update(JSON.stringify([table.keys, table.shared])).digest('hex');
   if (!validTable) fail('Invalid packed language key table.');
   else {
     function flatten(value, prefix = '', result = {}) {
@@ -183,11 +184,11 @@ if (packedCatalogs.length && dictionaries.length === 1) {
       const matching = packedCatalogs.filter(asset => path.basename(asset.file).startsWith(filename.slice(0, -5) + '-'));
       if (matching.length !== 1) { fail(`Packed canonical language ${filename} resolved to ${matching.length} assets.`); continue; }
       const packet = JSON.parse(fs.readFileSync(path.join(distRoot, matching[0].file), 'utf8'));
-      if (packet.language !== filename.slice(0, -5) || packet.id !== table.id || !Array.isArray(packet.values) || packet.values.length !== table.keys.length || packet.values.some(value => value !== null && typeof value !== 'string')) {
+      if (packet.language !== filename.slice(0, -5) || packet.id !== table.id || !Array.isArray(packet.values) || packet.values.length !== table.keys.length || packet.values.some(value => value !== null && typeof value !== 'string' && !(Number.isSafeInteger(value) && value >= 0 && value < table.shared.length))) {
         fail(`Packed canonical language ${filename} has an invalid shape.`); continue;
       }
       const source = flatten(JSON.parse(fs.readFileSync(path.join(appRoot, 'src/i18n/locales', filename), 'utf8')));
-      const actual = Object.fromEntries(table.keys.flatMap((key, index) => packet.values[index] === null ? [] : [[key, packet.values[index]]]));
+      const actual = Object.fromEntries(table.keys.flatMap((key, index) => packet.values[index] === null ? [] : [[key, typeof packet.values[index] === 'number' ? table.shared[packet.values[index]] : packet.values[index]]]));
       if (Object.keys(source).length !== Object.keys(actual).length || Object.entries(source).some(([key, value]) => actual[key] !== value)) {
         fail(`Packed canonical language ${filename} differs from its source.`);
       }
@@ -196,6 +197,7 @@ if (packedCatalogs.length && dictionaries.length === 1) {
 }
 // Dictionary bytes remain in totalLocaleDataBytes and maxLocaleDataBytes. The
 // decoder remains in normal initial/total JavaScript accounting.
+
 
 
 for (const [label, actual, maximum] of checks) {

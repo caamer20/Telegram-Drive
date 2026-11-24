@@ -23,6 +23,7 @@ const LIST_ROW_HEIGHT = quietMetrics.listRowHeight.desktop;
 interface FileExplorerProps {
     files: TelegramFile[];
     loading: boolean;
+    showEmptyFolder?: boolean;
     error: Error | null;
     viewMode: 'grid' | 'list';
     selectedIds: number[];
@@ -83,7 +84,7 @@ function useGridColumns(containerRef: React.RefObject<HTMLDivElement | null>) {
 }
 
 export function FileExplorer({
-    files, loading, error, viewMode, selectedIds, activeFolderId,
+    files, loading, showEmptyFolder = true, error, viewMode, selectedIds, activeFolderId,
     onFileClick, onDelete, onDownload, onPreview, onManualUpload, onFolderUpload, showFolderUpload, onToggleSelection, onShare, onRename, onFileMove,
     folders, cardScale, sortField, sortDirection, onSortChange, onToggleFavorite, onTogglePinned, syncProgress, selectionDisabled = false
 }: FileExplorerProps) {
@@ -220,6 +221,7 @@ export function FileExplorer({
     }
 
     if (files.length === 0) {
+        if (!showEmptyFolder) return null;
         return (
             <div className="flex-1 overflow-auto p-3">
                 <EmptyState onUpload={onManualUpload} />

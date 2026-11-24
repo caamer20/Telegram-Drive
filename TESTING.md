@@ -2,9 +2,17 @@
 
 Behavioral regression testing uses E2E suites. New tests must exercise an application boundary and a meaningful user or service journey. Isolated function/component assertions, inline Rust unit modules, and Android JVM unit suites are retired. Historical review reports describe the checks available at the time; this document defines the current workflow.
 
+Release-tool E2E checks use OpenSSL to create a temporary loopback TLS certificate. On Windows, Git for Windows can supply OpenSSL.
+
+## Automatic CI coverage
+
+On application changes, End-to-end and bundle assurance runs the complete Chromium suite (including visual journeys), Worker HTTP suite, release-tool checks, bundle budgets and Linux native E2Es. Desktop sync CI builds each platform and runs its Windows and macOS native suites. The localization workflow verifies catalogs and UI literals. The Visual regression workflow can be dispatched for visual journeys alone. A manual Supporter Service deployment verifies the Worker again before deployment. Release tags have their own verification before publication.
+
+A settings-sync round trip covers the video filename-caption preference. Its optional field is inside the encrypted v1 payload. Older readers can restore the preferences they recognize, and older backups leave the device’s caption choice in place.
+
 ## Host verification
 
-Install JavaScript dependencies in `app/` and `supporter-service/`, the normal native build prerequisites, FFmpeg on each desktop platform for video upload journeys, and Playwright Chromium:
+Using Node 22.20+ on the 22.x line or 24.12+ on the 24.x line, install JavaScript dependencies in `app/` and `supporter-service/`, the normal native build prerequisites, FFmpeg on each desktop platform for video upload journeys, and Playwright Chromium:
 
 ```sh
 npm ci --prefix app

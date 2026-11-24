@@ -27,6 +27,7 @@ export interface Settings {
   language: LanguagePreference;
   crashReportingEnabled: boolean;
   crashReportingConsentSeen: boolean;
+  crashReportingConsentId?: string;
   telegramSettingsSyncEnabled: boolean;
   supporterMode: boolean;
   supporterPromptLastShownAt: number;

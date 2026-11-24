@@ -1625,5 +1625,18 @@
     "this_device": "wysłana przez to urządzenie",
     "other_device": "wysłana przez inne urządzenie",
     "none": "Nie znaleziono zaszyfrowanej kopii ustawień w ostatnich 1,000 Zapisanych wiadomościach."
+  },
+  "action_errors": {
+    "credentials": "Sprawdź API ID i API Hash.",
+    "disabled": "Telegram wyłączył ten API ID. Utwórz nowe dane dostępowe API.",
+    "phone": "Sprawdź numer telefonu i numer kierunkowy kraju.",
+    "banned": "Telegram zablokował ten numer telefonu.",
+    "register": "Najpierw zarejestruj ten numer w oficjalnej aplikacji Telegram.",
+    "code": "Sprawdź kod logowania i spróbuj ponownie.",
+    "expired": "Kod wygasł. Poproś o nowy.",
+    "password": "Nie udało się zweryfikować hasła.",
+    "verify_bundle": "Sprawdź hasło i swoją kopię pakietu.",
+    "replace_keys": "W pakiecie brakuje kluczy. Zastąpienie sejfu może uniemożliwić odczyt plików, które ich używają. Kontynuować?",
+    "file_limit": "Plik przekracza limit rozmiaru Telegrama. Podziel go przed wysłaniem."
   }
 }

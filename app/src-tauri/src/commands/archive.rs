@@ -31,13 +31,13 @@ pub struct ExtractedFile {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-enum ArchiveType {
+pub(crate) enum ArchiveType {
     Zip,
     Rar,
     SevenZ,
 }
 
-fn detect_archive_type(filename: &str) -> ArchiveType {
+pub(crate) fn detect_archive_type(filename: &str) -> ArchiveType {
     let lower = filename.to_lowercase();
     if lower.ends_with(".rar") {
         ArchiveType::Rar
@@ -72,7 +72,8 @@ pub async fn cmd_list_archive_contents(
     state: State<'_, TelegramState>,
     net_config: State<'_, Arc<NetworkConfig>>,
 ) -> Result<Vec<ArchiveEntry>, String> {
-    match archive_operation(message_id, folder_id, None, &app, &state, &net_config).await? {
+    let source = download_archive(message_id, folder_id, &app, &state, &net_config).await?;
+    match archive_operation(Arc::new(source), None).await? {
         ArchiveOutput::Entries(entries) => Ok(entries),
         ArchiveOutput::Extracted(_) => Err("Unexpected extraction result".into()),
     }
@@ -89,19 +90,86 @@ pub async fn cmd_extract_archive_entry(
     state: State<'_, TelegramState>,
     net_config: State<'_, Arc<NetworkConfig>>,
 ) -> Result<ExtractedFile, String> {
-    match archive_operation(
+    let source = download_archive(message_id, folder_id, &app, &state, &net_config).await?;
+    Arc::new(source).extract(entry_index).await
+}
+
+/// An in-flight download also belongs to its originating document. When a
+/// reload retires this marker a late download drops its scratch instead of
+/// publishing a new resource to the replacement document.
+pub(crate) struct OpeningArchive;
+impl tauri::Resource for OpeningArchive {}
+
+pub(crate) fn finish_archive_batch(
+    table: &mut tauri::ResourceTable,
+    opening_id: u32,
+    result: Result<ArchiveBatch, String>,
+) -> Result<u32, String> {
+    table
+        .take::<OpeningArchive>(opening_id)
+        .map_err(|_| "Archive viewer closed".to_string())?;
+    Ok(table.add(result?))
+}
+
+pub(crate) fn release_document_archives(table: &mut tauri::ResourceTable) {
+    let archive_ids: Vec<_> = table
+        .names()
+        .filter(|(_, name)| {
+            name == std::any::type_name::<ArchiveBatch>()
+                || name == std::any::type_name::<OpeningArchive>()
+        })
+        .map(|(id, _)| id)
+        .collect();
+    for id in archive_ids {
+        let _ = table.close(id);
+    }
+}
+
+#[tauri::command]
+pub async fn cmd_open_archive_batch(
+    message_id: i32,
+    folder_id: Option<i64>,
+    webview: tauri::Webview,
+    state: State<'_, TelegramState>,
+    net_config: State<'_, Arc<NetworkConfig>>,
+) -> Result<u32, String> {
+    let opening_id = webview.resources_table().add(OpeningArchive);
+    let batch = download_archive(
         message_id,
         folder_id,
-        Some(entry_index),
-        &app,
+        webview.app_handle(),
         &state,
         &net_config,
     )
-    .await?
-    {
-        ArchiveOutput::Extracted(extracted) => Ok(extracted),
-        ArchiveOutput::Entries(_) => Err("Unexpected listing result".into()),
+    .await;
+    finish_archive_batch(&mut webview.resources_table(), opening_id, batch)
+}
+
+#[tauri::command]
+pub async fn cmd_extract_archive_batch_entry(
+    batch_id: u32,
+    entry_index: usize,
+    webview: tauri::Webview,
+) -> Result<ExtractedFile, String> {
+    let batch = webview
+        .resources_table()
+        .get::<ArchiveBatch>(batch_id)
+        .map_err(|error| error.to_string())?;
+    let output = batch.extract(entry_index).await?;
+    if !webview.resources_table().has(batch_id) {
+        crate::temp_artifacts::delete_registered(std::path::Path::new(&output.temp_path))?;
+        return Err("Archive viewer closed".into());
     }
+    Ok(output)
+}
+
+#[tauri::command]
+pub fn cmd_close_archive_batch(batch_id: u32, webview: tauri::Webview) -> Result<(), String> {
+    webview
+        .resources_table()
+        .take::<ArchiveBatch>(batch_id)
+        .map(drop)
+        .map_err(|error| error.to_string())
 }
 
 // ── Shared preparation ──────────────────────────────────────────────────
@@ -437,46 +505,35 @@ fn zip_entries(archive: &mut zip::ZipArchive<std::fs::File>) -> Result<Vec<Archi
     validate_archive_entries(&entries)?;
     Ok(entries)
 }
-pub(crate) async fn zip_from_chunks<S>(
-    download: S,
-    setup: ArchiveDownload,
+fn zip_operation(
+    path: &Path,
+    setup: &ArchiveDownload,
     entry: Option<usize>,
-    filename: String,
-) -> Result<ArchiveOutput, String>
-where
-    S: futures::Stream<Item = Result<bytes::Bytes, String>>,
-{
-    let staging = stage_archive_chunks(download, &setup, "zip").await?;
-    let publish_account = setup.account.clone();
-    let pending = tokio::task::spawn_blocking(move || {
-        validate_account(&setup.account)?;
-        let file = std::fs::File::open(&staging.archive_path).map_err(|error| error.to_string())?;
-        let mut archive = zip::ZipArchive::new(file)
-            .map_err(|error| format!("Failed to parse ZIP file: {error}"))?;
-        let entries = zip_entries(&mut archive)?;
-        check_non_empty(&entries, &filename, "ZIP")?;
-        if let Some(index) = entry {
-            let file = archive.by_index(index).map_err(|error| error.to_string())?;
-            if file.is_dir() {
-                return Err("Cannot extract a directory entry".into());
-            }
-            let name = sanitise_entry_name(
-                file.name()
-                    .map_err(|error| format!("Invalid ZIP entry name: {error}"))?
-                    .as_ref(),
-                index,
-            );
-            let size = file.size();
-            extract_reader(file, &setup.root, name, size, &setup.account)
-                .map(PendingOutput::Extracted)
-        } else {
-            validate_account(&setup.account)?;
-            Ok(PendingOutput::Entries(entries))
+    filename: &str,
+) -> Result<PendingOutput, String> {
+    validate_account(&setup.account)?;
+    let file = std::fs::File::open(path).map_err(|error| error.to_string())?;
+    let mut archive =
+        zip::ZipArchive::new(file).map_err(|error| format!("Failed to parse ZIP file: {error}"))?;
+    let entries = zip_entries(&mut archive)?;
+    check_non_empty(&entries, filename, "ZIP")?;
+    if let Some(index) = entry {
+        let file = archive.by_index(index).map_err(|error| error.to_string())?;
+        if file.is_dir() {
+            return Err("Cannot extract a directory entry".into());
         }
-    })
-    .await
-    .map_err(|error| format!("ZIP operation task failed: {error}"))??;
-    pending.publish(&publish_account)
+        let name = sanitise_entry_name(
+            file.name()
+                .map_err(|error| format!("Invalid ZIP entry name: {error}"))?
+                .as_ref(),
+            index,
+        );
+        let size = file.size();
+        extract_reader(file, &setup.root, name, size, &setup.account).map(PendingOutput::Extracted)
+    } else {
+        validate_account(&setup.account)?;
+        Ok(PendingOutput::Entries(entries))
+    }
 }
 
 fn sevenz_operation(
@@ -487,51 +544,96 @@ fn sevenz_operation(
 ) -> Result<PendingOutput, String> {
     validate_account(&setup.account)?;
     let archive = sevenz_rust2::Archive::open(path).map_err(|error| error.to_string())?;
-    let entries = archive
-        .files
-        .iter()
-        .map(|file| ArchiveEntry {
-            filename: file.name().into(),
-            size: file.size,
-            compressed_size: file.compressed_size,
-            is_dir: file.is_directory,
-        })
-        .collect::<Vec<_>>();
-    validate_archive_entries(&entries)?;
+    let entries = sevenz_entries(&archive)?;
     check_non_empty(&entries, filename, "7z")?;
     let Some(target) = index else {
         return Ok(PendingOutput::Entries(entries));
     };
-    let file = std::fs::File::open(path).map_err(|error| error.to_string())?;
-    let length = file.metadata().map_err(|error| error.to_string())?.len();
-    let mut reader = sevenz_rust2::SevenZReader::new(file, length, [].as_slice().into())
-        .map_err(|error| error.to_string())?;
-    let mut current = 0usize;
-    let mut extracted = None;
-    reader
-        .for_each_entries(|entry, input| {
-            let index = current;
-            current += 1;
-            validate_account(&setup.account).map_err(sevenz_rust2::Error::other)?;
-            if index != target {
+    read_sevenz_member(
+        path,
+        &archive,
+        target,
+        || validate_account(&setup.account),
+        |entry, input| {
+            let name = sanitise_entry_name(entry.name(), target);
+            extract_reader(input, &setup.root, name, entry.size, &setup.account)
+                .map(PendingOutput::Extracted)
+        },
+    )
+}
+
+fn sevenz_entries(archive: &sevenz_rust2::Archive) -> Result<Vec<ArchiveEntry>, String> {
+    if archive.files.len() > MAX_ARCHIVE_ENTRIES {
+        return Err(format!(
+            "Archive contains more than {MAX_ARCHIVE_ENTRIES} entries"
+        ));
+    }
+    let entries = archive
+        .files
+        .iter()
+        .map(|entry| ArchiveEntry {
+            filename: entry.name().to_owned(),
+            size: entry.size,
+            compressed_size: entry.compressed_size,
+            is_dir: entry.is_directory,
+        })
+        .collect::<Vec<_>>();
+    validate_archive_entries(&entries)?;
+    Ok(entries)
+}
+
+/// A solid block shares a decoder between its members. Consume preceding
+/// members in that block so the selected file starts at its own byte offset.
+fn read_sevenz_member<T>(
+    path: &std::path::Path,
+    archive: &sevenz_rust2::Archive,
+    index: usize,
+    validate_owner: impl Fn() -> Result<(), String>,
+    mut extract: impl FnMut(&sevenz_rust2::SevenZArchiveEntry, &mut dyn Read) -> Result<T, String>,
+) -> Result<T, String> {
+    let target = archive
+        .files
+        .get(index)
+        .ok_or("Archive entry index not found")?;
+    if target.is_directory {
+        return Err("Cannot extract a directory entry".into());
+    }
+    validate_owner()?;
+    if !target.has_stream {
+        return extract(target, &mut std::io::empty());
+    }
+    let block = archive
+        .stream_map
+        .file_folder_index
+        .get(index)
+        .copied()
+        .flatten()
+        .ok_or("Missing 7z data block")?;
+    let mut source = std::fs::File::open(path).map_err(|error| error.to_string())?;
+    let mut output = None;
+    sevenz_rust2::BlockDecoder::new(block, archive, &[], &mut source)
+        .for_each_entries(&mut |entry, input| {
+            validate_owner().map_err(sevenz_rust2::Error::other)?;
+            if std::ptr::eq(entry, target) {
+                output = Some(extract(entry, input).map_err(sevenz_rust2::Error::other)?);
+                return Ok(false);
+            }
+            if !entry.has_stream {
                 return Ok(true);
             }
-            if entry.is_directory {
+            if entry.size > MAX_ARCHIVE_ENTRY_BYTES {
                 return Err(sevenz_rust2::Error::other(
-                    "Cannot extract a directory entry",
+                    "Archive entry exceeds the extraction size limit",
                 ));
             }
-            let name = sanitise_entry_name(entry.name(), index);
-            extracted = Some(
-                extract_reader(input, &setup.root, name, entry.size, &setup.account)
-                    .map_err(sevenz_rust2::Error::other)?,
-            );
-            Ok(false)
+            let copied = std::io::copy(&mut input.take(entry.size + 1), &mut std::io::sink())?;
+            if copied != entry.size {
+                return Err(sevenz_rust2::Error::other("7z entry size mismatch"));
+            }
+            Ok(true)
         })
-        .map_err(|error| error.to_string())?;
-    extracted
-        .map(PendingOutput::Extracted)
-        .ok_or_else(|| "Archive entry index not found".into())
+        .map_err(|error| format!("7z extraction failed: {error}"))?;
+    output.ok_or_else(|| "Archive entry index not found".into())
 }
 
 #[cfg(not(target_os = "android"))]
@@ -604,14 +706,13 @@ fn rar_operation(
     Err("Archive entry index not found".into())
 }
 
-async fn archive_operation(
+async fn download_archive(
     message: i32,
     folder: Option<i64>,
-    entry: Option<usize>,
     app: &tauri::AppHandle,
     state: &TelegramState,
     config: &Arc<NetworkConfig>,
-) -> Result<ArchiveOutput, String> {
+) -> Result<ArchiveBatch, String> {
     let account = AccountGuard::open(
         &app.path()
             .app_data_dir()
@@ -645,27 +746,71 @@ async fn archive_operation(
         reservation,
         expected,
     );
-    if kind == ArchiveType::Zip {
-        return zip_from_chunks(download, setup, entry, filename).await;
-    }
     #[cfg(target_os = "android")]
     if kind == ArchiveType::Rar {
         return Err("RAR archives are not supported on Android".into());
     }
-    let extension = if kind == ArchiveType::Rar {
-        "rar"
-    } else {
-        "7z"
-    };
-    let staging = stage_archive_chunks(download, &setup, extension).await?;
-    let publish_account = setup.account.clone();
+    ArchiveBatch::stage(download, setup, filename, kind).await
+}
+
+/// A single private source remains available until its webview finishes the batch.
+/// The original account guard also fences each later access after a session change.
+pub(crate) struct ArchiveBatch {
+    staging: ArchiveStaging,
+    setup: ArchiveDownload,
+    filename: String,
+    kind: ArchiveType,
+}
+impl tauri::Resource for ArchiveBatch {}
+
+impl ArchiveBatch {
+    pub(crate) async fn stage<S>(
+        download: S,
+        setup: ArchiveDownload,
+        filename: String,
+        kind: ArchiveType,
+    ) -> Result<Self, String>
+    where
+        S: futures::Stream<Item = Result<bytes::Bytes, String>>,
+    {
+        let extension = match kind {
+            ArchiveType::Zip => "zip",
+            ArchiveType::Rar => "rar",
+            ArchiveType::SevenZ => "7z",
+        };
+        let staging = stage_archive_chunks(download, &setup, extension).await?;
+        Ok(Self {
+            staging,
+            setup,
+            filename,
+            kind,
+        })
+    }
+
+    pub(crate) async fn extract(self: Arc<Self>, index: usize) -> Result<ExtractedFile, String> {
+        match archive_operation(self, Some(index)).await? {
+            ArchiveOutput::Extracted(entry) => Ok(entry),
+            ArchiveOutput::Entries(_) => Err("Unexpected listing result".into()),
+        }
+    }
+}
+
+pub(crate) async fn archive_operation(
+    source: Arc<ArchiveBatch>,
+    entry: Option<usize>,
+) -> Result<ArchiveOutput, String> {
+    let publish_account = source.setup.account.clone();
+    validate_account(&publish_account)?;
     let pending = tokio::task::spawn_blocking(move || {
-        if kind == ArchiveType::SevenZ {
-            sevenz_operation(&staging.archive_path, &setup, entry, &filename)
+        let path = &source.staging.archive_path;
+        if source.kind == ArchiveType::Zip {
+            zip_operation(path, &source.setup, entry, &source.filename)
+        } else if source.kind == ArchiveType::SevenZ {
+            sevenz_operation(path, &source.setup, entry, &source.filename)
         } else {
             #[cfg(not(target_os = "android"))]
             {
-                rar_operation(&staging.archive_path, &setup, entry, &filename)
+                rar_operation(path, &source.setup, entry, &source.filename)
             }
             #[cfg(target_os = "android")]
             {

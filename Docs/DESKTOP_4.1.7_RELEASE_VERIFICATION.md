@@ -105,3 +105,7 @@ and Azure platform-signing credentials is unchanged.
 The reporter's exact Windows 10 video, manual installed-platform upgrades,
 live Telegram and PayPal sandbox acceptance are not claimed by these controlled
 tests. Android device acceptance is outside this desktop release.
+
+## Service source follow-up on 2026-11-23
+
+The [Worker release record](SUPPORTER_WORKER_RELEASE.md) identifies the authoritative service candidate and the production version verified by the maintainer against the compiled JavaScript. The health and public-key result above was recorded for the desktop release.

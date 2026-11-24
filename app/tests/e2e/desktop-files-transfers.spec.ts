@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { readFileSync } from 'node:fs';
 import { desktopFixture, nativeCalls } from './desktop-413-fixture';
 
 // All journeys use the shipped App/provider tree. Only native/Tauri transport
@@ -209,17 +210,37 @@ test('file filter shortcuts toggle the existing filter panel and keep its outsid
 });
 
 test('focused toolbar controls handle Enter without opening the selected file', async ({ page }) => {
-  await desktopFixture(page);
+  const es = JSON.parse(readFileSync(new URL('../../src/i18n/locales/es.json', import.meta.url), 'utf8'));
+  await desktopFixture(page, { settings: { language: 'es' } });
   await ready(page);
   await page.getByRole('group', { name: 'Photos', exact: true }).getByText('Photos', { exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Photos', exact: true })).toBeVisible();
   await page.getByText('Holiday folder photo.jpg', { exact: true }).click();
-  await page.getByRole('button', { name: 'Switch to Grid', exact: true }).focus();
+  const fileActions = page.getByRole('button', { name: es.workspace.file_actions.replace('{{name}}', 'Holiday folder photo.jpg'), exact: true });
+  await fileActions.focus();
+  await page.keyboard.press('F2');
+  const renameFile = page.getByRole('dialog', { name: es.files.rename_file, exact: true });
+  const fileName = renameFile.getByRole('textbox', { name: es.files.file_name, exact: true });
+  await expect(fileName).toBeFocused();
+  await expect(fileName).toHaveValue('Holiday folder photo.jpg');
+  await renameFile.getByRole('button', { name: es.common.close, exact: true }).click();
+  await expect(renameFile).toHaveCount(0);
+  await expect(fileActions).toBeFocused();
+  expect(await nativeCalls(page, 'cmd_rename_file')).toHaveLength(0);
+  await page.getByRole('button', { name: es.files.switch_grid, exact: true }).focus();
   await page.keyboard.press('Enter');
   await expect(page.getByRole('group', { name: 'Holiday folder photo.jpg', exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Close preview', exact: true })).toHaveCount(0);
-  await page.getByRole('button', { name: 'Move to...', exact: true }).focus();
+  await expect(page.getByRole('button', { name: es.viewer.close_preview, exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: es.files.move_to, exact: true }).focus();
   await page.keyboard.press('Enter');
   await expect(page.getByRole('dialog')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Close preview', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: es.viewer.close_preview, exact: true })).toHaveCount(0);
+  await page.keyboard.press('Escape');
+
+  await page.getByRole('button', { name: es.files.folder_settings, exact: true }).click();
+  await page.getByRole('button', { name: es.files.rename, exact: true }).click();
+  const renameFolder = page.getByRole('dialog', { name: es.files.rename_folder, exact: true });
+  await expect(renameFolder.getByRole('textbox', { name: es.files.folder_name, exact: true })).toBeFocused();
+  await renameFolder.getByRole('button', { name: es.common.close, exact: true }).click();
+  await expect(renameFolder).toHaveCount(0);
 });

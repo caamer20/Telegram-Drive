@@ -5,6 +5,8 @@ The supporter feature in supported desktop and Android builds is backed by a Clo
 > [!IMPORTANT]
 > The $5 one-time lifetime ad-free promise is a protected compatibility contract. Before changing this service, entitlement handling, advertisement visibility, secure storage, or release configuration, read [the supporter license invariants](SUPPORTER_LICENSE_INVARIANTS.md). Existing purchasers must retain their entitlement across updates and must never be required to pay again because of a refactor, refresh, outage, or backup failure.
 
+For the source revision, required migrations and production deployment evidence, see the [Worker release record](Docs/SUPPORTER_WORKER_RELEASE.md).
+
 ## Security and privacy model
 
 - PayPal credentials, the webhook ID, the Ed25519 private JWK, and recovery-code keys are Cloudflare Worker secrets and must never be committed or placed in GitHub variables.
@@ -27,6 +29,12 @@ npx wrangler deploy --dry-run
 ```
 
 The E2E suite drives the production Worker through local HTTP with migrated D1 and a controlled PayPal transport. It does not make real purchases or mutate production state. See [TESTING.md](TESTING.md) for the project testing policy and external-service acceptance requirements.
+
+### Recovery-code receipt on this device
+
+A newly completed purchase saves the permanent recovery credential under its existing identifier. The app also saves a pending receipt in secure storage under `pending-recovery-receipt-v1`. Open lifetime license settings to read the receipt after restarting, keep an offline copy, then select **Confirm**. If a crash interrupted the activation-file write, you can still read the securely saved receipt while the original claim retries. Confirmation becomes available after the activation is committed. Confirmation clears only the pending copy. Restoring another purchase does not overwrite an outstanding receipt. No code is written to WebView storage or the entitlement JSON.
+
+The Worker’s existing delivery acknowledgement follows durable local storage. If the pending receipt cannot be stored, the verified entitlement remains active and the original checkout claim stays available for a delivery retry. Human confirmation is local and works offline. Existing installations without a pending receipt continue using their saved credentials and activation. A rollback to an earlier build keeps the permanent credential; reinstalling a receipt-aware build can show the pending copy again.
 
 ## Required Cloudflare configuration
 
@@ -68,7 +76,7 @@ The release workflow passes them to Rust as `TELEGRAM_DRIVE_SUPPORTER_SERVICE_UR
 
 Before publishing a supported application release:
 
-1. Confirm `/health` returns the expected terms version, price, device limit, and public key.
+1. From the repository root, run `node scripts/check-supporter-release.cjs` with the candidate’s `TELEGRAM_DRIVE_SUPPORTER_SERVICE_URL` and `TELEGRAM_DRIVE_SUPPORTER_PUBLIC_KEY`. It makes one HTTPS GET to the origin’s `/health` and checks the native and published terms version, exact price and currency, device allowance, and signing public key. A redirect, mismatch, or timeout stops release. Retry after service recovery using the same build inputs.
 2. Complete an ASCII and Unicode PayPal sandbox payer checkout.
 3. Confirm each supported test build displays and securely saves the recovery code.
 4. Restart and update the app; verify it remains ad-free without reactivation.

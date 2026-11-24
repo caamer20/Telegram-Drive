@@ -1,3 +1,4 @@
+import { signInErrorKey } from './auth/signInError';
 import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { motion } from "framer-motion";
@@ -194,7 +195,7 @@ export function AuthWizard({ onLogin }: { onLogin: () => void }) {
         setLoading(true);
         try {
             const idInt = parseInt(apiId, 10);
-            if (isNaN(idInt)) throw new Error(t('auth_copy.id_number'));
+            if (Number.isNaN(idInt)) { setError(t('auth_copy.id_number')); return; }
 
             const url = await invoke<string>("cmd_auth_qr_login", {
                 apiId: idInt,
@@ -209,7 +210,7 @@ export function AuthWizard({ onLogin }: { onLogin: () => void }) {
             setQrUrl(url);
             setQrPolling(true);
         } catch (err: unknown) {
-            setError(err instanceof Error ? err.message : String(err));
+            handleAuthError(err);
         } finally {
             setLoading(false);
         }
@@ -267,7 +268,23 @@ export function AuthWizard({ onLogin }: { onLogin: () => void }) {
             setFloodWait(Number.parseInt(floodMatch[1], 10));
             return;
         }
-        setError(message);
+        const wait = message.match(/^The code can be resent in (\d+) seconds\.$/);
+        if (wait) {
+            setResendWait(Number(wait[1]));
+            return;
+        }
+        const key = signInErrorKey(message);
+        if (key === 'action_errors.expired' && /No (?:active phone login|password session found)/i.test(message)) {
+            setCode('');
+            setPassword('');
+            setCodeDelivery(null);
+            setResendWait(0);
+            setQrPolling(false);
+            setQrUrl(null);
+            setLoginMethod('phone');
+            setStep('phone');
+        }
+        setError(t(key));
     };
 
     const handlePhoneSubmit = async (e: React.FormEvent) => {
@@ -276,7 +293,7 @@ export function AuthWizard({ onLogin }: { onLogin: () => void }) {
         setError(null);
         try {
             const idInt = parseInt(apiId, 10);
-            if (isNaN(idInt)) throw new Error(t('auth_copy.id_number'));
+            if (Number.isNaN(idInt)) { setError(t('auth_copy.id_number')); return; }
 
             const codeRequest = await invoke<CodeRequestResult>("cmd_auth_request_code", {
                 phone,

@@ -31,25 +31,19 @@ async function accentContrast(page: Page) {
 
 // Real App/providers/settings UI, with only native/service boundaries controlled.
 // This does not validate native theme notifications, credential storage or installed-app restart.
-test('all built-in presets remain selectable, preserve their IDs and use readable accent labels', async ({ page }) => {
-  await desktopFixture(page); await page.goto('/'); await openSettings(page); await themes(page);
+async function selectPresets(page: Page, performanceMode: boolean) {
   for (const [id, name] of presets) {
     const preset = settings(page).getByRole('button', { name, exact: true });
     await preset.click();
     await expect.poll(() => page.evaluate(() => localStorage.getItem('active-custom-theme-id'))).toBe(id);
-    expect(await accentContrast(page), `${name} accent label`).toBeGreaterThanOrEqual(4.5);
     await expect(preset).toHaveAttribute('aria-pressed', 'true');
+    expect(await accentContrast(page), `${name}, Performance Mode ${performanceMode}`).toBeGreaterThanOrEqual(4.5);
+    await expect.poll(() => page.locator('body').evaluate(element => element.classList.contains('performance-mode'))).toBe(performanceMode);
+    if (id === 'default-dark') {
+      await expect.poll(() => page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--color-app-border').trim())).toBe('rgba(255, 255, 255, 0.1)');
+    }
   }
-  await page.reload(); await openSettings(page); await themes(page);
-  await expect(settings(page).getByRole('button', { name: 'Sky', exact: true })).toHaveAttribute('aria-pressed', 'true');
-});
-
-test('selecting Default Dark preserves its translucent decorative border and the saved palette', async ({ page }) => {
-  await desktopFixture(page); await page.goto('/'); await openSettings(page); await themes(page);
-  await settings(page).getByRole('button', { name: 'Default Dark', exact: true }).click();
-  await expect.poll(() => page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--color-app-border').trim())).toBe('rgba(255, 255, 255, 0.1)');
-  expect(await accentContrast(page)).toBeGreaterThanOrEqual(4.5);
-});
+}
 
 for (const performanceMode of [false, true]) {
   test(`base modes and presets survive Performance Mode ${performanceMode ? 'on' : 'off'}`, async ({ page }) => {
@@ -65,20 +59,23 @@ for (const performanceMode of [false, true]) {
       await expect.poll(() => page.locator('body').evaluate(element => element.classList.contains('performance-mode'))).toBe(performanceMode);
     }
     await page.emulateMedia({ colorScheme: 'light' }); await expect(page.locator('html')).toHaveClass(/(^| )light( |$)/);
-    for (const [id, name] of presets) {
-      const preset = settings(page).getByRole('button', { name, exact: true });
-      await preset.click();
-      await expect.poll(() => page.evaluate(() => localStorage.getItem('active-custom-theme-id'))).toBe(id);
-      await expect(preset).toHaveAttribute('aria-pressed', 'true');
-      expect(await accentContrast(page), `${name}, Performance Mode ${performanceMode}`).toBeGreaterThanOrEqual(4.5);
-      await expect.poll(() => page.locator('body').evaluate(element => element.classList.contains('performance-mode'))).toBe(performanceMode);
-    }
+    await selectPresets(page, performanceMode);
     await page.reload(); await openSettings(page); await expect(performance).toHaveAttribute('aria-checked', String(performanceMode)); await themes(page);
     await expect(settings(page).getByRole('button', { name: 'Sky', exact: true })).toHaveAttribute('aria-pressed', 'true');
     await settings(page).getByRole('button', { name: 'Reset to Default', exact: true }).click();
     await expect(page.locator('html')).toHaveClass(/(^| )dark( |$)/);
     await expect.poll(() => page.evaluate(() => localStorage.getItem('active-custom-theme-id'))).toBe('');
     await expect.poll(() => page.evaluate(() => localStorage.getItem('theme-preference'))).toBe('default');
+    if (!performanceMode) {
+      await test.step('select and restore every preset with OS reduced motion and the default manual setting', async () => {
+        await page.emulateMedia({ reducedMotion: 'reduce', colorScheme: 'dark' });
+        await selectPresets(page, performanceMode);
+        await page.reload();
+        await openSettings(page);
+        await themes(page);
+        await expect(settings(page).getByRole('button', { name: 'Sky', exact: true })).toHaveAttribute('aria-pressed', 'true');
+      });
+    }
   });
 }
 
@@ -124,7 +121,18 @@ test('normal-motion rapid categories, close/reopen and nested explanation keep o
   for (const name of ['Themes', 'Privacy', 'Folder Sync', 'General', 'Themes', 'General']) await settings(page).getByRole('button', { name, exact: true }).click();
   await expect(settings(page).getByRole('switch', { name: 'Performance Mode', exact: true })).toBeVisible();
   await expect(settings(page).getByRole('button', { name: 'Create New Theme', exact: true })).toHaveCount(0);
-  await page.keyboard.press('Escape'); await expect(settings(page)).toBeHidden(); await openSettings(page);
+  await expect(page.locator('.settings-modal [data-ui-motion][aria-hidden="true"]')).toHaveCount(0);
+  await settings(page).getByRole('button', { name: 'Done', exact: true }).click();
+  const released = await page.evaluate(() => {
+    const outgoing = document.querySelector('[aria-labelledby="settings-dialog-title"]');
+    return !outgoing || Boolean(outgoing.closest('[inert][aria-hidden="true"]'));
+  });
+  expect(released, 'The closing dialog must release input and accessibility before its visual exit ends').toBe(true);
+  await openSettings(page);
+  await expect(settings(page).getByRole('switch', { name: 'Performance Mode', exact: true })).toBeEnabled();
+  await page.keyboard.press('Escape');
+  await expect(page.locator('[aria-labelledby="settings-dialog-title"]')).toHaveCount(0);
+  await openSettings(page);
   await settings(page).getByRole('button', { name: 'Advanced', exact: true }).click();
   await settings(page).getByRole('button', { name: /REST API/ }).click();
   await settings(page).getByRole('button', { name: 'Understand REST permissions', exact: true }).click();

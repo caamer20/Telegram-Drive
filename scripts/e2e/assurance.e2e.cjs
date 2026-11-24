@@ -25,6 +25,66 @@ function success(result) {
   assert.equal(result.status, 0, result.stderr || result.stdout);
 }
 
+test('the release gate checks the exact supporter contract with one authenticated TLS connection to the configured origin', async t => {
+  const https = require('node:https');
+  const { execFile } = require('node:child_process');
+  const directory = fixture(t);
+  const cert = path.join(directory, 'loopback.pem');
+  const key = path.join(directory, 'loopback.key');
+  const certificateConfig = path.join(directory, 'openssl.cnf');
+  fs.writeFileSync(certificateConfig, [
+    '[req]', 'distinguished_name=subject', 'x509_extensions=server', 'prompt=no',
+    '[subject]', 'CN=localhost', '[server]', 'subjectAltName=IP:127.0.0.1',
+    'basicConstraints=critical,CA:TRUE', 'extendedKeyUsage=serverAuth',
+  ].join('\n'));
+  let openssl = 'openssl';
+  if (process.platform === 'win32' && spawnSync(openssl, ['version']).error?.code === 'ENOENT') {
+    const location = spawnSync('git', ['--exec-path'], { encoding: 'utf8' });
+    success(location);
+    openssl = path.resolve(location.stdout.trim(), '../../../usr/bin/openssl.exe');
+  }
+  const generated = spawnSync(openssl, ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1',
+    '-config', certificateConfig, '-keyout', key, '-out', cert], { encoding: 'utf8' });
+  assert.ifError(generated.error);
+  success(generated);
+  const publicKey = crypto.generateKeyPairSync('ed25519').publicKey.export({ format: 'jwk' }).x;
+  const good = { status: 'ok', price: '5.00', currency: 'USD', max_active_devices: 3, terms_version: '2026-08-11', entitlement_public_key: publicKey };
+  let health = good;
+  let responseCode = 200;
+  const requests = [];
+  const server = https.createServer({ key: fs.readFileSync(key), cert: fs.readFileSync(cert) }, (req, res) => {
+    requests.push([req.method, req.url]);
+    if (responseCode === 0) return;
+    res.writeHead(responseCode, { 'content-type': 'application/json', ...(responseCode === 302 ? { location: '/redirect' } : {}) });
+    res.end(JSON.stringify(health));
+  });
+  await new Promise((resolve, reject) => server.once('error', reject).listen(0, '127.0.0.1', resolve));
+  t.after(() => { server.closeAllConnections(); return new Promise(resolve => server.close(resolve)); });
+  const origin = 'https://127.0.0.1:' + server.address().port;
+  const check = (service = origin, expectedKey = publicKey) => new Promise(resolve => {
+    execFile(process.execPath, [path.join(scripts, 'check-supporter-release.cjs')], {
+      timeout: 16_000,
+      env: { ...process.env, NODE_EXTRA_CA_CERTS: cert, TELEGRAM_DRIVE_SUPPORTER_SERVICE_URL: service, TELEGRAM_DRIVE_SUPPORTER_PUBLIC_KEY: expectedKey },
+    }, (error, stdout, stderr) => resolve({ status: error ? error.code : 0, stdout, stderr }));
+  });
+  success(await check());
+  assert.deepEqual(requests, [['GET', '/health']]);
+  for (const [service, expectedKey] of [[origin.replace('https:', 'http:'), publicKey],
+    [origin + '\n', publicKey], [origin + '/', publicKey], [origin + '/health', publicKey], [origin + '?q=1', publicKey],
+    [origin.replace('https://', 'https://fixture@'), publicKey], [origin, ''], [origin, '_'.repeat(43)]]) {
+    assert.equal((await check(service, expectedKey)).status, 1);
+  }
+  assert.equal(requests.length, 1, 'invalid build inputs must fail before any request');
+  for (const mismatch of [{ status: 'degraded' }, { price: '5' }, { currency: 'EUR' }, { max_active_devices: 4 },
+    { terms_version: 'different' }, { terms_version: undefined }, { entitlement_public_key: crypto.randomBytes(32).toString('base64url') }]) {
+    health = { ...good, ...mismatch };
+    assert.equal((await check()).status, 1, Object.keys(mismatch).join());
+  }
+  health = good;
+  for (responseCode of [302, 503, 0]) assert.equal((await check()).status, 1);
+  assert.ok(requests.every(([method, url]) => method === 'GET' && url === '/health'));
+});
+
 test('release artifacts pass through SBOM generation and an independently verified checksum manifest', t => {
   const directory = fixture(t);
   const report = path.join(directory, 'gradle-dependencies.txt');

@@ -2,6 +2,7 @@ use std::net::{IpAddr, SocketAddr};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
+use tauri_plugin_store::StoreExt;
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -53,7 +54,40 @@ fn validate_report(report: &CrashReportInput) -> Result<(), String> {
 /// Sends the narrow, consent-gated crash envelope with the native HTTP client so
 /// the WebView CSP never needs a broad external `connect-src` exception.
 #[tauri::command]
-pub async fn cmd_submit_crash_report(report: CrashReportInput) -> Result<(), String> {
+pub async fn cmd_submit_crash_report(
+    app: tauri::AppHandle,
+    report: CrashReportInput,
+    consent_id: Option<String>,
+) -> Result<(), String> {
+    submit_crash_report(
+        &app,
+        "settings.json".as_ref(),
+        report,
+        consent_id.as_deref(),
+    )
+    .await
+}
+
+pub(crate) async fn submit_crash_report(
+    app: &tauri::AppHandle,
+    settings_path: &std::path::Path,
+    report: CrashReportInput,
+    consent_id: Option<&str>,
+) -> Result<(), String> {
+    let require_consent = || {
+        let settings = app
+            .get_store(settings_path)
+            .and_then(|store| store.get("settings"));
+        let allowed = settings.is_some_and(|value| {
+            value["crashReportingEnabled"] == true
+                && value["crashReportingConsentSeen"] == true
+                && value["crashReportingConsentId"] == serde_json::Value::from(consent_id)
+        });
+        allowed
+            .then_some(())
+            .ok_or_else(|| "Crash reporting consent is inactive".to_string())
+    };
+    require_consent()?;
     validate_report(&report)?;
     let endpoint = option_env!("TELEGRAM_DRIVE_CRASH_REPORT_ENDPOINT")
         .map(str::trim)
@@ -89,6 +123,7 @@ pub async fn cmd_submit_crash_report(report: CrashReportInput) -> Result<(), Str
         .build()
         .map_err(|error| error.to_string())?;
     let body = serde_json::to_vec(&report).map_err(|error| error.to_string())?;
+    require_consent()?;
     let response = client
         .post(url)
         .header(reqwest::header::CONTENT_TYPE, "application/json")

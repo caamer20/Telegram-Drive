@@ -1,5 +1,5 @@
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
-use grammers_client::Client;
+use grammers_client::{types::User, Client, SignInError};
 use grammers_mtsender::SenderPool;
 use grammers_session::storages::SqliteSession;
 #[cfg(any(target_os = "android", target_os = "ios"))]
@@ -7,6 +7,7 @@ use grammers_session::types::UpdateState;
 use grammers_session::types::{PeerAuth, PeerInfo, UpdatesState};
 use grammers_session::Session;
 use grammers_tl_types as tl;
+use std::ops::AsyncFnOnce;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -1126,15 +1127,12 @@ pub async fn cmd_auth_sign_in(
             Err("This phone number must be registered in an official Telegram app before it can be used here.".to_string())
         }
         Ok(Err(error)) if error.is("SESSION_PASSWORD_NEEDED") => {
-            let password: tl::types::account::Password = timeout(
-                Duration::from_secs(30),
-                client.invoke(&tl::functions::account::GetPassword {}),
-            )
-            .await
-            .map_err(|_| "Telegram did not respond while requesting two-step verification.".to_string())?
-            .map_err(map_auth_error)?
-            .into();
-            *state.password_token.lock().await = Some(PasswordToken::new(password));
+            let password = request_password_challenge(&client).await?;
+            let mut token = state.password_token.lock().await;
+            if !captured.is_current(&state, login.attempt_id) {
+                return Err("This sign-in was replaced by a newer attempt.".into());
+            }
+            *token = Some(password);
 
             Ok(AuthResult {
                 success: false,
@@ -1155,36 +1153,25 @@ pub async fn cmd_auth_sign_in(
     }
 }
 
-/// Message shown when Telegram rejects the two-step verification password.
-/// The browser fixture uses the same text so both boundaries stay aligned.
-const INVALID_TWO_STEP_PASSWORD: &str =
-    "That two-step verification password is incorrect. Check it and try again.";
+impl CapturedAuthentication {
+    fn is_current(&self, state: &TelegramState, attempt: u64) -> bool {
+        #[cfg(desktop)]
+        if self.generation != state.sync_readiness.generation() {
+            return false;
+        }
+        state.auth_attempt_counter.load(Ordering::SeqCst) == attempt
+    }
+}
 
-/// Telegram's SRP challenge is single-use. Request a fresh one after a failed
-/// attempt so the user can retry without restarting the whole sign-in.
-async fn renew_password_challenge(client: &Client, state: &TelegramState) {
-    match timeout(
+async fn request_password_challenge(client: &Client) -> Result<PasswordToken, String> {
+    let password = timeout(
         Duration::from_secs(30),
         client.invoke(&tl::functions::account::GetPassword {}),
     )
     .await
-    {
-        Ok(Ok(password)) => {
-            let password: tl::types::account::Password = password.into();
-            *state.password_token.lock().await = Some(PasswordToken::new(password));
-        }
-        Ok(Err(error)) => {
-            log::warn!(
-                "Could not renew the two-step verification challenge: {}",
-                error
-            );
-        }
-        Err(_) => {
-            log::warn!(
-                "Telegram did not respond while renewing the two-step verification challenge"
-            );
-        }
-    }
+    .map_err(|_| "Telegram did not respond while requesting two-step verification.".to_string())?
+    .map_err(map_auth_error)?;
+    Ok(PasswordToken::new(password.into()))
 }
 
 #[tauri::command]
@@ -1192,19 +1179,39 @@ pub async fn cmd_auth_check_password(
     password: String,
     state: State<'_, TelegramState>,
 ) -> Result<AuthResult, String> {
-    let (client, captured) = authentication_client(&state).await?;
+    submit_two_step_password(
+        &state,
+        async |client, token| client.check_password(token, password.as_str()).await,
+        request_password_challenge,
+    )
+    .await
+}
 
-    let pw_token = state
-        .password_token
-        .lock()
-        .await
-        .take()
-        .ok_or("No password session found")?;
+pub(crate) async fn submit_two_step_password(
+    state: &TelegramState,
+    check: impl AsyncFnOnce(&Client, PasswordToken) -> Result<User, SignInError>,
+    renew: impl AsyncFnOnce(&Client) -> Result<PasswordToken, String>,
+) -> Result<AuthResult, String> {
+    let attempt = state.auth_attempt_counter.load(Ordering::SeqCst);
+    let (client, captured) = authentication_client(state).await?;
+    let is_current = || captured.is_current(state, attempt);
+    let replaced = "This sign-in was replaced by a newer attempt.";
+    let pw_token = {
+        let mut slot = state.password_token.lock().await;
+        if !is_current() {
+            return Err(replaced.into());
+        }
+        slot.take().ok_or("No password session found")?
+    };
 
-    match client.check_password(pw_token, password.as_str()).await {
+    match check(&client, pw_token).await {
         Ok(user) => {
+            let mut phone = state.phone_login.lock().await;
+            if !is_current() {
+                return Err(replaced.into());
+            }
             log::info!("2FA Success.");
-            *state.phone_login.lock().await = None;
+            *phone = None;
             #[cfg(not(any(target_os = "android", target_os = "ios")))]
             captured.complete_verified(&authenticated_peer(&user), None)?;
             #[cfg(not(any(target_os = "android", target_os = "ios")))]
@@ -1219,15 +1226,22 @@ pub async fn cmd_auth_check_password(
                 error: None,
             })
         }
-        Err(grammers_client::SignInError::InvalidPassword) => {
-            renew_password_challenge(&client, state.inner()).await;
-            Err(INVALID_TWO_STEP_PASSWORD.to_string())
-        }
-        Err(e) => {
-            // A transport failure also consumed the challenge; renew it so the
-            // password step stays usable once the connection recovers.
-            renew_password_challenge(&client, state.inner()).await;
-            Err(format!("2FA Failed: {}", e))
+        Err(error) => {
+            // Telegram consumes the challenge even on rejection. Only the same
+            // live sign-in attempt may publish its replacement.
+            let renewed = renew(&client).await;
+            let mut slot = state.password_token.lock().await;
+            if !is_current() || slot.is_some() {
+                return Err(replaced.into());
+            }
+            *slot = Some(renewed.map_err(|_| "No password session found")?);
+            match error {
+                SignInError::InvalidPassword => Err(
+                    "That two-step verification password is incorrect. Check it and try again."
+                        .into(),
+                ),
+                other => Err(format!("2FA Failed: {other}")),
+            }
         }
     }
 }

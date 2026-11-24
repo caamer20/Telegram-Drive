@@ -17,13 +17,25 @@ export function useTelegramConnection(onLogoutParent: () => void) {
     const { confirm } = useConfirm();
     const { t } = useTranslation();
 
-    const [folders, setFolders] = useState<TelegramFolder[]>([]);
+    const [folders, displayFolders] = useState<TelegramFolder[]>([]);
+    const currentFolders = useRef(folders);
+    const setFolders = useCallback((update: TelegramFolder[] | ((previous: TelegramFolder[]) => TelegramFolder[])) => {
+        const next = typeof update === 'function' ? update(currentFolders.current) : update;
+        currentFolders.current = next;
+        displayFolders(next);
+    }, []);
     const [groups, setGroups] = useState<FolderGroup[]>([]);
     const [activeFolderId, setActiveFolderId] = useState<number | null>(null);
     const [store, setStore] = useState<Store | null>(null);
     const [isSyncing, setIsSyncing] = useState(false);
     const [isConnected, setIsConnected] = useState(true);
     const [accountId, setAccountId] = useState<string | null>(null);
+    const verifiedFolderSession = useRef<{ owner: string | null }>({ owner: null });
+    const selectFolderOwner = (owner: string | null) => {
+        if (verifiedFolderSession.current.owner !== owner) verifiedFolderSession.current = { owner };
+    };
+    const folderSession = verifiedFolderSession.current;
+    const isCurrent = () => folderSession.owner !== null && verifiedFolderSession.current === folderSession;
     const accountGeneration = useRef(0);
     const logoutInProgress = useRef(false);
     const accountRetryTimer = useRef<number | undefined>(undefined);
@@ -36,11 +48,13 @@ export function useTelegramConnection(onLogoutParent: () => void) {
             try {
                 const id = await getCurrentAccountId();
                 if (generation !== accountGeneration.current) return null;
+                selectFolderOwner(id);
                 setImageCacheAccount(id);
                 setAccountId(id);
                 return id;
             } catch (error) {
                 if (generation !== accountGeneration.current) return null;
+                selectFolderOwner(null);
                 setImageCacheAccount(null);
                 setAccountId(null);
                 // A busy session database must not disable every file query
@@ -60,6 +74,7 @@ export function useTelegramConnection(onLogoutParent: () => void) {
         document.addEventListener('visibilitychange', refresh);
         return () => {
             accountGeneration.current++;
+            selectFolderOwner(null);
             window.clearTimeout(accountRetryTimer.current);
             document.removeEventListener('visibilitychange', refresh);
         };
@@ -68,6 +83,7 @@ export function useTelegramConnection(onLogoutParent: () => void) {
     const networkIsOnline = useNetworkStatus();
     const handleSyncFoldersRef = useRef<((silentParam?: boolean | unknown) => Promise<void>) | null>(null);
     const initialSyncStartedRef = useRef(false);
+    const needsReconnectScan = useRef(false);
     const syncInFlightRef = useRef<Promise<void> | null>(null);
 
     // Fetch groups list from DB
@@ -135,7 +151,6 @@ export function useTelegramConnection(onLogoutParent: () => void) {
                 // Otherwise the dashboard briefly loads Saved Messages first, then starts
                 // a second overlapping request for the actual startup folder.
                 setStore(_store);
-                setIsConnected(true);
             } catch {
                 // store not available
             }
@@ -145,6 +160,7 @@ export function useTelegramConnection(onLogoutParent: () => void) {
 
     // Consolidated mount-sync + visibility-change listener
     useEffect(() => {
+        if (!isConnected) needsReconnectScan.current = true;
         if (!store || !isConnected) return;
 
         const syncAndRefresh = async () => {
@@ -155,7 +171,7 @@ export function useTelegramConnection(onLogoutParent: () => void) {
                 const lastSyncAt = await store.get<number>('foldersLastSyncedAt');
                 const folderSyncIsFresh = typeof lastSyncAt === 'number'
                     && Date.now() - lastSyncAt < 6 * 60 * 60_000;
-                if (folderSyncIsFresh) return;
+                if (folderSyncIsFresh && !needsReconnectScan.current) return;
                 await handleSyncFoldersRef.current?.(true);
             })().finally(() => {
                 syncInFlightRef.current = null;
@@ -166,7 +182,7 @@ export function useTelegramConnection(onLogoutParent: () => void) {
 
         // React Strict Mode remounts effects in development. Keep the initial refresh
         // single-shot so it cannot start two Telegram file streams for the same folder.
-        if (!initialSyncStartedRef.current) {
+        if (!initialSyncStartedRef.current || needsReconnectScan.current) {
             initialSyncStartedRef.current = true;
             void syncAndRefresh();
         }
@@ -209,6 +225,7 @@ export function useTelegramConnection(onLogoutParent: () => void) {
                 toast.warning(t('common.signout_remote_unconfirmed'), { duration: 12_000 });
             }
             accountGeneration.current++;
+            selectFolderOwner(null);
             setImageCacheAccount(null);
             setAccountId(null);
             queryClient.clear();
@@ -243,8 +260,12 @@ export function useTelegramConnection(onLogoutParent: () => void) {
         if (!store) return;
         setIsSyncing(true);
         try {
-            await refreshAccountId();
-            const foundFolders = await invoke<TelegramFolder[]>('cmd_scan_folders');
+            const ownerId = await refreshAccountId();
+            if (!ownerId) return;
+            const scannedSession = verifiedFolderSession.current;
+            const foundFolders = await invoke<TelegramFolder[]>('cmd_scan_folders', { ownerId });
+            if (verifiedFolderSession.current !== scannedSession) return;
+            needsReconnectScan.current = false;
             setFolders(foundFolders);
             await store.set('folders', foundFolders);
             await store.set('foldersLastSyncedAt', Date.now());
@@ -265,23 +286,37 @@ export function useTelegramConnection(onLogoutParent: () => void) {
     // Keep the ref in sync
     handleSyncFoldersRef.current = handleSyncFolders;
 
+    const rememberFolders = async (next: TelegramFolder[]) => {
+        if (!isCurrent()) return;
+        setFolders(next);
+        // The native command has already confirmed the remote change and
+        // written the account catalog. A secondary cache failure must not
+        // invite the user to create the same Telegram channel a second time.
+        if (store) {
+            try {
+                await store.set('folders', next);
+                await store.save();
+            } catch {
+                console.warn('Could not save the folder navigation cache');
+            }
+        }
+    };
+
     const handleCreateFolder = async (name: string) => {
-        if (!store) return;
         try {
-            const newFolder = await invoke<TelegramFolder>('cmd_create_folder', { name });
-            const updated = [...folders, newFolder];
-            setFolders(updated);
-            await store.set('folders', updated);
-            await store.save();
-            toast.success(`Folder "${name}" created.`);
+            if (!store || !isCurrent()) throw new Error('Folder layout is unavailable');
+            const newFolder = await invoke<TelegramFolder>('cmd_create_folder', { name, ownerId: folderSession.owner });
+            if (!isCurrent()) throw new Error('ACCOUNT_CHANGED');
+            await rememberFolders([...currentFolders.current.filter(folder => folder.id !== newFolder.id), newFolder]);
+            if (isCurrent()) toast.success(`Folder "${name}" created.`);
         } catch (e) {
-            toast.error(userFacingError(e, t));
+            if (isCurrent()) toast.error(userFacingError(e, t));
             throw e;
         }
     };
 
     const handleFolderDelete = async (folderId: number, folderName: string) => {
-        if (!await confirm({
+        if (!isCurrent() || !await confirm({
             title: "Delete Folder",
             message: `Are you sure you want to delete "${folderName}"?\nThis will delete the channel on Telegram.`,
             confirmText: i18n.t("files.delete"),
@@ -289,34 +324,27 @@ export function useTelegramConnection(onLogoutParent: () => void) {
         })) return;
 
         try {
-            await invoke('cmd_delete_folder', { folderId });
-            const updated = folders.filter(f => f.id !== folderId);
-            setFolders(updated);
-            if (store) {
-                await store.set('folders', updated);
-                await store.save();
-            }
-            if (activeFolderId === folderId) setActiveFolderId(null);
-            toast.success(`Folder "${folderName}" deleted.`);
+            if (!isCurrent()) return;
+            await invoke('cmd_delete_folder', { folderId, ownerId: folderSession.owner });
+            if (!isCurrent()) return;
+            await rememberFolders(currentFolders.current.filter(f => f.id !== folderId));
+            if (isCurrent() && activeFolderId === folderId) await handleSetActiveFolderId(null);
+            if (isCurrent()) toast.success(`Folder "${folderName}" deleted.`);
         } catch (e: unknown) {
-            const errStr = String(e);
-            if (errStr.includes("not found")) {
+            if (!isCurrent()) return;
+            if ((e instanceof Error ? e.message : e) === `Folder/Chat ${folderId} not found`) {
                 if (await confirm({
                     title: "Folder Not Found",
                     message: `Folder "${folderName}" not found on Telegram (it may have been deleted externally).\nRemove from this app?`,
                     confirmText: "Remove",
                     variant: 'info'
                 })) {
-                    const updated = folders.filter(f => f.id !== folderId);
-                    setFolders(updated);
-                    if (store) {
-                        await store.set('folders', updated);
-                        await store.save();
-                    }
-                    if (activeFolderId === folderId) setActiveFolderId(null);
+                    if (!isCurrent()) return;
+                    await handleSyncFolders();
+                    if (isCurrent() && activeFolderId === folderId && !currentFolders.current.some(f => f.id === folderId)) await handleSetActiveFolderId(null);
                 }
             } else {
-                toast.error(`Failed to delete folder: ${e}`);
+                toast.error(userFacingError(e, t));
             }
         }
     };
@@ -326,16 +354,14 @@ export function useTelegramConnection(onLogoutParent: () => void) {
         if (!newName || newName === oldName) return;
 
         try {
-            await invoke('cmd_rename_folder', { folderId, newName });
-            const updated = folders.map(f => f.id === folderId ? { ...f, name: newName } : f);
-            setFolders(updated);
-            if (store) {
-                await store.set('folders', updated);
-                await store.save();
-            }
-            toast.success(`Folder renamed to "${newName}".`);
+            if (!isCurrent()) throw new Error('ACCOUNT_CHANGED');
+            await invoke('cmd_rename_folder', { folderId, newName, ownerId: folderSession.owner });
+            if (!isCurrent()) throw new Error('ACCOUNT_CHANGED');
+            await rememberFolders(currentFolders.current.map(f => f.id === folderId ? { ...f, name: newName } : f));
+            if (isCurrent()) toast.success(`Folder renamed to "${newName}".`);
         } catch (e) {
-            toast.error(userFacingError(e, t));
+            if (isCurrent()) toast.error(userFacingError(e, t));
+            throw e;
         }
     };
 

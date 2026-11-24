@@ -1,17 +1,11 @@
-import { useCallback, useRef } from 'react';
+import { useRef } from 'react';
 import { Bug, ShieldCheck } from 'lucide-react';
 import { useSettings } from '../../context/SettingsContext';
 import { useModalFocus } from '../../hooks/useModalFocus';
 
 export function CrashReportingConsent() {
-    const { settings, updateSettings } = useSettings();
+    const { settings, setCrashReportingConsent: decide } = useSettings();
     const panelRef = useRef<HTMLDivElement>(null);
-    const decide = useCallback((allow: boolean) => {
-        updateSettings({
-            crashReportingEnabled: allow,
-            crashReportingConsentSeen: true,
-        });
-    }, [updateSettings]);
     useModalFocus(panelRef, () => decide(false), !settings.crashReportingConsentSeen);
 
     if (settings.crashReportingConsentSeen) return null;

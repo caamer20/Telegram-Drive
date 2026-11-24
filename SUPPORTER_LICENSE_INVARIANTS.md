@@ -43,7 +43,7 @@ These are application-boundary E2E checks; the retired unit suites are not relea
 
 Before a supported desktop or Android release, also verify:
 
-- the configured production `/health` endpoint reports `status: ok`, price `5.00`, currency `USD`, and the expected device allowance;
+- the configured production `/health` endpoint reports `status: ok`, price `5.00`, currency `USD`, the expected device allowance, and the terms version the candidate accepts;
 - its entitlement public key exactly matches `SUPPORTER_PUBLIC_KEY` used by the release build;
 - the release workflow rejects a missing/invalid HTTPS service URL or public key;
 - a sandbox purchase, recovery, update persistence, refresh, device-limit, refund, and revocation exercise passes before any payment-path or schema change reaches production.

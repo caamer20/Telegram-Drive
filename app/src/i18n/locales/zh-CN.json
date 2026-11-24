@@ -1611,5 +1611,18 @@
     "this_device": "由此设备上传",
     "other_device": "由另一台设备上传",
     "none": "最近 1,000 条收藏夹消息中未找到加密设置备份。"
+  },
+  "action_errors": {
+    "credentials": "请检查 API ID 和 API Hash。",
+    "disabled": "Telegram 已停用此 API ID。请创建新的 API 凭据。",
+    "phone": "请检查电话号码和国家或地区代码。",
+    "banned": "Telegram 已封禁此电话号码。",
+    "register": "请先在 Telegram 官方应用中注册此号码。",
+    "code": "请检查登录验证码并重试。",
+    "expired": "验证码已过期，请重新获取。",
+    "password": "密码验证失败。",
+    "verify_bundle": "请检查口令和已保存的恢复包副本。",
+    "replace_keys": "此恢复包缺少部分密钥。替换保险库可能导致使用这些密钥的文件无法读取。要继续吗？",
+    "file_limit": "文件超过 Telegram 的大小限制，请分割后再上传。"
   }
 }

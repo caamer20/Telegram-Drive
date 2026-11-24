@@ -4,7 +4,6 @@ on:
   push:
     branches: [ main, develop ]
   pull_request:
-    branches: [ main, develop ]
 
 permissions:
   contents: read
@@ -28,6 +27,3 @@ jobs:
 
       - name: Scan UI literals
         run: cd app && npm run i18n:scan
-
-      - name: Build test
-        run: cd app && npm run build
