@@ -95,7 +95,15 @@
     "show_in_folder": "Ipakita sa folder",
     "webdav_settings": "Mga setting ng WebDAV"
   },
+  "existing_channel_help": {
+    "title": "Gumamit ng dati nang channel sa Telegram",
+    "edit": "Sa Telegram app, magbukas ng channel na may pahintulot kang palitan ang pangalan. Buksan ang impormasyon ng channel at i-edit ang pangalan nito.",
+    "rename": "Sa dulo ng pangalan, magdagdag ng espasyo at <tag>{{tag}}</tag>, saka i-save. Halimbawa, palitan ang “<before>{{before}}</before>” ng “<after>{{after}}</after>”.",
+    "sync": "Sa Telegram Drive, gamitin ang parehong account at piliin ang {{sync}} sa sidebar. Lalabas ang channel sa orihinal nitong pangalan.",
+    "example": "Mga larawan"
+  },
   "settings": {
+    "legacy_proxy_clear": "Piliin ang {{clear}} sa tabi ng field ng password para burahin ang lumang password ng proxy at ilapat ang mga setting na ito.",
     "tab_sync": "Folder Sync",
     "sync": {
       "title": "Folder Sync",

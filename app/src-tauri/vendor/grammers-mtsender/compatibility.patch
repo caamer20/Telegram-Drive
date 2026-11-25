@@ -1,6 +1,6 @@
 --- a/grammers-mtsender/Cargo.toml
 +++ b/grammers-mtsender/Cargo.toml
-@@ -12,25 +12,27 @@
+@@ -12,25 +12,28 @@
  keywords = ["api", "mtproto", "telegram", "tl"]
  categories = ["api-bindings", "network-programming"]
  edition = "2024"
@@ -11,7 +11,7 @@
  
  [features]
 -proxy = ["tokio-socks", "hickory-resolver", "url"]
-+proxy = ["tokio-socks", "hickory-resolver", "url", "dep:resolv-conf"]
++proxy = ["tokio-socks", "hickory-resolver", "url", "dep:urlencoding", "dep:resolv-conf"]
  
  [dependencies]
  bytes = "1.10.1"
@@ -31,6 +31,7 @@
 -hickory-resolver = { version = "0.25.2", optional = true }
 +hickory-resolver = { version = "0.26.3", optional = true }
  url = { version = "2.5.7", optional = true }
++urlencoding = { version = "2", optional = true }
  
 -[dev-dependencies]
 -simple_logger = { version = "5.0.0", default-features = false, features = ["colors"] }
@@ -76,7 +77,7 @@
 +mod resolv_conf;
 --- a/grammers-mtsender/src/net/tcp.rs
 +++ b/grammers-mtsender/src/net/tcp.rs
-@@ -48,7 +48,11 @@
+@@ -48,26 +48,59 @@
              net::{IpAddr, SocketAddr},
          };
  
@@ -89,8 +90,32 @@
          use url::Host;
  
          let proxy = url::Url::parse(proxy_url)
-@@ -66,8 +70,32 @@
-         let password = proxy.password().unwrap_or("");
+             .map_err(|err| io::Error::new(ErrorKind::InvalidData, err))?;
+         let scheme = proxy.scheme();
+-        let host = proxy.host().ok_or(io::Error::new(
+-            ErrorKind::NotFound,
+-            format!("proxy host is missing from url: {}", proxy_url),
+-        ))?;
+-        let port = proxy.port().ok_or(io::Error::new(
+-            ErrorKind::NotFound,
+-            format!("proxy port is missing from url: {}", proxy_url),
+-        ))?;
++        let host = proxy
++            .host()
++            .ok_or_else(|| io::Error::new(ErrorKind::NotFound, "missing proxy host"))?;
++        let port = proxy
++            .port()
++            .ok_or_else(|| io::Error::new(ErrorKind::NotFound, "missing proxy port"))?;
+         let username = proxy.username();
+-        let password = proxy.password().unwrap_or("");
++        // SOCKS URLs report canonical dotted IPv4 addresses as opaque domains.
++        let host = match host {
++            Host::Domain(domain) => domain
++                .parse()
++                .map(Host::Ipv4)
++                .unwrap_or(Host::Domain(domain)),
++            other => other,
++        };
          let socks_addr = match host {
              Host::Domain(domain) => {
 -                let resolver = Resolver::builder_tokio().unwrap().build();
@@ -124,6 +149,28 @@
                  let socks_ip_addr = response.into_iter().next().ok_or(io::Error::new(
                      ErrorKind::NotFound,
                      format!("proxy host did not return any ip address: {}", domain),
+@@ -87,9 +120,20 @@
+                             .map_err(|err| io::Error::new(ErrorKind::ConnectionAborted, err))?,
+                     ))
+                 } else {
++                    // URL userinfo is escaped; SOCKS5 authenticates the original bytes.
++                    let decode = |value| {
++                        urlencoding::decode(value).map_err(|_| {
++                            io::Error::new(
++                                ErrorKind::InvalidData,
++                                "invalid proxy credential encoding",
++                            )
++                        })
++                    };
++                    let username = decode(username)?;
++                    let password = decode(proxy.password().unwrap_or(""))?;
+                     Ok(NetStream::ProxySocks5(
+                         tokio_socks::tcp::Socks5Stream::connect_with_password(
+-                            socks_addr, addr, username, password,
++                            socks_addr, addr, &username, &password,
+                         )
+                         .await
+                         .map_err(|err| io::Error::new(ErrorKind::ConnectionAborted, err))?,
 --- /dev/null
 +++ b/grammers-mtsender/src/net/resolv_conf.rs
 @@ -0,0 +1,57 @@

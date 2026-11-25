@@ -25,7 +25,7 @@ import { userFacingError } from '../../../services/userFacingError';
 import { useActionScope } from '../../../hooks/useActionScope';
 import { useUpdates } from '../../../context/UpdateContext';
 import { BandwidthSettings } from './settings/BandwidthSettings';
-import { applyProxySettings, applyVpnSettings } from '../../../services/networkSettings';
+import { applyProxySettings, applyVpnSettings, clearProxyPassword } from '../../../services/networkSettings';
 import { useMotionPolicy } from '../../../context/MotionContext';
 import { MotionPane } from '../../shared/MotionPane';
 
@@ -143,7 +143,8 @@ function OwnedSettingsModal({ ownerId, isOpen, onClose, initialTab = 'general', 
         checkForUpdates,
         downloadAndInstall,
     } = useUpdates();
-    const [networkApplyFailed, setNetworkApplyFailed] = useState({ proxy: false, vpn: false });
+    const [networkApplyFailed, setNetworkApplyFailed] = useState<{ proxy: 'apply' | 'legacy' | null; vpn: boolean }>({ proxy: null, vpn: false });
+    const [clearingProxyPassword, setClearingProxyPassword] = useState(false);
     const [networkRetry, setNetworkRetry] = useState(0);
     const networkSettingsReady = isLoaded && persistenceStatus !== 'loading' && persistenceStatus !== 'error';
 
@@ -375,8 +376,12 @@ function OwnedSettingsModal({ ownerId, isOpen, onClose, initialTab = 'general', 
         if (!networkSettingsReady) return;
         let cancelled = false;
         void applyProxySettings(settings).then(
-            () => { if (!cancelled) setNetworkApplyFailed(current => ({ ...current, proxy: false })); },
-            () => { if (!cancelled) setNetworkApplyFailed(current => ({ ...current, proxy: true })); },
+            () => { if (!cancelled) setNetworkApplyFailed(current => ({ ...current, proxy: null })); },
+            error => {
+                if (!cancelled) setNetworkApplyFailed(current => ({
+                    ...current, proxy: error === 'proxy_legacy_password_requires_clear' ? 'legacy' : 'apply',
+                }));
+            },
         );
         return () => { cancelled = true; };
     }, [
@@ -761,8 +766,14 @@ function OwnedSettingsModal({ ownerId, isOpen, onClose, initialTab = 'general', 
                         <div className="relative min-w-0 flex-1 overflow-y-auto overflow-x-hidden px-4 py-5 sm:px-6 sm:py-6">
                             {((activeTab === 'proxy' && networkApplyFailed.proxy) || (activeTab === 'vpn' && networkApplyFailed.vpn)) && (
                                 <div role="alert" className="mb-4 flex items-center justify-between gap-3 rounded-lg border border-app-danger/30 p-3 text-sm text-app-text">
-                                    <span>{t('common.operation_failed')}</span>
-                                    <button type="button" onClick={() => setNetworkRetry(value => value + 1)} className="quiet-control px-3 py-1.5">{t('common.retry')}</button>
+                                    {activeTab === 'proxy' && networkApplyFailed.proxy === 'legacy' ? (
+                                        <span>{t('settings.legacy_proxy_clear', { clear: t('settings.clear') })}</span>
+                                    ) : (
+                                        <>
+                                            <span>{t('common.operation_failed')}</span>
+                                            <button type="button" onClick={() => setNetworkRetry(value => value + 1)} className="quiet-control px-3 py-1.5">{t('common.retry')}</button>
+                                        </>
+                                    )}
                                 </div>
                             )}
                             <AnimatePresence mode="sync" initial={false}>
@@ -1447,12 +1458,21 @@ function OwnedSettingsModal({ ownerId, isOpen, onClose, initialTab = 'general', 
                                             type="button"
                                             aria-label={`${t('settings.clear')} ${t('common.password')}`}
                                             title={`${t('settings.clear')} ${t('common.password')}`}
+                                            disabled={clearingProxyPassword}
                                             onClick={async () => {
+                                                setClearingProxyPassword(true);
                                                 try {
-                                                    await invoke('cmd_clear_proxy_secret');
-                                                    updateSetting('proxyPassword', '');
+                                                    await clearProxyPassword();
+                                                    if (networkApplyFailed.proxy === 'legacy') {
+                                                        // Clear the old endpoint's credential, then apply the user's current draft.
+                                                        setNetworkRetry(value => value + 1);
+                                                    } else {
+                                                        updateSetting('proxyPassword', '');
+                                                    }
                                                 } catch (error) {
                                                     toast.error(userFacingError(error, t));
+                                                } finally {
+                                                    setClearingProxyPassword(false);
                                                 }
                                             }}
                                             className="rounded-md border border-telegram-border px-2 py-1 text-xs text-telegram-subtext transition hover:border-telegram-primary/50 hover:text-telegram-text"

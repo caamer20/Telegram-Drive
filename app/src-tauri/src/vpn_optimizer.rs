@@ -11,7 +11,7 @@ use std::sync::RwLock;
 use tauri::Manager;
 
 /// Proxy configuration received from the frontend
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProxyConfig {
     pub enabled: bool,
     pub proxy_type: String, // "socks5" | "mtproto"
@@ -111,6 +111,15 @@ pub struct NetworkConfigSnapshot {
     pub vpn: VpnConfig,
 }
 
+const LEGACY_PASSWORD_REQUIRES_CLEAR: &str = "proxy_legacy_password_requires_clear";
+
+pub enum ProxyCredentialUpdate {
+    Keep,
+    Set(String),
+    Clear,
+    Import(String),
+}
+
 pub trait ProxySecretStore: Send + Sync {
     fn read(&self) -> Result<Option<String>, String>;
     fn write(&self, value: Option<&str>) -> Result<(), String>;
@@ -128,13 +137,43 @@ impl ProxySecretStore for OsProxySecretStore {
     }
 }
 
+struct HttpProxyBridge {
+    port: u16,
+    task: tokio::task::JoinHandle<()>,
+}
+
+impl Drop for HttpProxyBridge {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
+}
+
+impl HttpProxyBridge {
+    fn prepare(proxy: &ProxyConfig) -> Result<Option<Self>, String> {
+        if !proxy.enabled
+            || proxy.host.is_empty()
+            || !matches!(proxy.proxy_type.as_str(), "http" | "https")
+        {
+            return Ok(None);
+        }
+        let (port, task) = crate::socks5_bridge::start_bridge(
+            proxy.host.clone(),
+            proxy.port,
+            proxy.proxy_type.clone(),
+            proxy.username.clone(),
+            proxy.password.clone(),
+        )?;
+        Ok(Some(Self { port, task }))
+    }
+}
+
 /// Thread-safe global state managed via Tauri's state system
 pub struct NetworkConfig {
     pub proxy: RwLock<ProxyConfig>,
     pub vpn: RwLock<VpnConfig>,
     pub pacer: crate::traffic::Pacer,
     updates: std::sync::Mutex<()>,
-    pub bridge_handle: std::sync::Mutex<Option<(u16, tokio::task::JoinHandle<()>)>>,
+    bridge_handle: std::sync::Mutex<Option<HttpProxyBridge>>,
 }
 
 impl NetworkConfig {
@@ -164,30 +203,26 @@ impl NetworkConfig {
         path: &std::path::Path,
         patch: impl FnOnce(&mut NetworkConfigSnapshot) -> Result<(), String>,
     ) -> Result<(), String> {
-        self.update_transaction_at(path, patch, None, &OsProxySecretStore)
+        self.update_credentials_at(
+            path,
+            patch,
+            ProxyCredentialUpdate::Keep,
+            &OsProxySecretStore,
+        )
     }
-    fn update_transaction_at(
+    pub fn update_credentials_at(
         &self,
         path: &std::path::Path,
         patch: impl FnOnce(&mut NetworkConfigSnapshot) -> Result<(), String>,
-        change: Option<Option<String>>,
+        update: ProxyCredentialUpdate,
         store: &dyn ProxySecretStore,
     ) -> Result<(), String> {
         let _update = self
             .updates
             .lock()
             .map_err(|_| "Network settings unavailable")?;
-        let mut snapshot = {
-            let proxy = self
-                .proxy
-                .read()
-                .map_err(|_| "Proxy settings unavailable")?;
-            let vpn = self.vpn.read().map_err(|_| "VPN settings unavailable")?;
-            NetworkConfigSnapshot {
-                proxy: proxy.clone(),
-                vpn: vpn.clone(),
-            }
-        };
+        let mut snapshot = self.snapshot();
+        let previous_proxy = snapshot.proxy.clone();
         patch(&mut snapshot)?;
         if snapshot.vpn.bandwidth_windows.len() > 32
             || snapshot.vpn.bandwidth_limit_up_kbs > 65536
@@ -198,12 +233,45 @@ impl NetworkConfig {
         for window in &snapshot.vpn.bandwidth_windows {
             window.validate()?;
         }
+        // Preserve the last recoverable credential if startup could not migrate
+        // it. A user must explicitly clear it before switching proxy identities.
+        let legacy = legacy_password_at(path, &snapshot.proxy)?;
+        let previous = match &update {
+            ProxyCredentialUpdate::Keep => None,
+            _ => Some(store.read()?),
+        };
+        let secure = previous.as_ref().and_then(Option::as_deref);
+        let proposed = match &update {
+            ProxyCredentialUpdate::Keep => None,
+            ProxyCredentialUpdate::Clear => Some(None),
+            ProxyCredentialUpdate::Import(password)
+                if [legacy.as_deref(), secure]
+                    .into_iter()
+                    .flatten()
+                    .any(|saved| saved != password) =>
+            {
+                return Err(LEGACY_PASSWORD_REQUIRES_CLEAR.into());
+            }
+            ProxyCredentialUpdate::Import(password) | ProxyCredentialUpdate::Set(password) => {
+                Some(Some(password.as_str()))
+            }
+        };
+        if let Some(value) = proposed {
+            snapshot.proxy.password = value.unwrap_or_default().to_owned();
+        }
+        let replace_bridge = snapshot.proxy != previous_proxy;
+        let prepared_bridge = if replace_bridge {
+            HttpProxyBridge::prepare(&snapshot.proxy)?
+        } else {
+            None
+        };
+
         // Validate first, then remember both the old value and its absence.
         // OS credentials and JSON have no shared transaction; on an operation
         // error restore the old credential, and report restoration failure.
-        let previous = change.as_ref().map(|_| store.read()).transpose()?;
+        let write_credential = proposed.filter(|value| *value != secure);
         let restore = |error: String| -> String {
-            if let Some(previous) = &previous {
+            if let Some(previous) = previous.as_ref().filter(|_| write_credential.is_some()) {
                 if let Err(restore) = store.write(previous.as_deref()) {
                     return format!(
                         "{error}; prior proxy credential restoration failed: {restore}"
@@ -212,13 +280,13 @@ impl NetworkConfig {
             }
             error
         };
-        if let Some(change) = change {
-            if let Err(error) = store.write(change.as_deref()) {
+        if let Some(value) = write_credential {
+            if let Err(error) = store.write(value) {
                 return Err(restore(error));
             }
-            snapshot.proxy.password = change.unwrap_or_default();
         }
-        if let Err(error) = save_network_config_at(path, &snapshot) {
+        let preserved = if proposed.is_none() { legacy } else { None };
+        if let Err(error) = write_network_config_at(path, &snapshot, preserved) {
             return Err(restore(error));
         }
         // Only the update serializer spans external IO. Configuration readers
@@ -228,6 +296,12 @@ impl NetworkConfig {
             .write()
             .unwrap_or_else(|error| error.into_inner());
         let mut vpn = self.vpn.write().unwrap_or_else(|error| error.into_inner());
+        if replace_bridge {
+            *self
+                .bridge_handle
+                .lock()
+                .unwrap_or_else(|error| error.into_inner()) = prepared_bridge;
+        }
         *proxy = snapshot.proxy;
         *vpn = snapshot.vpn;
         drop(vpn);
@@ -235,22 +309,13 @@ impl NetworkConfig {
         self.pacer.changed();
         Ok(())
     }
-    pub fn update_credentials_at(
-        &self,
-        path: &std::path::Path,
-        patch: impl FnOnce(&mut NetworkConfigSnapshot) -> Result<(), String>,
-        change: Option<Option<String>>,
-        store: &impl ProxySecretStore,
-    ) -> Result<(), String> {
-        self.update_transaction_at(path, patch, change, store)
-    }
     pub fn update_credentials(
         &self,
         app: &tauri::AppHandle,
         patch: impl FnOnce(&mut NetworkConfigSnapshot) -> Result<(), String>,
-        change: Option<Option<String>>,
+        update: ProxyCredentialUpdate,
     ) -> Result<(), String> {
-        self.update_credentials_at(&settings_path(app)?, patch, change, &OsProxySecretStore)
+        self.update_credentials_at(&settings_path(app)?, patch, update, &OsProxySecretStore)
     }
 
     pub fn update(
@@ -286,52 +351,35 @@ impl NetworkConfig {
             }
         } else if proxy.proxy_type == "http" || proxy.proxy_type == "https" {
             let guard = self.bridge_handle.lock().unwrap();
-            if let Some((port, _)) = &*guard {
-                Some(format!("socks5://127.0.0.1:{}", port))
-            } else {
-                None
-            }
+            guard
+                .as_ref()
+                .map(|bridge| format!("socks5://127.0.0.1:{}", bridge.port))
         } else {
             None
         }
     }
 
-    pub async fn start_http_bridge(&self) -> Result<(), String> {
-        self.stop_http_bridge();
-
-        let (enabled, proxy_type, host, port, scheme, user, pass) = {
-            let proxy = self.proxy.read().unwrap();
-            (
-                proxy.enabled,
-                proxy.proxy_type.clone(),
-                proxy.host.clone(),
-                proxy.port,
-                proxy.proxy_type.clone(),
-                proxy.username.clone(),
-                proxy.password.clone(),
-            )
-        };
-
-        if !enabled || host.is_empty() || (proxy_type != "http" && proxy_type != "https") {
-            return Ok(());
-        }
-
-        match crate::socks5_bridge::start_bridge(host, port, scheme, user, pass).await {
-            Ok((local_port, handle)) => {
-                let mut guard = self.bridge_handle.lock().unwrap();
-                *guard = Some((local_port, handle));
-                Ok(())
-            }
-            Err(e) => Err(e),
-        }
+    pub fn start_http_bridge(&self) -> Result<(), String> {
+        let _update = self
+            .updates
+            .lock()
+            .map_err(|_| "Network settings unavailable")?;
+        let route = HttpProxyBridge::prepare(
+            &self
+                .proxy
+                .read()
+                .map_err(|_| "Proxy settings unavailable")?
+                .clone(),
+        )?;
+        *self
+            .bridge_handle
+            .lock()
+            .map_err(|_| "Proxy bridge unavailable")? = route;
+        Ok(())
     }
 
     pub fn stop_http_bridge(&self) {
-        let mut guard = self.bridge_handle.lock().unwrap();
-        if let Some((_, handle)) = guard.take() {
-            handle.abort();
-            log::info!("SOCKS5 bridge stopped.");
-        }
+        self.bridge_handle.lock().unwrap().take();
     }
 
     // ── Helpers that return effective values ────────────────
@@ -480,7 +528,14 @@ pub fn load_network_config(app: &tauri::AppHandle) -> NetworkConfigSnapshot {
             }
         }
     };
-    let mut snapshot = match std::fs::read_to_string(&path) {
+    load_network_config_at(&path, &OsProxySecretStore)
+}
+
+pub fn load_network_config_at(
+    path: &std::path::Path,
+    store: &impl ProxySecretStore,
+) -> NetworkConfigSnapshot {
+    let mut snapshot = match std::fs::read_to_string(path) {
         Ok(contents) => serde_json::from_str(&contents).unwrap_or_else(|_| NetworkConfigSnapshot {
             proxy: ProxyConfig::default(),
             vpn: VpnConfig::default(),
@@ -491,51 +546,86 @@ pub fn load_network_config(app: &tauri::AppHandle) -> NetworkConfigSnapshot {
         },
     };
 
-    // Scrub a legacy plaintext password only after the credential store
-    // confirms the write. If migration fails, retain the value in memory and
-    // leave the source file untouched so credentials are not lost.
-    let legacy_password = std::mem::take(&mut snapshot.proxy.password);
-    if !legacy_password.is_empty() {
-        match crate::proxy_secret::store_password(&legacy_password) {
+    // Keep the original route usable until a legacy conflict can be resolved
+    // explicitly. Never overwrite a different secure credential during startup.
+    if snapshot.proxy.password.is_empty() {
+        match store.read() {
+            Ok(Some(password)) => snapshot.proxy.password = password,
+            Ok(None) => {}
+            Err(error) => log::error!("Unable to load the saved proxy credential: {error}"),
+        }
+    } else {
+        let migration = match store.read() {
+            Ok(Some(saved)) if saved != snapshot.proxy.password => {
+                log::warn!("Conflicting saved proxy credentials require an explicit choice.");
+                return snapshot;
+            }
+            Ok(Some(_)) => Ok(()),
+            Ok(None) => store.write(Some(&snapshot.proxy.password)),
+            Err(error) => Err(error),
+        };
+        match migration {
             Ok(()) => {
-                snapshot.proxy.password = legacy_password;
-                if let Err(error) = save_network_config(app, &snapshot) {
+                if let Err(error) = write_network_config_at(path, &snapshot, None) {
                     log::error!(
                         "Unable to scrub migrated proxy credentials from legacy settings: {error}"
                     );
                 }
             }
             Err(error) => {
-                log::error!("Proxy credential migration could not use secure storage: {error}");
-                snapshot.proxy.password = legacy_password;
+                log::error!("Proxy credential migration could not use secure storage: {error}")
             }
-        }
-    } else {
-        match crate::proxy_secret::load_password() {
-            Ok(Some(password)) => snapshot.proxy.password = password,
-            Ok(None) => {}
-            Err(error) => log::error!("Unable to load the saved proxy credential: {error}"),
         }
     }
 
     snapshot
 }
 
-pub fn save_network_config(
-    app: &tauri::AppHandle,
-    config: &NetworkConfigSnapshot,
-) -> Result<(), String> {
-    let path = settings_path(app)?;
-    save_network_config_at(&path, config)
+fn legacy_password_at(
+    path: &std::path::Path,
+    proxy: &ProxyConfig,
+) -> Result<Option<String>, String> {
+    let bytes = match std::fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.to_string()),
+    };
+    let mut saved: serde_json::Value =
+        serde_json::from_slice(&bytes).map_err(|_| "Saved network settings could not be read.")?;
+    if saved["proxy"]["password"]
+        .as_str()
+        .unwrap_or_default()
+        .is_empty()
+    {
+        return Ok(None);
+    }
+    let original: ProxyConfig = serde_json::from_value(saved["proxy"].take())
+        .map_err(|_| "Saved proxy settings could not be read.")?;
+    if original.host != proxy.host
+        || original.port != proxy.port
+        || original.proxy_type != proxy.proxy_type
+        || original.username != proxy.username
+    {
+        return Err(LEGACY_PASSWORD_REQUIRES_CLEAR.into());
+    }
+    Ok(Some(original.password))
 }
 
-pub(crate) fn save_network_config_at(
+fn write_network_config_at(
     path: &std::path::Path,
     config: &NetworkConfigSnapshot,
+    legacy: Option<String>,
 ) -> Result<(), String> {
     let parent = path.parent().ok_or("Network settings path has no parent")?;
     std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-    let json = serde_json::to_string_pretty(config).map_err(|e| e.to_string())?;
+    let json = if let Some(password) = legacy {
+        let mut document = serde_json::to_value(config).map_err(|error| error.to_string())?;
+        document["proxy"]["password"] = serde_json::Value::String(password);
+        serde_json::to_string_pretty(&document)
+    } else {
+        serde_json::to_string_pretty(config)
+    }
+    .map_err(|error| error.to_string())?;
     let temporary = parent.join(format!(".network-settings.{}.tmp", uuid::Uuid::new_v4()));
     let mut options = std::fs::OpenOptions::new();
     options.create_new(true).write(true);

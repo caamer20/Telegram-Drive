@@ -95,7 +95,15 @@
     "show_in_folder": "폴더에서 표시",
     "webdav_settings": "WebDAV 설정"
   },
+  "existing_channel_help": {
+    "title": "기존 텔레그램 채널 사용하기",
+    "edit": "텔레그램 앱에서 이름을 바꿀 권한이 있는 채널을 여세요. 채널 정보 화면을 열고 이름을 편집하세요.",
+    "rename": "이름 끝에 한 칸을 띄우고 <tag>{{tag}}</tag>를 붙인 뒤 저장하세요. 예를 들어 이름을 ‘<before>{{before}}</before>’에서 ‘<after>{{after}}</after>’로 바꾸세요.",
+    "sync": "Telegram Drive에서 같은 계정을 사용하고 사이드바에서 ‘{{sync}}’를 선택하세요. 채널이 원래 이름으로 표시됩니다.",
+    "example": "사진"
+  },
   "settings": {
+    "legacy_proxy_clear": "비밀번호 입력란 옆의 {{clear}} 버튼을 선택하면 이전 프록시 비밀번호가 삭제되고 이 설정이 적용됩니다.",
     "tab_sync": "폴더 동기화",
     "sync": {
       "title": "폴더 동기화",

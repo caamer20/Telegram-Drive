@@ -25,6 +25,7 @@ export async function desktopFixture(page: Page, options: {
   sponsorPort?: number;
   /** Extra persisted application settings merged over the fixture defaults. */
   settings?: Record<string, unknown>;
+  legacyNativeProxyPassword?: string;
   /** Base64 PDF listed as "Fixture report.pdf" and served through the preview command. */
   pdfBase64?: string;
   rejectPdfStream?: boolean;
@@ -77,6 +78,8 @@ export async function desktopFixture(page: Page, options: {
       holdStartupHealth:options.holdStartupHealth??false, sponsorPort:options.sponsorPort ?? options.streamingPort ?? 14201,
       releaseStartupHealth:()=>{state.holdStartupHealth=false;releaseStartupHealth?.();},
       searchHold:false, searchFails:false, searchPageSize:256, searchBuilding:0, searchDuplicateIds:false, releaseSearch:()=>{state.searchHold=false;releaseSearch?.();},
+      proxySaveError: '', nativeProxyPassword: options.legacyNativeProxyPassword ?? '',
+      activeProxy: null as Record<string, unknown> | null,
       quotaSaveFails:false, weeklyQuota:Number(localStorage.getItem('desktop-e2e-weekly-quota') ?? 250 * 1024 ** 3),
       owner: '101', accountFailures: options.accountFailures ?? 0, holdFiles: options.holdFiles ?? false,
       holdSupporter: options.holdSupporter ?? false, supporterState: options.simulateCheckout && localStorage.getItem('fixture-checkout') === 'completed' ? 'active' : options.supporterState ?? 'active',
@@ -246,6 +249,22 @@ export async function desktopFixture(page: Page, options: {
           }
           if (command === 'cmd_get_preview' || command === 'cmd_get_display_preview' || command === 'cmd_workspace_asset') return image;
           if (command === 'cmd_get_bandwidth') return { up_bytes: 0, down_bytes: 0, limit_bytes: state.weeklyQuota, period: 'weekly', date: '2026-09-28' };
+          if (command === 'cmd_migrate_proxy_secret') {
+            if (state.nativeProxyPassword && state.nativeProxyPassword !== args.password) throw 'proxy_legacy_password_requires_clear';
+            state.nativeProxyPassword = args.password;
+            return;
+          }
+          if (command === 'cmd_apply_proxy_settings') {
+            if (state.proxySaveError) throw state.proxySaveError;
+            if (args.req.password) state.nativeProxyPassword = args.req.password;
+            state.activeProxy = { ...args.req };
+            return 'Proxy settings applied';
+          }
+          if (command === 'cmd_clear_proxy_secret') {
+            state.proxySaveError = '';
+            state.nativeProxyPassword = '';
+            return;
+          }
           if (command === 'cmd_set_weekly_quota') { if (state.quotaSaveFails) throw new Error('Storage unavailable'); state.weeklyQuota = args.limitBytes; localStorage.setItem('desktop-e2e-weekly-quota', String(args.limitBytes)); return { up_bytes: 0, down_bytes: 0, limit_bytes: state.weeklyQuota, period: 'weekly', date: '2026-09-28' }; }
           if (command === 'cmd_get_storage_insight') return { files: [file(80, 1)], scanned_count: 1200, duplicate_groups: 0, complete: false };
           if (command === 'cmd_get_supporter_status') { if (state.holdSupporter) await supporterGate; return status(); }

@@ -18,7 +18,7 @@ autotests = false
 doctest = false
 
 [features]
-proxy = ["tokio-socks", "hickory-resolver", "url", "dep:resolv-conf"]
+proxy = ["tokio-socks", "hickory-resolver", "url", "dep:urlencoding", "dep:resolv-conf"]
 
 [dependencies]
 bytes = "1.10.1"
@@ -33,6 +33,7 @@ tokio = { version = "1.47.1", default-features = false, features = ["io-util", "
 tokio-socks = { version = "0.5.2", optional = true }
 hickory-resolver = { version = "0.26.3", optional = true }
 url = { version = "2.5.7", optional = true }
+urlencoding = { version = "2", optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 resolv-conf = { version = "0.7", optional = true }

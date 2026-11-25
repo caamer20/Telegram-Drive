@@ -95,7 +95,15 @@
     "show_in_folder": "Tunjuk dalam folder",
     "webdav_settings": "Tetapan WebDAV"
   },
+  "existing_channel_help": {
+    "title": "Gunakan saluran Telegram yang sedia ada",
+    "edit": "Dalam aplikasi Telegram, buka saluran yang anda dibenarkan untuk menamakan semula. Buka maklumat saluran dan sunting namanya.",
+    "rename": "Tambahkan ruang diikuti <tag>{{tag}}</tag> pada hujung nama, kemudian simpan. Contohnya, tukar nama <before>{{before}}</before> kepada <after>{{after}}</after>.",
+    "sync": "Dalam Telegram Drive, gunakan akaun yang sama dan pilih {{sync}} pada bar sisi. Saluran akan dipaparkan dengan nama asalnya.",
+    "example": "Foto"
+  },
   "settings": {
+    "legacy_proxy_clear": "Pilih {{clear}} di sebelah medan kata laluan untuk memadamkan kata laluan proksi lama dan menggunakan tetapan ini.",
     "tab_sync": "Folder Sync",
     "sync": {
       "title": "Folder Sync",

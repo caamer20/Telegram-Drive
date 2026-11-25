@@ -2008,6 +2008,23 @@ async fn rest_api_date_filters_preserve_legacy_and_fractional_instant_compatibil
         );
     }
     for bound in [
+        "+10000-01-01",
+        "-262143-01-01 00:00:00 UTC",
+        "+262142-12-31",
+    ] {
+        let response = client
+            .get(&url)
+            .header("X-API-Key", key)
+            .query(&[("created_after", bound), ("created_before", bound)])
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200, "{bound}");
+        assert_eq!(response.json::<Value>().await.unwrap()["total"], 0);
+    }
+    for bound in [
+        "+262143-01-01",
+        "-262144-12-31",
         "-1",
         "2023-02-29",
         "2024-02-30",
@@ -3614,6 +3631,22 @@ fn zip_preview_and_extraction_use_private_files_verify_crc_limits_and_cleanup_ca
         );
         app.ok(json!({"command":"archive_delete_fixture","path":output["temp_path"]}));
     }
+    app.ok(json!({"command":"archive_batch_close"}));
+    // A deterministic ZIP written by the previously shipped zip 2.4.2 writer.
+    // Keep these bytes independent of the crate used to read them.
+    fixture.write(
+        "legacy.zip",
+        include_bytes!("../test-support/archives/legacy-folder-deflate.zip"),
+    );
+    app.ok(json!({"command":"archive_batch_open","owner":"101","source":"legacy.zip"}));
+    app.failure(json!({"command":"archive_batch_entry","entry":0}));
+    let legacy = app.ok(json!({"command":"archive_batch_entry","entry":1}));
+    assert_eq!(legacy["filename"], "Résumé.txt");
+    assert_eq!(
+        std::fs::read(legacy["temp_path"].as_str().unwrap()).unwrap(),
+        b"Legacy folder upload.\n"
+    );
+    app.ok(json!({"command":"archive_delete_fixture","path":legacy["temp_path"]}));
     app.ok(json!({"command":"archive_batch_close"}));
     // Reload the document while a completed download is awaiting publication.
     // The replacement document cannot acquire its predecessor's source.
@@ -6212,7 +6245,138 @@ fn traffic_proxy_save_failure_restores_the_old_credential_and_runtime_configurat
             .ok(json!({"command":"traffic_proxy_matches","password":"old synthetic proxy secret"})),
         true
     );
+    let scrubbed = fixture.read("network_settings.json");
+    assert_eq!(
+        restarted.failure(
+            json!({"command":"traffic_proxy_migrate","password":"stale frontend credential"})
+        ),
+        "proxy_legacy_password_requires_clear"
+    );
+    assert_eq!(fixture.read("network_settings.json"), scrubbed);
+    assert_eq!(
+        fixture.read("proxy-credential"),
+        b"old synthetic proxy secret"
+    );
+    restarted
+        .ok(json!({"command":"traffic_proxy_migrate","password":"old synthetic proxy secret"}));
     restarted.stop();
+
+    // An older installation can still have the only recoverable credential in
+    // its settings. Unrelated saves must preserve the original identity.
+    let mut legacy: Value = serde_json::from_slice(&fixture.read("network_settings.json")).unwrap();
+    legacy["proxy"]["password"] = json!("older stored credential");
+    fixture.write(
+        "network_settings.json",
+        serde_json::to_vec(&legacy).unwrap(),
+    );
+    let mut app = Backend::start(&fixture.0);
+    app.ok(json!({"command":"traffic_configure","vpn":true}));
+    let stable = fixture.read("network_settings.json");
+    assert_eq!(
+        serde_json::from_slice::<Value>(&stable).unwrap()["proxy"]["password"],
+        "older stored credential"
+    );
+    assert_eq!(
+        app.failure(json!({"command":"traffic_proxy_patch","host":"different.example"})),
+        "proxy_legacy_password_requires_clear"
+    );
+    assert_eq!(fixture.read("network_settings.json"), stable);
+    for candidate in [
+        "old synthetic proxy secret",
+        "older stored credential",
+        "conflicting frontend credential",
+    ] {
+        assert_eq!(
+            app.failure(json!({"command":"traffic_proxy_migrate","password":candidate})),
+            "proxy_legacy_password_requires_clear"
+        );
+        assert_eq!(
+            fixture.read("proxy-credential"),
+            b"old synthetic proxy secret"
+        );
+        assert_eq!(fixture.read("network_settings.json"), stable);
+    }
+    assert_eq!(
+        app.ok(json!({"command":"traffic_proxy_matches","password":"older stored credential"})),
+        true
+    );
+    app.ok(json!({"command":"traffic_proxy_patch","host":"old.example","password":"explicit selection"}));
+    assert_eq!(fixture.read("proxy-credential"), b"explicit selection");
+    assert!(
+        serde_json::from_slice::<Value>(&fixture.read("network_settings.json")).unwrap()["proxy"]
+            .get("password")
+            .is_none()
+    );
+    app.ok(json!({"command":"traffic_proxy_patch","host":"old.example","clear":true}));
+    assert!(!fixture.path("proxy-credential").exists());
+    app.ok(json!({"command":"traffic_proxy_migrate","password":"frontend-only credential"}));
+    assert_eq!(
+        fixture.read("proxy-credential"),
+        b"frontend-only credential"
+    );
+    app.ok(json!({"command":"traffic_proxy_patch","host":"old.example","clear":true}));
+    app.stop();
+
+    // Both empty-store and already-matching native migrations survive an upgrade.
+    for _ in 0..2 {
+        fixture.write(
+            "network_settings.json",
+            serde_json::to_vec(&legacy).unwrap(),
+        );
+        let mut boot = Backend::start(&fixture.0);
+        assert_eq!(
+            boot.ok(
+                json!({"command":"traffic_proxy_matches","password":"older stored credential"})
+            ),
+            true
+        );
+        assert_eq!(fixture.read("proxy-credential"), b"older stored credential");
+        assert!(
+            serde_json::from_slice::<Value>(&fixture.read("network_settings.json")).unwrap()
+                ["proxy"]
+                .get("password")
+                .is_none()
+        );
+        boot.stop();
+    }
+    let mut app = Backend::start(&fixture.0);
+
+    // Only the local SOCKS greeting is accepted; no external upstream opens.
+    app.ok(json!({"command":"traffic_proxy_patch","host":"127.0.0.1","http":true}));
+    let port = app
+        .ok(json!({"command":"traffic_http_bridge_port"}))
+        .as_u64()
+        .unwrap() as u16;
+    let address = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+    std::fs::rename(
+        fixture.path("network_settings.json"),
+        fixture.path("saved-network"),
+    )
+    .unwrap();
+    std::fs::create_dir(fixture.path("network_settings.json")).unwrap();
+    app.failure(json!({"command":"traffic_proxy_patch","host":"127.0.0.1","http":false}));
+    let mut socket =
+        std::net::TcpStream::connect_timeout(&address, Duration::from_secs(5)).unwrap();
+    socket
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    socket.write_all(&[5, 1, 0]).unwrap();
+    let mut response = [0; 2];
+    std::io::Read::read_exact(&mut socket, &mut response).unwrap();
+    assert_eq!(response, [5, 0]);
+    drop(socket);
+    std::fs::remove_dir(fixture.path("network_settings.json")).unwrap();
+    std::fs::rename(
+        fixture.path("saved-network"),
+        fixture.path("network_settings.json"),
+    )
+    .unwrap();
+    app.ok(json!({"command":"traffic_proxy_patch","host":"127.0.0.1","http":false}));
+    assert_eq!(
+        app.ok(json!({"command":"traffic_http_bridge_port"})),
+        Value::Null
+    );
+    app.stop();
 }
 
 #[test]
@@ -8968,7 +9132,8 @@ fn grammers_socks_peer(
             connection.read_exact(&mut length).unwrap();
             let mut password = vec![0; length[0] as usize];
             connection.read_exact(&mut password).unwrap();
-            let accepted = username == b"proxy-user" && password == b"proxy-secret";
+            let accepted =
+                username == b"proxy-user@+" && password == "proxy-secret %2F:雪".as_bytes();
             connection
                 .write_all(&[1, if accepted { 0 } else { 1 }])
                 .unwrap();
@@ -9012,7 +9177,7 @@ fn grammers_socks_peer(
     });
     let host = if host == "::1" { "[::1]" } else { host };
     let credentials = if authenticated {
-        "proxy-user:proxy-secret@"
+        "proxy-user%40%2B:proxy-secret%20%252F%3A%E9%9B%AA@"
     } else {
         ""
     };

@@ -95,7 +95,15 @@
     "show_in_folder": "Tampilkan dalam folder",
     "webdav_settings": "Pengaturan WebDAV"
   },
+  "existing_channel_help": {
+    "title": "Gunakan kanal Telegram yang sudah ada",
+    "edit": "Di aplikasi Telegram, buka kanal yang namanya boleh Anda ubah. Buka info kanal, lalu edit namanya.",
+    "rename": "Tambahkan spasi diikuti <tag>{{tag}}</tag> di akhir nama, lalu simpan. Misalnya, ubah <before>{{before}}</before> menjadi <after>{{after}}</after>.",
+    "sync": "Di Telegram Drive, gunakan akun yang sama dan pilih {{sync}} di bilah samping. Kanal akan muncul dengan nama aslinya.",
+    "example": "Foto"
+  },
   "settings": {
+    "legacy_proxy_clear": "Pilih {{clear}} di samping kolom kata sandi untuk menghapus kata sandi proksi lama dan menerapkan pengaturan ini.",
     "tab_sync": "Sinkronisasi folder",
     "sync": {
       "title": "Sinkronisasi folder",

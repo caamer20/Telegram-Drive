@@ -95,7 +95,15 @@
     "show_in_folder": "Klasörde göster",
     "webdav_settings": "WebDAV ayarları"
   },
+  "existing_channel_help": {
+    "title": "Mevcut bir Telegram kanalını kullanın",
+    "edit": "Telegram uygulamasında adını değiştirme yetkiniz olan bir kanalı açın. Kanal bilgilerini açıp kanalın adını düzenleyin.",
+    "rename": "Adın sonuna bir boşluk ve ardından <tag>{{tag}}</tag> ekleyip kaydedin. Örneğin “<before>{{before}}</before>” adını “<after>{{after}}</after>” olarak değiştirin.",
+    "sync": "Telegram Drive’da aynı hesabı kullanın ve kenar çubuğundan “{{sync}}” seçeneğini seçin. Kanal, önceki adıyla görünür.",
+    "example": "Fotoğraflar"
+  },
   "settings": {
+    "legacy_proxy_clear": "Eski proxy parolasını silmek ve bu ayarları uygulamak için parola alanının yanındaki {{clear}} düğmesini seçin.",
     "tab_sync": "Klasör eşitleme",
     "sync": {
       "title": "Klasör eşitleme",

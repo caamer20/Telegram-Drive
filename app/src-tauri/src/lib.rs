@@ -1251,7 +1251,7 @@ pub fn run() {
                         (proxy.enabled, proxy.proxy_type == "http" || proxy.proxy_type == "https")
                     };
                     if enabled && is_http_or_https {
-                        if let Err(e) = start_config.start_http_bridge().await {
+                        if let Err(e) = start_config.start_http_bridge() {
                             log::error!("Failed to auto-start SOCKS5 bridge on startup: {}", e);
                         }
                     }

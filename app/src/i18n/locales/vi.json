@@ -95,7 +95,15 @@
     "show_in_folder": "Hiện trong thư mục",
     "webdav_settings": "Cài đặt WebDAV"
   },
+  "existing_channel_help": {
+    "title": "Dùng một kênh Telegram hiện có",
+    "edit": "Trong ứng dụng Telegram, mở một kênh mà bạn có quyền đổi tên. Mở phần thông tin của kênh và chỉnh sửa tên kênh.",
+    "rename": "Thêm một dấu cách rồi thêm <tag>{{tag}}</tag> vào cuối tên và lưu lại. Ví dụ, đổi tên từ “<before>{{before}}</before>” thành “<after>{{after}}</after>”.",
+    "sync": "Trong Telegram Drive, dùng cùng tài khoản và chọn {{sync}} trên thanh bên. Kênh sẽ xuất hiện với tên ban đầu.",
+    "example": "Ảnh"
+  },
   "settings": {
+    "legacy_proxy_clear": "Chọn {{clear}} bên cạnh ô mật khẩu để xóa mật khẩu proxy cũ và áp dụng các cài đặt này.",
     "tab_sync": "Folder Sync",
     "sync": {
       "title": "Folder Sync",

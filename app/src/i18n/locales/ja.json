@@ -95,7 +95,15 @@
     "show_in_folder": "フォルダーで表示",
     "webdav_settings": "WebDAV設定"
   },
+  "existing_channel_help": {
+    "title": "既存のTelegramチャンネルを使う",
+    "edit": "Telegramアプリで、名前を変更する権限のあるチャンネルを開きます。チャンネルの情報画面を開き、名前を編集します。",
+    "rename": "名前の末尾に半角スペースと<tag>{{tag}}</tag>を追加して保存します。例えば「<before>{{before}}</before>」を「<after>{{after}}</after>」に変更します。",
+    "sync": "Telegram Driveで同じアカウントを使い、サイドバーの「{{sync}}」を選びます。チャンネルは元の名前で表示されます。",
+    "example": "写真"
+  },
   "settings": {
+    "legacy_proxy_clear": "パスワード欄の横の「{{clear}}」を選ぶと、以前のプロキシパスワードが削除され、この設定が適用されます。",
     "tab_sync": "Folder Sync",
     "sync": {
       "title": "Folder Sync",

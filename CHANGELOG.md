@@ -1,3 +1,16 @@
+## [4.2.0] - 2026-11-25
+
+### Folders and uploads
+
+- Open **Use an existing Telegram channel** below **Create Folder** to see how to add a channel to your drive. Rename it in Telegram, for example from `Photos` to `Photos [TD]`, then select **Sync** in the desktop sidebar.
+- Use strict upload order to keep queued files in order across retries and restarts. If saved settings cannot be read, the app preserves the previous transfer policy and offers a retry.
+- **Extract All** downloads an archive once and continues extracting readable entries if one entry is damaged. Folder updates and transfers remain associated with their originating account when you reconnect or switch accounts.
+
+### Network and recovery
+
+- Improve proxy credential handling and preserve the previous working proxy when a replacement configuration cannot be saved. SOCKS5 authentication handles usernames and passwords containing spaces, reserved characters and Unicode.
+- A recovery-code receipt stays available in lifetime supporter settings after activation until you confirm you have saved it. The one-time price remains **$5.00 USD**, with existing activations and recovery rights preserved.
+
 ## [4.1.7] - 2026-11-17
 
 ### Video upload previews

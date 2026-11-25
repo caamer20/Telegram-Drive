@@ -1,14 +1,27 @@
 import keysUrl from 'virtual:telegram-drive-locale-keys';
 
-interface KeyTable {format:'td-keys-v2';id:string;keys:string[];shared:string[]}
+interface KeyTable {id:string;keys:string[];shared:string[]}
+
+function readKeys(table: { format?: string; keys?: unknown; groups?: unknown }): string[] {
+  if (table.format === 'td-keys-v2' && Array.isArray(table.keys)) return table.keys;
+  if (table.format !== 'td-keys-v3' || !Array.isArray(table.groups)) throw new Error('Invalid language key table');
+  return table.groups.flatMap(group => {
+    if (!Array.isArray(group) || group.length < 2 || group.some(part => typeof part !== 'string')) {
+      throw new Error('Invalid language key group');
+    }
+    const [prefix, ...names] = group;
+    return names.map(name => prefix ? `${prefix}.${name}` : name);
+  });
+}
 let keyRequest:Promise<KeyTable>|undefined;
 async function keyTable(signal?:AbortSignal):Promise<KeyTable> {
   if(!keysUrl)throw new Error('Missing language key table');
   if(!keyRequest) {
     const request=(async()=>{
       const response=await fetch(keysUrl,{signal});if(!response.ok)throw new Error('Language key table unavailable');
-      const table=await response.json() as KeyTable;
-      if(table.format!=='td-keys-v2'||!Array.isArray(table.shared)||table.shared.some(value=>typeof value!=='string')||typeof table.id!=='string'||!Array.isArray(table.keys)||new Set(table.keys).size!==table.keys.length||table.keys.some(key=>typeof key!=='string'||!key||key.split('.').some(part=>!part||['__proto__','prototype','constructor'].includes(part))))throw new Error('Invalid language key table');
+      const packed = await response.json();
+      const table: KeyTable = {id: packed.id, shared: packed.shared, keys: readKeys(packed)};
+      if(!Array.isArray(table.shared)||table.shared.some(value=>typeof value!=='string')||typeof table.id!=='string'||!Array.isArray(table.keys)||new Set(table.keys).size!==table.keys.length||table.keys.some(key=>typeof key!=='string'||!key||key.split('.').some(part=>!part||['__proto__','prototype','constructor'].includes(part))))throw new Error('Invalid language key table');
       if(signal?.aborted)throw new Error('Language key request cancelled');
       return table;
     })();

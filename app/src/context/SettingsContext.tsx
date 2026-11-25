@@ -1,10 +1,10 @@
 import { createContext, useContext, useState, useEffect, ReactNode, useCallback, useRef } from 'react';
-import { invoke } from '@tauri-apps/api/core';
+import { clearProxyPassword } from '../services/networkSettings';
 import { DEFAULT_SETTINGS } from '../config/defaultSettings';
 import { configureCrashTelemetry } from '../services/crashTelemetry';
 import {
-    markProxySecretMigrated,
     readPersistedSettings,
+    resolveLegacyProxyPassword,
     writePersistedSettings,
 } from '../services/settingsPersistence';
 import type { Settings } from '../types/settings';
@@ -61,25 +61,13 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
                 setIsLoaded(true);
                 return;
             }
-            if (!readFailed && loaded.proxyPassword) {
+            if (!readFailed) {
                 try {
-                    await invoke('cmd_migrate_proxy_secret', { password: loaded.proxyPassword });
-                    if (revision !== persistenceRevisionRef.current) {
-                        setIsLoaded(true);
-                        return;
-                    }
-                    markProxySecretMigrated();
-                    loaded.proxyPassword = '';
-                    const scrub = persistenceQueueRef.current.then(() => {
-                        if (revision === persistenceRevisionRef.current) return writePersistedSettings(loaded);
-                    });
-                    persistenceQueueRef.current = scrub.catch(() => undefined);
-                    await scrub;
+                    await resolveLegacyProxyPassword('import');
                 } catch (error) {
-                    // Keep the legacy value intact until secure storage becomes
-                    // available. Never include the credential in diagnostic logs.
-                    console.error('[Settings] Secure proxy credential migration is pending.');
-                    loadFailed = true;
+                    // Proxy settings show the specific Clear action for conflicting credentials.
+                    // Other storage failures keep the existing application-level load retry.
+                    loadFailed = error !== 'proxy_legacy_password_requires_clear';
                 }
             }
             setIsLoaded(true);
@@ -156,7 +144,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         setSettings(DEFAULT_SETTINGS);
         latestSettingsRef.current = DEFAULT_SETTINGS;
         void persistSettings(DEFAULT_SETTINGS, DEFAULT_SETTINGS).catch(() => undefined);
-        void invoke('cmd_clear_proxy_secret').catch(() => {
+        void clearProxyPassword().catch(() => {
             console.error('[Settings] Unable to remove the saved proxy credential.');
         });
     }, [persistSettings]);

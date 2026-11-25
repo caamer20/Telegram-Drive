@@ -14,6 +14,9 @@ in `LICENSE-APACHE` and `LICENSE-MIT`.
 
 ## Runtime changes
 
+- Decode URL-escaped usernames and passwords once before SOCKS5 authentication.
+  The optional proxy feature uses the same locked `urlencoding` crate as the app.
+  Errors for missing hosts, ports, or invalid credentials omit the proxy URL.
 - Update only the transport's optional resolver from Hickory 0.25.2 to 0.26.3.
   The resolver's `system-config` and `tokio` default features remain enabled.
   No DNSSEC, encrypted-DNS, or alternate DNS-provider feature is enabled or disabled.
@@ -21,9 +24,11 @@ in `LICENSE-APACHE` and `LICENSE-MIT`.
   which is also how the old `ResolveError` conversion represented lookup failures.
   A configuration error returns normally instead of the previous `unwrap` panic.
 - Preserve first-address selection with explicit `Ipv4thenIpv6`; 0.26.3 otherwise
-  defaults to querying both families with IPv6 ordered first. Literal IPv4 and
-  IPv6 proxy addresses still bypass hostname resolution, and SOCKS parsing,
-  credentials, negotiation, and final target selection are unchanged.
+  defaults to querying both families with IPv6 ordered first.
+- Parse canonical dotted IPv4 addresses directly when the SOCKS URL parser
+  classifies them as opaque domains. The application can then reach
+  a numeric loopback proxy without system DNS configuration. Bracketed IPv6
+  already takes the direct path. Hostnames retain system resolution.
 - Preserve negative-response failover with `trust_negative_responses = false`
   for each system nameserver. New resolver configuration constructors default true.
 - Keep a conservative cache limit of 32. Hickory 0.25 counted records; 0.26 counts

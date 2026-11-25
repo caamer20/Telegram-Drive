@@ -59,11 +59,8 @@ pub fn parse_time(value: &str) -> Option<i64> {
     if let Some(seconds) = crate::app_time::parse_rfc3339_seconds(value) {
         return Some(seconds);
     }
-    if let Ok(parsed) = crate::app_time::parse_civil_datetime(value.trim_end_matches(" UTC")) {
-        return Some(crate::app_time::civil_utc_seconds(parsed));
-    }
-    if let Ok(parsed) = crate::app_time::parse_date(value) {
-        return Some(crate::app_time::civil_utc_seconds(parsed.at(0, 0, 0, 0)));
+    if let Some(seconds) = crate::app_time::parse_legacy_calendar_seconds(value) {
+        return Some(seconds);
     }
     value.parse::<i64>().ok().filter(|seconds| *seconds >= 0)
 }

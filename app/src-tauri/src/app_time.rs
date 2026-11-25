@@ -141,6 +141,30 @@ fn two_digits(bytes: &[u8], index: usize) -> Option<u8> {
     (first.is_ascii_digit() && second.is_ascii_digit()).then(|| (first - b'0') * 10 + second - b'0')
 }
 
+/// REST previously accepted Chrono's full signed Gregorian year range.
+pub fn parse_legacy_calendar_seconds(value: &str) -> Option<i64> {
+    let mut calendar = value;
+    let mut adjustment = 0;
+    let reduced;
+    if let Some(digits) = value.strip_prefix(['+', '-']) {
+        let count = digits.bytes().take_while(u8::is_ascii_digit).count();
+        let year: i32 = value[..1 + count].parse().ok()?;
+        if !(-262143..=262142).contains(&year) {
+            return None;
+        }
+        if !(-9999..=9999).contains(&year) {
+            // A 400-year Gregorian cycle has exactly 146097 days.
+            adjustment = i64::from(year.div_euclid(400)) * 146097 * 86400;
+            reduced = format!("{:04}{}", year.rem_euclid(400), &digits[count..]);
+            calendar = &reduced;
+        }
+    }
+    let datetime = parse_civil_datetime(calendar.trim_end_matches(" UTC"))
+        .or_else(|_| parse_date(calendar).map(|date| date.at(0, 0, 0, 0)))
+        .ok()?;
+    Some(civil_utc_seconds(datetime) + adjustment)
+}
+
 pub fn parse_civil_datetime(value: &str) -> Result<DateTime, jiff::Error> {
     DateTime::strptime("%Y-%m-%d %H:%M:%S", legacy_datetime_input(value)?.as_ref())
 }

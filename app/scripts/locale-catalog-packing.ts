@@ -51,7 +51,18 @@ export function localeCatalogPacking():Plugin {
       stringIndices.clear();
       shared.forEach((value, index) => stringIndices.set(value, index));
       id=createHash('sha256').update(JSON.stringify([keys, shared])).digest('hex');
-      reference=this.emitFile({type:'asset',name:'translation-keys.json',source:JSON.stringify({format:'td-keys-v2',id,keys,shared})});
+      // Adjacent keys share their namespace. Keep sorted key order so every
+      // locale value and the integrity digest still refer to the same slot.
+      const groups: string[][] = [];
+      for (const key of keys) {
+        const split = key.lastIndexOf('.');
+        const prefix = split < 0 ? '' : key.slice(0, split);
+        const name = key.slice(split + 1);
+        const previous = groups[groups.length - 1];
+        if (previous && previous[0] === prefix) previous.push(name);
+        else groups.push([prefix, name]);
+      }
+      reference=this.emitFile({type:'asset',name:'translation-keys.json',source:JSON.stringify({format:'td-keys-v3',id,groups,shared})});
     },
     resolveId(value){if(value===virtualId)return resolvedId;if(value===bootstrapId)return resolvedBootstrap;},
     async load(value){

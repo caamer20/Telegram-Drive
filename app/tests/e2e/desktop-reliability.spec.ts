@@ -8,6 +8,19 @@ test('disconnected folder changes preserve the list and can be retried after rec
   const connect = (online: boolean) => page.evaluate(online => { (window as any).__desktopTest.folderServiceOnline = online; }, online);
   const error = page.getByText('Telegram is unavailable. Reconnect and retry; your saved organization is safe.', { exact: true }).last();
   await expect(folder('Photos')).toBeVisible();
+  const guide = page.locator('details').filter({ has: page.locator('summary', { hasText: 'Use an existing Telegram channel' }) });
+  const summary = guide.locator('summary');
+  const example = guide.getByText('Photos [TD]', { exact: true });
+  await expect(summary).toBeVisible();
+  await expect(example).not.toBeVisible();
+  await summary.focus();
+  await page.keyboard.press('Enter');
+  await expect(example).toBeVisible();
+  await expect(guide).toContainText('same account');
+  await expect(guide).toContainText('Sync in the sidebar');
+  await page.keyboard.press('Space');
+  await expect(example).not.toBeVisible();
+  await expect(summary).toBeFocused();
   await page.getByRole('button', { name: 'Create Folder', exact: true }).first().click();
   const create = page.getByRole('dialog', { name: 'Create Folder' });
   await create.getByRole('textbox').fill('Drafts');
@@ -18,6 +31,17 @@ test('disconnected folder changes preserve the list and can be retried after rec
   await connect(true);
   await create.getByRole('button', { name: /create/i }).click();
   await expect(folder('Drafts')).toBeVisible();
+
+  // The Telegram fixture returns the display name after discovery removes the title marker.
+  await page.evaluate(() => {
+    const key = 'fixture-telegram-folders-101';
+    const remote = JSON.parse(sessionStorage.getItem(key)!);
+    sessionStorage.setItem(key, JSON.stringify([...remote, { id: 11, name: 'Archive' }]));
+  });
+  const scans = (await nativeCalls(page, 'cmd_scan_folders')).length;
+  await page.getByRole('button', { name: 'Sync', exact: true }).click();
+  await expect.poll(async () => (await nativeCalls(page, 'cmd_scan_folders')).length).toBeGreaterThan(scans);
+  await expect(folder('Archive')).toBeVisible();
 
   await connect(false);
   await folder('Drafts').getByRole('button', { name: 'Folder settings' }).click();

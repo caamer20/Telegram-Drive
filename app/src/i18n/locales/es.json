@@ -95,7 +95,15 @@
     "show_in_folder": "Mostrar en carpeta",
     "webdav_settings": "Ajustes de WebDAV"
   },
+  "existing_channel_help": {
+    "title": "Usar un canal de Telegram existente",
+    "edit": "En la aplicación de Telegram, abre un canal que tengas permiso para renombrar. Abre la información del canal y edita su nombre.",
+    "rename": "Añade un espacio seguido de <tag>{{tag}}</tag> al final del nombre y guarda el cambio. Por ejemplo, cambia «<before>{{before}}</before>» por «<after>{{after}}</after>».",
+    "sync": "Usa la misma cuenta en Telegram Drive y selecciona «{{sync}}» en la barra lateral. El canal aparecerá con su nombre original.",
+    "example": "Fotos"
+  },
   "settings": {
+    "legacy_proxy_clear": "Selecciona «{{clear}}» junto al campo de contraseña para eliminar la contraseña anterior del proxy y aplicar estos ajustes.",
     "tab_sync": "Sincronización de carpetas",
     "sync": {
       "title": "Sincronización de carpetas",

@@ -58,16 +58,21 @@ impl NetStream {
         let proxy = url::Url::parse(proxy_url)
             .map_err(|err| io::Error::new(ErrorKind::InvalidData, err))?;
         let scheme = proxy.scheme();
-        let host = proxy.host().ok_or(io::Error::new(
-            ErrorKind::NotFound,
-            format!("proxy host is missing from url: {}", proxy_url),
-        ))?;
-        let port = proxy.port().ok_or(io::Error::new(
-            ErrorKind::NotFound,
-            format!("proxy port is missing from url: {}", proxy_url),
-        ))?;
+        let host = proxy
+            .host()
+            .ok_or_else(|| io::Error::new(ErrorKind::NotFound, "missing proxy host"))?;
+        let port = proxy
+            .port()
+            .ok_or_else(|| io::Error::new(ErrorKind::NotFound, "missing proxy port"))?;
         let username = proxy.username();
-        let password = proxy.password().unwrap_or("");
+        // SOCKS URLs report canonical dotted IPv4 addresses as opaque domains.
+        let host = match host {
+            Host::Domain(domain) => domain
+                .parse()
+                .map(Host::Ipv4)
+                .unwrap_or(Host::Domain(domain)),
+            other => other,
+        };
         let socks_addr = match host {
             Host::Domain(domain) => {
                 // Preserve the pinned transport's system DNS configuration and
@@ -115,9 +120,20 @@ impl NetStream {
                             .map_err(|err| io::Error::new(ErrorKind::ConnectionAborted, err))?,
                     ))
                 } else {
+                    // URL userinfo is escaped; SOCKS5 authenticates the original bytes.
+                    let decode = |value| {
+                        urlencoding::decode(value).map_err(|_| {
+                            io::Error::new(
+                                ErrorKind::InvalidData,
+                                "invalid proxy credential encoding",
+                            )
+                        })
+                    };
+                    let username = decode(username)?;
+                    let password = decode(proxy.password().unwrap_or(""))?;
                     Ok(NetStream::ProxySocks5(
                         tokio_socks::tcp::Socks5Stream::connect_with_password(
-                            socks_addr, addr, username, password,
+                            socks_addr, addr, &username, &password,
                         )
                         .await
                         .map_err(|err| io::Error::new(ErrorKind::ConnectionAborted, err))?,

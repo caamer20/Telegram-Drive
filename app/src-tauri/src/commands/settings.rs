@@ -1,7 +1,7 @@
 //! Tauri commands for applying proxy and VPN optimizer settings.
 //! These are called from the frontend when the user changes network configuration.
 
-use crate::vpn_optimizer::{NetworkConfig, ProxyConfig, VpnConfig};
+use crate::vpn_optimizer::{NetworkConfig, ProxyConfig, ProxyCredentialUpdate, VpnConfig};
 use tauri::State;
 
 // Serialize fallback reads and disposal of failed resources. Healthy settings
@@ -65,7 +65,11 @@ pub async fn cmd_apply_proxy_settings(
     net_config: State<'_, std::sync::Arc<NetworkConfig>>,
     app: tauri::AppHandle,
 ) -> Result<String, String> {
-    let change = (!req.password.is_empty()).then_some(Some(req.password));
+    let change = if req.password.is_empty() {
+        ProxyCredentialUpdate::Keep
+    } else {
+        ProxyCredentialUpdate::Set(req.password)
+    };
     net_config.update_credentials(
         &app,
         move |snapshot| {
@@ -81,18 +85,6 @@ pub async fn cmd_apply_proxy_settings(
         },
         change,
     )?;
-    let config = net_config.snapshot().proxy;
-
-    // Start or stop local SOCKS5 bridge as needed
-    if config.enabled && (config.proxy_type == "http" || config.proxy_type == "https") {
-        if let Err(e) = net_config.start_http_bridge().await {
-            log::error!("Failed to start SOCKS5 bridge for HTTP/HTTPS proxy: {}", e);
-            return Err(format!("Failed to start SOCKS5 bridge: {}", e));
-        }
-    } else {
-        net_config.stop_http_bridge();
-    }
-
     Ok("Proxy settings applied".into())
 }
 
@@ -107,7 +99,7 @@ pub async fn cmd_migrate_proxy_secret(
     if password.is_empty() {
         return Ok(());
     }
-    net_config.update_credentials(&app, |_| Ok(()), Some(Some(password)))
+    net_config.update_credentials(&app, |_| Ok(()), ProxyCredentialUpdate::Import(password))
 }
 
 #[tauri::command]
@@ -115,7 +107,7 @@ pub async fn cmd_clear_proxy_secret(
     net_config: State<'_, std::sync::Arc<NetworkConfig>>,
     app: tauri::AppHandle,
 ) -> Result<(), String> {
-    net_config.update_credentials(&app, |_| Ok(()), Some(None))
+    net_config.update_credentials(&app, |_| Ok(()), ProxyCredentialUpdate::Clear)
 }
 
 #[derive(Debug, serde::Deserialize)]

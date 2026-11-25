@@ -104,7 +104,7 @@ test('drag feedback disappears immediately on leave', async ({ page }) => {
   await page.emulateMedia({ reducedMotion: 'no-preference' });
   await desktopFixture(page, { nativeDrag: true }); await page.goto('/');
   await expect(page.getByText('Holiday folder photo.jpg', { exact: true })).toBeVisible();
-  await page.getByText('Photos', { exact: true }).click();
+  await page.getByRole('group', { name: 'Photos', exact: true }).getByText('Photos', { exact: true }).click();
   await page.evaluate(() => (window as any).__desktopTest.emit('tauri://drag-enter', { paths: ['/fixtures/file.zip'], position: { x: 300, y: 300 } }));
   await expect(page.getByRole('heading', { name: 'Drop to upload to Photos', exact: true })).toBeVisible();
   const removed = await page.evaluate(async () => {
@@ -129,7 +129,7 @@ test('unavailable drag upload closes its fallback immediately and opens the norm
 test('a native drop preserves the destination and cannot queue duplicate native delivery', async ({ page }) => {
   await desktopFixture(page, { nativeDrag: true }); await page.goto('/');
   await expect(page.getByText('Holiday folder photo.jpg', { exact: true })).toBeVisible();
-  await page.getByText('Photos', { exact: true }).click();
+  await page.getByRole('group', { name: 'Photos', exact: true }).getByText('Photos', { exact: true }).click();
   await page.evaluate(() => {
     const fixture = (window as any).__desktopTest;
     const drop = { paths: ['/fixtures/Native drop.zip'], position: { x: 300, y: 300 } };

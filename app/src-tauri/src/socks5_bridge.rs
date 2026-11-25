@@ -12,7 +12,7 @@ type BoxedStream = Box<dyn AsyncReadWrite>;
 
 /// Starts a local SOCKS5 bridge.
 /// Returns the local port it is listening on, and the JoinHandle for the server task.
-pub async fn start_bridge(
+pub fn start_bridge(
     upstream_host: String,
     upstream_port: u16,
     upstream_scheme: String,
@@ -20,8 +20,11 @@ pub async fn start_bridge(
     upstream_password: String,
 ) -> Result<(u16, JoinHandle<()>), String> {
     // Bind to a random port on localhost
-    let listener = TcpListener::bind("127.0.0.1:0")
-        .await
+    let listener = std::net::TcpListener::bind("127.0.0.1:0")
+        .and_then(|socket| {
+            socket.set_nonblocking(true)?;
+            TcpListener::from_std(socket)
+        })
         .map_err(|e| format!("Failed to bind local SOCKS5 bridge: {}", e))?;
 
     let local_port = listener

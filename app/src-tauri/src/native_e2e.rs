@@ -1508,7 +1508,9 @@ impl Driver {
             | "traffic_windows_clock"
             | "traffic_proxy_start_slow"
             | "traffic_proxy_finish_slow"
+            | "traffic_proxy_migrate"
             | "traffic_proxy_patch"
+            | "traffic_http_bridge_port"
             | "traffic_proxy_matches"
             | "traffic_pending"
             | "traffic_snapshot"
@@ -3716,7 +3718,9 @@ impl Driver {
                             snapshot.proxy.host = "new.fixture".into();
                             Ok(())
                         },
-                        Some(Some("synthetic proxy credential".into())),
+                        crate::vpn_optimizer::ProxyCredentialUpdate::Set(
+                            "synthetic proxy credential".into(),
+                        ),
                         &SlowFixtureProxySecret { root },
                     )
                 }));
@@ -3737,19 +3741,35 @@ impl Driver {
                     .map_err(error)??;
                 Ok(json!(true))
             }
+            "traffic_proxy_migrate" => {
+                self.network.update_credentials_at(
+                    &self.root.join("network_settings.json"),
+                    |_| Ok(()),
+                    crate::vpn_optimizer::ProxyCredentialUpdate::Import(
+                        text(&request, "password")?.to_owned(),
+                    ),
+                    &FixtureProxySecret(self.root.join("proxy-credential")),
+                )?;
+                Ok(json!(true))
+            }
             "traffic_proxy_patch" => {
+                use crate::vpn_optimizer::ProxyCredentialUpdate;
                 let change = if request["clear"].as_bool().unwrap_or(false) {
-                    Some(None)
+                    ProxyCredentialUpdate::Clear
+                } else if let Some(password) = request["password"].as_str() {
+                    ProxyCredentialUpdate::Set(password.to_owned())
                 } else {
-                    request["password"]
-                        .as_str()
-                        .map(|password| Some(password.to_string()))
+                    ProxyCredentialUpdate::Keep
                 };
                 self.network.update_credentials_at(
                     &self.root.join("network_settings.json"),
                     |snapshot| {
                         snapshot.proxy.host =
                             request["host"].as_str().unwrap_or("localhost").to_string();
+                        if let Some(enabled) = request["http"].as_bool() {
+                            snapshot.proxy.enabled = enabled;
+                            snapshot.proxy.proxy_type = "http".into();
+                        }
                         if request["invalidWindow"].as_bool().unwrap_or(false) {
                             snapshot.vpn.bandwidth_windows = vec![crate::traffic::Window {
                                 days: vec![],
@@ -3766,6 +3786,13 @@ impl Driver {
                     &FixtureProxySecret(self.root.join("proxy-credential")),
                 )?;
                 Ok(json!(true))
+            }
+            "traffic_http_bridge_port" => {
+                let port = self
+                    .network
+                    .effective_proxy_url()
+                    .and_then(|url| url.strip_prefix("socks5://127.0.0.1:")?.parse::<u16>().ok());
+                Ok(json!(port))
             }
             "traffic_proxy_matches" => Ok(json!(
                 self.network.proxy.read().map_err(error)?.password == text(&request, "password")?
@@ -5642,17 +5669,10 @@ pub async fn run() -> Result<(), String> {
     {
         return Err("Refusing to access a non-fixture directory".into());
     }
-    let mut initial_network = std::fs::read_to_string(root.join("network_settings.json"))
-        .ok()
-        .and_then(|bytes| {
-            serde_json::from_str::<crate::vpn_optimizer::NetworkConfigSnapshot>(&bytes).ok()
-        })
-        .unwrap_or(crate::vpn_optimizer::NetworkConfigSnapshot {
-            proxy: Default::default(),
-            vpn: Default::default(),
-        });
-    initial_network.proxy.password =
-        std::fs::read_to_string(root.join("proxy-credential")).unwrap_or_default();
+    let initial_network = crate::vpn_optimizer::load_network_config_at(
+        &root.join("network_settings.json"),
+        &FixtureProxySecret(root.join("proxy-credential")),
+    );
     let mut driver = Driver {
         sync_app: None,
         transfer_retry: None,

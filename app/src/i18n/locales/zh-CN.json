@@ -95,7 +95,15 @@
     "show_in_folder": "在文件夹中显示",
     "webdav_settings": "WebDAV 设置"
   },
+  "existing_channel_help": {
+    "title": "使用已有的 Telegram 频道",
+    "edit": "在 Telegram 应用中打开一个你有权重命名的频道。打开频道信息页面，然后编辑频道名称。",
+    "rename": "在名称末尾加一个空格，再加上 <tag>{{tag}}</tag>，然后保存。例如，将“<before>{{before}}</before>”改为“<after>{{after}}</after>”。",
+    "sync": "在 Telegram Drive 中使用同一账号，选择侧栏中的“{{sync}}”。频道将以原来的名称显示。",
+    "example": "照片"
+  },
   "settings": {
+    "legacy_proxy_clear": "选择密码栏旁的“{{clear}}”，即可移除旧的代理密码并应用这些设置。",
     "tab_sync": "文件夹同步",
     "sync": {
       "title": "文件夹同步",

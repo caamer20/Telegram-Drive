@@ -1,5 +1,5 @@
 import i18n from '../../../i18n';
-import { useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { HardDrive, Folder, Plus, RefreshCw, LogOut, ChevronLeft, ChevronRight, Settings2, Trash2, Check, X, Eye, EyeOff, Clock3, Star, Pin, FileWarning, CalendarClock, Copy, Database } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { SidebarItem } from './SidebarItem';
@@ -16,6 +16,8 @@ import { CSS } from '@dnd-kit/utilities';
 import { quietMetrics } from '../../../design/contracts';
 import { CreateFolderDialog } from './CreateFolderDialog';
 import { SyncStatusBadge } from '../sync/SyncStatusBadge';
+
+const ExistingChannelHelp = lazy(() => import('./ExistingChannelHelp'));
 
 const PRESET_COLORS = [
     '#3B82F6', // Blue
@@ -415,7 +417,7 @@ export function Sidebar({
                 </nav>
             {/* Sticky Create Folder section — always visible above the footer */}
             {!settings.sidebarCollapsed && (
-                <div className="border-t border-app-border-subtle px-2 py-2">
+                <div className="shrink-0 overflow-y-auto border-t border-app-border-subtle px-2 py-2" style={{ maxHeight: '40%' }}>
                     <button
                         onClick={() => setShowNewFolderInput(true)}
                         className="quiet-control flex h-9 w-full items-center gap-2 border border-dashed border-app-border px-3 text-ui font-medium text-app-text-secondary hover:border-app-border-strong hover:text-app-text"
@@ -423,6 +425,9 @@ export function Sidebar({
                         <Plus className="w-4 h-4" />
                         {t('common.create_folder')}
                     </button>
+                    <Suspense fallback={<div className="min-h-11" aria-hidden="true" />}>
+                        <ExistingChannelHelp />
+                    </Suspense>
                 </div>
             )}
 

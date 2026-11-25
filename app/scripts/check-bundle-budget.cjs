@@ -165,11 +165,18 @@ if (expectedCatalogs.length && (packedCatalogs.length !== expectedCatalogs.lengt
 if (!packedCatalogs.length && dictionaries.length) fail('A language key table has no packed catalogs.');
 if (packedCatalogs.length && dictionaries.length === 1) {
   const table = JSON.parse(fs.readFileSync(path.join(distRoot, dictionaries[0].file), 'utf8'));
-  const validTable = table.format === 'td-keys-v2' && Array.isArray(table.keys)
-    && table.keys.every(key => typeof key === 'string' && key && key.split('.').every(part => part && !['__proto__', 'prototype', 'constructor'].includes(part)))
+  // Reconstruct v3 key positions independently of the browser decoder. Older
+  // release artifacts and assurance fixtures still use the flat v2 key list.
+  const grouped = table.format === 'td-keys-v3' && Array.isArray(table.groups)
+    && table.groups.every(group => Array.isArray(group) && group.length > 1 && group.every(part => typeof part === 'string'));
+  const keys = grouped
+    ? table.groups.flatMap(([prefix, ...names]) => names.map(name => prefix ? `${prefix}.${name}` : name))
+    : table.format === 'td-keys-v2' ? table.keys : undefined;
+  const validTable = Array.isArray(keys)
+    && keys.every(key => typeof key === 'string' && key && key.split('.').every(part => part && !['__proto__', 'prototype', 'constructor'].includes(part)))
     && Array.isArray(table.shared) && table.shared.every(value => typeof value === 'string')
-    && new Set(table.keys).size === table.keys.length
-    && table.id === crypto.createHash('sha256').update(JSON.stringify([table.keys, table.shared])).digest('hex');
+    && new Set(keys).size === keys.length
+    && table.id === crypto.createHash('sha256').update(JSON.stringify([keys, table.shared])).digest('hex');
   if (!validTable) fail('Invalid packed language key table.');
   else {
     function flatten(value, prefix = '', result = {}) {
@@ -184,11 +191,11 @@ if (packedCatalogs.length && dictionaries.length === 1) {
       const matching = packedCatalogs.filter(asset => path.basename(asset.file).startsWith(filename.slice(0, -5) + '-'));
       if (matching.length !== 1) { fail(`Packed canonical language ${filename} resolved to ${matching.length} assets.`); continue; }
       const packet = JSON.parse(fs.readFileSync(path.join(distRoot, matching[0].file), 'utf8'));
-      if (packet.language !== filename.slice(0, -5) || packet.id !== table.id || !Array.isArray(packet.values) || packet.values.length !== table.keys.length || packet.values.some(value => value !== null && typeof value !== 'string' && !(Number.isSafeInteger(value) && value >= 0 && value < table.shared.length))) {
+      if (packet.language !== filename.slice(0, -5) || packet.id !== table.id || !Array.isArray(packet.values) || packet.values.length !== keys.length || packet.values.some(value => value !== null && typeof value !== 'string' && !(Number.isSafeInteger(value) && value >= 0 && value < table.shared.length))) {
         fail(`Packed canonical language ${filename} has an invalid shape.`); continue;
       }
       const source = flatten(JSON.parse(fs.readFileSync(path.join(appRoot, 'src/i18n/locales', filename), 'utf8')));
-      const actual = Object.fromEntries(table.keys.flatMap((key, index) => packet.values[index] === null ? [] : [[key, typeof packet.values[index] === 'number' ? table.shared[packet.values[index]] : packet.values[index]]]));
+      const actual = Object.fromEntries(keys.flatMap((key, index) => packet.values[index] === null ? [] : [[key, typeof packet.values[index] === 'number' ? table.shared[packet.values[index]] : packet.values[index]]]));
       if (Object.keys(source).length !== Object.keys(actual).length || Object.entries(source).some(([key, value]) => actual[key] !== value)) {
         fail(`Packed canonical language ${filename} differs from its source.`);
       }

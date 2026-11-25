@@ -95,7 +95,15 @@
     "show_in_folder": "แสดงในโฟลเดอร์",
     "webdav_settings": "การตั้งค่า WebDAV"
   },
+  "existing_channel_help": {
+    "title": "ใช้ช่อง Telegram ที่มีอยู่",
+    "edit": "ในแอป Telegram ให้เปิดช่องที่คุณมีสิทธิ์เปลี่ยนชื่อ จากนั้นเปิดหน้าข้อมูลของช่องแล้วแก้ไขชื่อช่อง",
+    "rename": "เว้นวรรคหนึ่งครั้งที่ท้ายชื่อ ตามด้วย <tag>{{tag}}</tag> แล้วบันทึก เช่น เปลี่ยนชื่อจาก <before>{{before}}</before> เป็น <after>{{after}}</after>",
+    "sync": "ใช้บัญชีเดียวกันใน Telegram Drive แล้วเลือก {{sync}} ในแถบด้านข้าง ช่องจะปรากฏโดยใช้ชื่อเดิม",
+    "example": "รูปภาพ"
+  },
   "settings": {
+    "legacy_proxy_clear": "เลือก {{clear}} ข้างช่องรหัสผ่านเพื่อลบรหัสผ่านพร็อกซีเดิมและใช้การตั้งค่าเหล่านี้",
     "tab_sync": "Folder Sync",
     "sync": {
       "title": "Folder Sync",

@@ -1,14 +1,22 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { Settings } from '../types/settings';
+import { resolveLegacyProxyPassword } from './settingsPersistence';
 
 // Both commands persist the same native config file. Preserve user-edit order,
 // including across Settings remounts, and allow later writes after a failure.
 let pendingApply: Promise<unknown> = Promise.resolve();
 
-function apply(command: string, args: { req: Record<string, unknown> }): Promise<string> {
-    const operation = pendingApply.then(() => invoke<string>(command, args));
+function apply<T = string>(command: string, args?: { req: Record<string, unknown> }, legacyAction?: 'import' | 'clear'): Promise<T> {
+    const operation = pendingApply.then(async () => {
+        if (legacyAction) await resolveLegacyProxyPassword(legacyAction);
+        return invoke<T>(command, args);
+    });
     pendingApply = operation.catch(() => undefined);
     return operation;
+}
+
+export function clearProxyPassword(): Promise<void> {
+    return apply<void>('cmd_clear_proxy_secret', undefined, 'clear');
 }
 
 export function applyProxySettings(settings: Settings): Promise<string> {
@@ -21,7 +29,7 @@ export function applyProxySettings(settings: Settings): Promise<string> {
             username: settings.proxyUsername,
             password: settings.proxyPassword,
         },
-    });
+    }, 'import');
 }
 
 export function applyVpnSettings(settings: Settings): Promise<string> {
