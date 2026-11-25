@@ -15,8 +15,13 @@ const release = fs.readFileSync(path.join(root, 'release.yml'), 'utf8');
 for (const platform of ['macos', 'windows']) if (!release.includes(`if: env.PLATFORM_SIGNING == '${platform}'`)) throw new Error(`Missing conditional ${platform} signature gate`);
 const pages = fs.readFileSync(path.join(root, 'pages.yml'), 'utf8');
 if (/^  release:/m.test(pages)) throw new Error('Pages must not deploy directly from a release tag; its protected environment permits only main');
-if (!/^    if: github\.ref == 'refs\/heads\/main'$/m.test(pages)) throw new Error('Pages deployment must be restricted to main');
-if (/^concurrency:/m.test(pages) || !/^    concurrency:\n      group: pages\n      cancel-in-progress: true$/m.test(pages)) throw new Error('Pages concurrency must apply only to the permitted deployment job');
+const build = pages.split('\n  build:\n')[1]?.split('\n  deploy:\n')[0] ?? '';
+const deploy = pages.split('\n  deploy:\n')[1] ?? '';
+if (!build.includes('actions/upload-pages-artifact@') || !deploy.includes('actions/deploy-pages@')
+  || build.includes('actions/deploy-pages@') || deploy.includes('actions/upload-pages-artifact@')
+  || !/^    needs: build$/m.test(deploy)) throw new Error('Pages must upload its artifact in a completed build job before deploying');
+if (![build, deploy].every(job => /^    if: github\.ref == 'refs\/heads\/main'$/m.test(job))) throw new Error('Pages jobs must be restricted to main');
+if (/^concurrency:/m.test(pages) || /^    concurrency:/m.test(build) || !/^    concurrency:\n      group: pages\n      cancel-in-progress: true$/m.test(deploy)) throw new Error('Pages concurrency must apply only to the permitted deployment job');
 const refresh = release.split('\n  refresh-product-page:\n')[1];
 const stableMainDispatch = refresh
   && /^    needs: publish-release$/m.test(refresh)
