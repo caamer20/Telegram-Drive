@@ -110,3 +110,45 @@ pub struct Drive {
     pub name: String,
     pub icon: Option<String>,
 }
+
+/// Aggregate storage totals for the whole drive, broken down by media family.
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct GlobalStats {
+    pub total_size: u64,
+    pub image_count: u64,
+    pub image_size: u64,
+    pub video_count: u64,
+    pub video_size: u64,
+    pub music_count: u64,
+    pub music_size: u64,
+    pub document_count: u64,
+    pub document_size: u64,
+    pub app_count: u64,
+    pub app_size: u64,
+    pub exe_count: u64,
+    pub exe_size: u64,
+    pub other_count: u64,
+    pub other_size: u64,
+    pub total_files: u64,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct FolderStatItem {
+    pub total_size: u64,
+    pub total_files: u64,
+}
+
+/// Per-drive storage statistics: one global summary plus one entry per folder.
+/// Folder keys are the folder id as a string ("null" for Saved Messages) so the
+/// payload parses cleanly on the JS side.
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct DriveStats {
+    pub global: GlobalStats,
+    pub folders: std::collections::HashMap<String, FolderStatItem>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct TrashStats {
+    pub count: u64,
+    pub total_size: u64,
+}

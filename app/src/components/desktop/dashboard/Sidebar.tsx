@@ -1,6 +1,6 @@
 import i18n from '../../../i18n';
 import { lazy, Suspense, useEffect, useState } from 'react';
-import { HardDrive, Folder, Plus, RefreshCw, LogOut, ChevronLeft, ChevronRight, Settings2, Trash2, Check, X, Eye, EyeOff, Clock3, Star, Pin, FileWarning, CalendarClock, Copy, Database } from 'lucide-react';
+import { HardDrive, Folder, Plus, RefreshCw, LogOut, ChevronLeft, ChevronRight, Settings2, Trash2, Check, X, Eye, EyeOff, Clock3, Star, Pin, FileWarning, CalendarClock, Copy, Database, LayoutDashboard, Layers, ShieldCheck } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { SidebarItem } from './SidebarItem';
 import { BandwidthWidget } from './BandwidthWidget';
@@ -110,6 +110,7 @@ interface SidebarProps {
     isConnected: boolean;
     onSync: () => void;
     onLogout: () => void;
+    onSettings?: () => void;
     bandwidth: BandwidthStats | null;
     onAssignFolderToGroup: (folderId: number, groupId: number | null) => Promise<void>;
     onCreateGroup: (name: string, colorHex: string) => Promise<void>;
@@ -118,12 +119,16 @@ interface SidebarProps {
     createFolderRequest?: number;
     activeSmartView?: SmartView | null;
     onSmartViewChange?: (view: SmartView | null) => void;
+    homeActive?: boolean;
+    onHomeClick?: () => void;
+    vaultActive?: boolean;
+    onVaultClick?: () => void;
 }
 
 export function Sidebar({
     folders, groups = [], activeFolderId, setActiveFolderId, onDelete, onRename, onToggleVisibility, onExportInvite, onCreate,
-    isSyncing, isConnected, onSync, onLogout, bandwidth,
-    onAssignFolderToGroup, onCreateGroup, onUpdateGroup, onDeleteGroup, createFolderRequest = 0, activeSmartView = null, onSmartViewChange
+    isSyncing, isConnected, onSync, onLogout, bandwidth, onSettings,
+    onAssignFolderToGroup, onCreateGroup, onUpdateGroup, onDeleteGroup, createFolderRequest = 0, activeSmartView = null, onSmartViewChange, homeActive = false, onHomeClick, vaultActive = false, onVaultClick
 }: SidebarProps) {
     const [showNewFolderInput, setShowNewFolderInput] = useState(false);
     const { t } = useTranslation();
@@ -192,7 +197,7 @@ export function Sidebar({
                 </button>
             </div>
 
-                {settings.sidebarCollapsed ? <div className="desktop-chrome-row" aria-hidden="true" /> : (
+                {settings.sidebarCollapsed ? (<div className="desktop-chrome-row"><button type="button" onClick={() => updateSetting('sidebarCollapsed', false)} className="quiet-control flex h-7 w-7 items-center justify-center text-app-text-secondary hover:text-app-text" title="Groups"><Layers className="h-4 w-4" /></button></div>) : (
                     <div className="flex shrink-0 flex-col">
                         <div className="desktop-chrome-row justify-between">
                             <span className="text-ui font-medium text-app-text-tertiary">
@@ -346,6 +351,27 @@ export function Sidebar({
 
                 {/* Scrollable folder list */}
                 <nav className="min-h-0 flex-1 space-y-0.5 overflow-y-auto px-2 py-2">
+                    <button
+                        type="button"
+                        onClick={() => onHomeClick?.()}
+                        title="Home"
+                        aria-current={homeActive ? 'page' : undefined}
+                        className={`quiet-control flex h-8 w-full items-center ${settings.sidebarCollapsed ? 'justify-center' : 'gap-2 px-2.5'} text-ui font-semibold ${homeActive ? 'bg-app-selected text-app-accent' : 'text-app-text-secondary hover:text-app-text'}`}
+                    >
+                        <LayoutDashboard className="h-4 w-4 shrink-0" />
+                        {!settings.sidebarCollapsed && <span>Home</span>}
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => onVaultClick?.()}
+                        title="Vault"
+                        aria-current={vaultActive ? 'page' : undefined}
+                        className={`quiet-control flex h-8 w-full items-center ${settings.sidebarCollapsed ? 'justify-center' : 'gap-2 px-2.5'} text-ui font-medium ${vaultActive ? 'bg-app-selected text-fuchsia-300' : 'text-fuchsia-400/90 hover:text-fuchsia-300'}`}
+                    >
+                        <ShieldCheck className="h-4 w-4 shrink-0" />
+                        {!settings.sidebarCollapsed && <span>Vault</span>}
+                    </button>
+                    <div className="my-1 h-px bg-app-border-subtle" />
                     {([
                         ['recents', Clock3, t('common.recents')],
                         ['favorites', Star, t('common.favorites')],
@@ -383,6 +409,7 @@ export function Sidebar({
                         </button>
                     ))}
                     {!settings.sidebarCollapsed && <div className="my-2 h-px bg-app-border-subtle" />}
+                    {!homeActive && (<>
                     <SidebarItem
                         icon={HardDrive}
                         label={t('common.saved_messages')}
@@ -414,17 +441,11 @@ export function Sidebar({
                             />
                         ))}
                     </SortableContext>
+                    </>)}
                 </nav>
             {/* Sticky Create Folder section — always visible above the footer */}
             {!settings.sidebarCollapsed && (
                 <div className="shrink-0 overflow-y-auto border-t border-app-border-subtle px-2 py-2" style={{ maxHeight: '40%' }}>
-                    <button
-                        onClick={() => setShowNewFolderInput(true)}
-                        className="quiet-control flex h-9 w-full items-center gap-2 border border-dashed border-app-border px-3 text-ui font-medium text-app-text-secondary hover:border-app-border-strong hover:text-app-text"
-                    >
-                        <Plus className="w-4 h-4" />
-                        {t('common.create_folder')}
-                    </button>
                     <Suspense fallback={<div className="min-h-11" aria-hidden="true" />}>
                         <ExistingChannelHelp />
                     </Suspense>
@@ -443,6 +464,15 @@ export function Sidebar({
                             className={`h-2 w-2 flex-shrink-0 rounded-full ${isConnected ? 'bg-app-success' : 'bg-app-danger'}`}
                             title={isConnected ? t('common.connected_telegram') : t('common.disconnected_telegram')}
                         />
+                        {onSettings && (
+                            <button
+                                onClick={onSettings}
+                                className="quiet-control sidebar-settings-action p-2 text-yellow-400"
+                                title="Settings"
+                            >
+                                <Settings2 className="w-4 h-4" />
+                            </button>
+                        )}
                         <button
                             onClick={onSync}
                             disabled={isSyncing}
@@ -465,6 +495,17 @@ export function Sidebar({
                             <div className={`h-2 w-2 rounded-full ${isConnected ? 'bg-app-success' : 'bg-app-danger'}`}></div>
                             <span>{isConnected ? t('common.connected_telegram') : t('common.disconnected_telegram')}</span>
                         </div>
+
+                        {onSettings && (
+                            <button
+                                onClick={onSettings}
+                                className="quiet-control sidebar-settings-action flex h-[30px] w-full items-center justify-center gap-1.5 px-2.5 text-badge font-medium text-yellow-400"
+                                title="Settings"
+                            >
+                                <Settings2 className="w-3 h-3" />
+                                Settings
+                            </button>
+                        )}
 
                         <div className="flex gap-2">
                             <button

@@ -333,6 +333,24 @@ select:is(.app-select, .settings-select):focus-visible {
   border-color: color-mix(in srgb, var(--color-app-accent) 38%, var(--color-app-border));
 }
 
+.quiet-control.sidebar-settings-action {
+  background: linear-gradient(
+    135deg,
+    rgba(234, 179, 8, 0.16),
+    rgba(234, 179, 8, 0.06)
+  );
+  border: 1px solid rgba(234, 179, 8, 0.30);
+}
+
+.quiet-control.sidebar-settings-action:hover:not(:disabled) {
+  background: linear-gradient(
+    135deg,
+    rgba(234, 179, 8, 0.26),
+    rgba(234, 179, 8, 0.10)
+  );
+  border-color: rgba(234, 179, 8, 0.48);
+}
+
 .quiet-control.toolbar-upload-action {
   background: linear-gradient(
     135deg,

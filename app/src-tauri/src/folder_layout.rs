@@ -41,6 +41,8 @@ struct SavedFolder {
     is_public: bool,
     display_order: i64,
     group_id: Option<i64>,
+    #[serde(default)]
+    parent_id: Option<i64>,
 }
 
 fn text(error: impl std::fmt::Display) -> String {
@@ -74,7 +76,7 @@ fn read_tables(connection: &Connection) -> Result<SavedLayout, String> {
         });
     }
     let mut folders = connection
-        .prepare("SELECT channel_id, name, username, is_public, display_order, group_id FROM folder_metadata ORDER BY channel_id")
+        .prepare("SELECT channel_id, name, username, is_public, display_order, group_id, parent_id FROM folder_metadata ORDER BY channel_id")
         .map_err(text)?;
     while folders.next().map_err(text)? == State::Row {
         layout.folders.push(SavedFolder {
@@ -84,6 +86,7 @@ fn read_tables(connection: &Connection) -> Result<SavedLayout, String> {
             is_public: folders.read::<i64, _>(3).map_err(text)? != 0,
             display_order: folders.read(4).map_err(text)?,
             group_id: folders.read(5).map_err(text)?,
+            parent_id: folders.read(6).map_err(text)?,
         });
     }
     Ok(layout)
@@ -110,7 +113,7 @@ fn write_tables(connection: &Connection, layout: &SavedLayout) -> Result<(), Str
         }
         for folder in &layout.folders {
             let mut insert = connection
-                .prepare("INSERT INTO folder_metadata (channel_id, name, username, is_public, display_order, group_id) VALUES (?, ?, ?, ?, ?, ?)")
+                .prepare("INSERT INTO folder_metadata (channel_id, name, username, is_public, display_order, group_id, parent_id) VALUES (?, ?, ?, ?, ?, ?, ?)")
                 .map_err(text)?;
             insert.bind((1, folder.channel_id)).map_err(text)?;
             insert.bind((2, folder.name.as_str())).map_err(text)?;
@@ -120,6 +123,7 @@ fn write_tables(connection: &Connection, layout: &SavedLayout) -> Result<(), Str
                 .map_err(text)?;
             insert.bind((5, folder.display_order)).map_err(text)?;
             insert.bind((6, folder.group_id)).map_err(text)?;
+            insert.bind((7, folder.parent_id)).map_err(text)?;
             insert.next().map_err(text)?;
         }
         Ok::<(), String>(())

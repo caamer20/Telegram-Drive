@@ -359,6 +359,57 @@ pub async fn cmd_stage_file_passphrase(
     result
 }
 
+/// One vault-protected file, as stored in the local inventory.
+#[derive(Debug, Clone, Serialize)]
+pub struct VaultFileEntry {
+    pub folder_id: Option<i64>,
+    pub folder_name: Option<String>,
+    pub message_id: i64,
+    pub file_name: String,
+    pub file_size: i64,
+    pub created_at: String,
+    pub encryption_state: String,
+}
+
+/// List every file that is protected by the vault/passphrase layer. File names
+/// are already redacted in the inventory when metadata protection is on.
+#[tauri::command]
+pub async fn cmd_list_vault_files(
+    db: State<'_, crate::db::DbConnection>,
+) -> Result<Vec<VaultFileEntry>, String> {
+    let database = db.inner().clone();
+    crate::db::with_connection(database, move |conn| {
+        let mut statement = conn
+            .prepare(
+                "SELECT fi.folder_id, fm.name, fi.message_id, fi.file_name, fi.file_size, \
+                    fi.created_at, fi.encryption_state \
+                 FROM file_inventory fi \
+                 LEFT JOIN folder_metadata fm ON fi.folder_id = fm.channel_id \
+                 WHERE fi.encryption_state IS NOT NULL AND fi.encryption_state != 'plain' \
+                 ORDER BY fi.created_at DESC LIMIT 500",
+            )
+            .map_err(|error| error.to_string())?;
+        let mut files = Vec::new();
+        while let sqlite::State::Row = statement.next().map_err(|error| error.to_string())? {
+            files.push(VaultFileEntry {
+                folder_id: statement.read::<Option<i64>, _>(0).ok().flatten(),
+                folder_name: statement.read::<Option<String>, _>(1).ok().flatten(),
+                message_id: statement.read::<i64, _>(2).map_err(|error| error.to_string())?,
+                file_name: statement.read::<String, _>(3).map_err(|error| error.to_string())?,
+                file_size: statement.read::<i64, _>(4).map_err(|error| error.to_string())?,
+                created_at: statement
+                    .read::<Option<String>, _>(5)
+                    .ok()
+                    .flatten()
+                    .unwrap_or_default(),
+                encryption_state: statement.read::<String, _>(6).map_err(|error| error.to_string())?,
+            });
+        }
+        Ok(files)
+    })
+    .await
+}
+
 /// Get the current vault status.
 #[tauri::command]
 pub async fn cmd_get_vault_status(

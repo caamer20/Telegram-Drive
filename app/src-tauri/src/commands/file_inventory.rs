@@ -127,6 +127,95 @@ pub async fn upsert_inventory_chunk(
     .await
 }
 
+
+/// Drop one row after a verified remote delete so drive metrics change at once.
+pub async fn remove_entry(
+    database: DbConnection,
+    folder: Option<i64>,
+    message_id: i64,
+) -> Result<(), String> {
+    let key = folder_key(folder);
+    crate::db::with_connection(database, move |conn| {
+        let mut stmt = conn
+            .prepare("DELETE FROM file_inventory WHERE folder_key = ? AND message_id = ?")
+            .map_err(|e| e.to_string())?;
+        stmt.bind((1, key.as_str())).map_err(|e| e.to_string())?;
+        stmt.bind((2, message_id)).map_err(|e| e.to_string())?;
+        stmt.next().map_err(|e| e.to_string())?;
+        Ok(())
+    })
+    .await
+}
+
+/// Copy a row's metadata into another folder under a new message id.
+pub async fn copy_entry(
+    database: DbConnection,
+    source: Option<i64>,
+    message_id: i64,
+    target: Option<i64>,
+    new_message_id: i64,
+    remove_source: bool,
+) -> Result<(), String> {
+    let source_key = folder_key(source);
+    let target_key = folder_key(target);
+    let updated_at = crate::app_time::unix_seconds();
+    crate::db::with_connection(database, move |conn| {
+        conn.execute("BEGIN IMMEDIATE").map_err(|e| e.to_string())?;
+        let result = (|| {
+            let mut insert = conn
+                .prepare(
+                    "INSERT INTO file_inventory (
+                        folder_key, folder_id, message_id, file_name, file_size, mime_type,
+                        file_ext, created_at, icon_type, encryption_state, last_seen_scan, updated_at
+                     )
+                     SELECT ?, ?, ?, file_name, file_size, mime_type, file_ext, created_at,
+                            icon_type, encryption_state, last_seen_scan, ?
+                     FROM file_inventory WHERE folder_key = ? AND message_id = ?
+                     ON CONFLICT(folder_key, message_id) DO UPDATE SET
+                        file_name = excluded.file_name,
+                        file_size = excluded.file_size,
+                        mime_type = excluded.mime_type,
+                        file_ext = excluded.file_ext,
+                        created_at = excluded.created_at,
+                        icon_type = excluded.icon_type,
+                        encryption_state = excluded.encryption_state,
+                        updated_at = excluded.updated_at",
+                )
+                .map_err(|e| e.to_string())?;
+            insert.bind((1, target_key.as_str())).map_err(|e| e.to_string())?;
+            insert
+                .bind::<(usize, Option<i64>)>((2, target))
+                .map_err(|e| e.to_string())?;
+            insert.bind((3, new_message_id)).map_err(|e| e.to_string())?;
+            insert.bind((4, updated_at)).map_err(|e| e.to_string())?;
+            insert.bind((5, source_key.as_str())).map_err(|e| e.to_string())?;
+            insert.bind((6, message_id)).map_err(|e| e.to_string())?;
+            insert.next().map_err(|e| e.to_string())?;
+
+            if remove_source {
+                let mut delete = conn
+                    .prepare("DELETE FROM file_inventory WHERE folder_key = ? AND message_id = ?")
+                    .map_err(|e| e.to_string())?;
+                delete.bind((1, source_key.as_str())).map_err(|e| e.to_string())?;
+                delete.bind((2, message_id)).map_err(|e| e.to_string())?;
+                delete.next().map_err(|e| e.to_string())?;
+            }
+            Ok::<(), String>(())
+        })();
+        match result {
+            Ok(()) => conn
+                .execute("COMMIT")
+                .map_err(|e| e.to_string())
+                .map(|_| ()),
+            Err(error) => {
+                let _ = conn.execute("ROLLBACK");
+                Err(error)
+            }
+        }
+    })
+    .await
+}
+
 pub async fn complete_inventory_scan(
     database: DbConnection,
     folder_key: String,

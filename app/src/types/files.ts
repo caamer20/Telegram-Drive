@@ -43,6 +43,8 @@ export interface TelegramFolder {
   is_public?: boolean;
   group_id?: number | null;
   display_order?: number;
+  /** Locally saved accent colour (hex) for this folder, if any. */
+  color?: string;
 }
 
 export interface FolderGroup {

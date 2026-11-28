@@ -32,14 +32,18 @@ const KNOWN_TABLES: &[&str] = &[
     "file_activity",
     "file_inventory",
     "file_inventory_state",
+    "folder_appearance",
     "folder_metadata",
     "groups",
     "schema_version",
     "shared_links",
+    "shared_folders",
     "sync_log",
     "sync_pairs",
     "sync_settings",
     "sync_state",
+    "trash_items",
+    "trash_state",
 ];
 
 const SHARED_LINK_COLUMNS: &[&str] = &[
@@ -526,6 +530,32 @@ fn validate_share_owner_migration(conn: &Connection) -> Result<(), String> {
             "Share ownership migration does not match this build. No changes were made.".into(),
         );
     }
+    Ok(())
+}
+
+/// Add the folder-hierarchy column (`parent_id`) for databases created before
+/// folders could be nested. Fresh databases already declare it in the schema.
+pub fn install_folder_parent_column(conn: &Connection) -> Result<(), String> {
+    let table_exists = {
+        let mut statement = conn
+            .prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='folder_metadata'")
+            .map_err(|e| e.to_string())?;
+        matches!(statement.next().map_err(|e| e.to_string())?, State::Row)
+    };
+    if !table_exists {
+        return Ok(());
+    }
+    let has_column = {
+        let mut statement = conn
+            .prepare("SELECT 1 FROM pragma_table_info('folder_metadata') WHERE name='parent_id'")
+            .map_err(|e| e.to_string())?;
+        matches!(statement.next().map_err(|e| e.to_string())?, State::Row)
+    };
+    if has_column {
+        return Ok(());
+    }
+    conn.execute("ALTER TABLE folder_metadata ADD COLUMN parent_id INTEGER")
+        .map_err(|e| e.to_string())?;
     Ok(())
 }
 

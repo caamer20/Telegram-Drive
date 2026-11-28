@@ -97,6 +97,16 @@ export function useTelegramConnection(onLogoutParent: () => void) {
         }
     }, []);
 
+    // Re-read the folder list (e.g. after a folder was moved into another one).
+    const refreshFolders = useCallback(async () => {
+        try {
+            const list = await invoke<TelegramFolder[]>('cmd_get_enriched_folders');
+            setFolders(list);
+        } catch (e) {
+            console.error('Failed to refresh folders:', e);
+        }
+    }, [setFolders]);
+
     // Load persisted store and restore saved folders.
     useEffect(() => {
         const initStore = async () => {
@@ -513,6 +523,7 @@ export function useTelegramConnection(onLogoutParent: () => void) {
         handleAssignFolderToGroup,
         handleReorderFolders,
         handleUpdateGroupOrder,
-        fetchGroups
+        fetchGroups,
+        refreshFolders
     };
 }

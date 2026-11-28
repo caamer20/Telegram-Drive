@@ -269,3 +269,108 @@ fn revoke_share_for_account(
     stmt.next().map_err(|e| e.to_string())?;
     Ok(())
 }
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SharedFolderInfo {
+    pub folder_id: i64,
+    pub folder_name: String,
+    pub invite_link: String,
+    pub created_at: i64,
+    pub file_count: i64,
+    pub total_size: i64,
+}
+
+fn now_secs() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64
+}
+
+/// Record that a folder has been shared via an invite link. The registry is
+/// local: it lets the home dashboard surface which folders are public.
+#[tauri::command]
+pub async fn cmd_share_folder(
+    folder_id: i64,
+    invite_link: String,
+    db_pool: State<'_, DbConnection>,
+) -> Result<(), String> {
+    let database = db_pool.inner().clone();
+    crate::db::with_connection(database, move |conn| {
+        let now = now_secs();
+        let mut stmt = conn
+            .prepare("INSERT OR REPLACE INTO shared_folders (folder_id, invite_link, created_at, is_active) VALUES (?1, ?2, ?3, 1)")
+            .map_err(|e| e.to_string())?;
+        stmt.bind((1, folder_id)).map_err(|e| e.to_string())?;
+        stmt.bind((2, invite_link.as_str())).map_err(|e| e.to_string())?;
+        stmt.bind((3, now)).map_err(|e| e.to_string())?;
+        stmt.next().map_err(|e| e.to_string())?;
+        Ok(())
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn cmd_list_shared_folders(
+    db_pool: State<'_, DbConnection>,
+) -> Result<Vec<SharedFolderInfo>, String> {
+    let database = db_pool.inner().clone();
+    crate::db::with_connection(database, move |conn| {
+        let mut stmt = conn
+            .prepare(
+                "SELECT sf.folder_id, sf.invite_link, sf.created_at,
+                        COALESCE(fc.file_count, 0) AS file_count,
+                        COALESCE(fc.total_size, 0) AS total_size
+                 FROM shared_folders sf
+                 LEFT JOIN (
+                     SELECT folder_id, COUNT(*) AS file_count, COALESCE(SUM(file_size), 0) AS total_size
+                     FROM file_activity
+                     WHERE folder_id IS NOT NULL
+                     GROUP BY folder_id
+                 ) fc ON sf.folder_id = fc.folder_id
+                 WHERE sf.is_active = 1
+                 ORDER BY sf.created_at DESC",
+            )
+            .map_err(|e| e.to_string())?;
+
+        let mut folders = Vec::new();
+        while let sqlite::State::Row = stmt.next().map_err(|e| e.to_string())? {
+            let folder_id = stmt.read::<i64, _>("folder_id").map_err(|e| e.to_string())?;
+            let invite_link = stmt
+                .read::<String, _>("invite_link")
+                .map_err(|e| e.to_string())?;
+            let created_at = stmt.read::<i64, _>("created_at").map_err(|e| e.to_string())?;
+            let file_count = stmt.read::<i64, _>("file_count").map_err(|e| e.to_string())?;
+            let total_size = stmt.read::<i64, _>("total_size").map_err(|e| e.to_string())?;
+
+            folders.push(SharedFolderInfo {
+                folder_id,
+                folder_name: format!("Shared Folder {folder_id}"),
+                invite_link,
+                created_at,
+                file_count,
+                total_size,
+            });
+        }
+        Ok(folders)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn cmd_unshare_folder(
+    folder_id: i64,
+    db_pool: State<'_, DbConnection>,
+) -> Result<(), String> {
+    let database = db_pool.inner().clone();
+    crate::db::with_connection(database, move |conn| {
+        let mut stmt = conn
+            .prepare("DELETE FROM shared_folders WHERE folder_id = ?1")
+            .map_err(|e| e.to_string())?;
+        stmt.bind((1, folder_id)).map_err(|e| e.to_string())?;
+        stmt.next().map_err(|e| e.to_string())?;
+        Ok(())
+    })
+    .await
+}

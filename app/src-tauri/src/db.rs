@@ -172,6 +172,7 @@ pub(crate) fn init_db_at(dir: &std::path::Path) -> Result<DbConnection, String> 
                     is_public INTEGER NOT NULL DEFAULT 0,
                     display_order INTEGER NOT NULL DEFAULT 0,
                     group_id INTEGER,
+                    parent_id INTEGER,
                     FOREIGN KEY(group_id) REFERENCES groups(id) ON DELETE SET NULL
                 );
                 CREATE TABLE IF NOT EXISTS file_activity (
@@ -192,7 +193,33 @@ pub(crate) fn init_db_at(dir: &std::path::Path) -> Result<DbConnection, String> 
                 );
                 CREATE INDEX IF NOT EXISTS idx_file_activity_recent ON file_activity(last_opened_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_file_activity_favorite ON file_activity(is_favorite, last_opened_at DESC);
-                CREATE INDEX IF NOT EXISTS idx_file_activity_pinned ON file_activity(is_pinned, last_opened_at DESC);"
+                CREATE INDEX IF NOT EXISTS idx_file_activity_pinned ON file_activity(is_pinned, last_opened_at DESC);
+                CREATE TABLE IF NOT EXISTS trash_items (
+                    trash_message_id INTEGER PRIMARY KEY,
+                    trash_folder_id INTEGER NOT NULL,
+                    original_folder_id INTEGER NOT NULL,
+                    original_message_id INTEGER NOT NULL,
+                    file_name TEXT NOT NULL,
+                    file_size INTEGER NOT NULL DEFAULT 0,
+                    created_at INTEGER NOT NULL,
+                    expires_at INTEGER NOT NULL,
+                    restored INTEGER NOT NULL DEFAULT 0
+                );
+                CREATE INDEX IF NOT EXISTS idx_trash_items_expiry ON trash_items(restored, expires_at);
+                CREATE TABLE IF NOT EXISTS trash_state (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS shared_folders (
+                    folder_id INTEGER PRIMARY KEY,
+                    invite_link TEXT NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    is_active INTEGER NOT NULL DEFAULT 1
+                );
+                CREATE TABLE IF NOT EXISTS folder_appearance (
+                    folder_id INTEGER PRIMARY KEY,
+                    color TEXT NOT NULL
+                );"
             ) {
                 Ok(_) => {
                     last_err.clear();
@@ -398,6 +425,10 @@ pub(crate) fn init_db_at(dir: &std::path::Path) -> Result<DbConnection, String> 
 
     retry_initialization_step("share ownership migration", || {
         db_migrations::install_share_ownership(&conn)
+    })?;
+
+    retry_initialization_step("folder hierarchy migration", || {
+        db_migrations::install_folder_parent_column(&conn)
     })?;
 
     log::info!("SQLite database initialized successfully using sqlite crate.");

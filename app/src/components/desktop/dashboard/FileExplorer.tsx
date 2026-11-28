@@ -39,6 +39,8 @@ interface FileExplorerProps {
     onShare?: (file: TelegramFile) => void;
     onRename?: (file: TelegramFile) => void;
     onFileMove?: (file: TelegramFile) => void;
+    onCopy?: (file: TelegramFile) => void;
+    onProperties?: (file: TelegramFile) => void;
     folders?: TelegramFolder[];
     cardScale: number;
     sortField: SortField;
@@ -85,7 +87,7 @@ function useGridColumns(containerRef: React.RefObject<HTMLDivElement | null>) {
 
 export function FileExplorer({
     files, loading, showEmptyFolder = true, error, viewMode, selectedIds, activeFolderId,
-    onFileClick, onDelete, onDownload, onPreview, onManualUpload, onFolderUpload, showFolderUpload, onToggleSelection, onShare, onRename, onFileMove,
+    onFileClick, onDelete, onDownload, onPreview, onManualUpload, onFolderUpload, showFolderUpload, onToggleSelection, onShare, onRename, onFileMove, onCopy, onProperties,
     folders, cardScale, sortField, sortDirection, onSortChange, onToggleFavorite, onTogglePinned, syncProgress, selectionDisabled = false
 }: FileExplorerProps) {
     const [contextMenu, setContextMenu] = useState<{ x: number; y: number; file: TelegramFile } | null>(null);
@@ -422,6 +424,14 @@ export function FileExplorer({
                     } : undefined}
                     onMove={onFileMove ? () => {
                         onFileMove(contextMenu.file);
+                        setContextMenu(null);
+                    } : undefined}
+                    onCopy={onCopy ? () => {
+                        onCopy(contextMenu.file);
+                        setContextMenu(null);
+                    } : undefined}
+                    onProperties={onProperties ? () => {
+                        onProperties(contextMenu.file);
                         setContextMenu(null);
                     } : undefined}
                     folders={folders}

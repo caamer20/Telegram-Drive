@@ -23,6 +23,12 @@ const AccessibilityAudit = import.meta.env.DEV
 const AccessibilityFixtures = import.meta.env.DEV
   ? React.lazy(() => import("./components/dev/AccessibilityFixtures"))
   : null;
+const FeaturePreviewShell = import.meta.env.DEV
+  ? React.lazy(() => import("./components/dev/FeaturePreviewShell").then(m => ({ default: m.FeaturePreviewShell })))
+  : null;
+const AppPreview = import.meta.env.DEV
+  ? React.lazy(() => import("./components/dev/AppPreview").then(m => ({ default: m.AppPreview })))
+  : null;
 
 import { Toaster, toast } from "sonner";
 import { useTheme } from "./context/ThemeContext";
@@ -299,6 +305,28 @@ function App() {
   const showAccessibilityFixture = Boolean(
     AccessibilityFixtures && typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('a11y-fixture')
   );
+  const showFeaturePreview = Boolean(
+    FeaturePreviewShell && typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('feature-preview')
+  );
+  const showAppPreview = Boolean(
+    AppPreview && typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('app-preview')
+  );
+  if (showAppPreview && AppPreview) {
+    return (
+      <Suspense fallback={<div className="h-screen bg-app-canvas" />}>
+        <AppPreview />
+      </Suspense>
+    );
+  }
+  // The preview runs in a plain browser: render its own minimal provider tree
+  // because the normal AppProviders assume a live Tauri backend.
+  if (showFeaturePreview && FeaturePreviewShell) {
+    return (
+      <Suspense fallback={<div className="h-screen bg-app-canvas" />}>
+        <FeaturePreviewShell />
+      </Suspense>
+    );
+  }
 
   return (
     <AppProviders>

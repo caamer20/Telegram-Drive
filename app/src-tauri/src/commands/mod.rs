@@ -58,6 +58,7 @@ pub mod crash_reporting;
 pub mod download_destination;
 pub mod file_activity;
 pub mod file_inventory;
+pub mod folder_appearance;
 pub mod folder_groups;
 pub mod fs;
 pub mod network;
@@ -75,6 +76,7 @@ pub mod streaming;
 )]
 pub mod supporter;
 pub mod sync;
+pub mod trash;
 pub mod utils;
 pub mod video_metadata;
 pub mod webdav_settings;
@@ -85,6 +87,7 @@ pub use auth::*;
 pub use crash_reporting::*;
 pub use file_activity::*;
 pub use file_inventory::*;
+pub use folder_appearance::*;
 pub use folder_groups::*;
 pub use fs::*;
 pub use network::*;
@@ -98,6 +101,7 @@ pub use streaming::*;
 #[cfg(not(target_os = "ios"))]
 pub use supporter::*;
 pub use sync::*;
+pub use trash::*;
 pub use utils::*;
 pub use video_metadata::*;
 

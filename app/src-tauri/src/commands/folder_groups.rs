@@ -1,7 +1,7 @@
 use crate::db::DbConnection;
 use crate::models::{FolderGroup, FolderMetadata};
 use std::path::PathBuf;
-use tauri::{Manager, State};
+use tauri::{Emitter, Manager, State};
 
 /// Application data root and the signed-in account, when there is one.
 pub(crate) fn layout_scope(app: &tauri::AppHandle) -> Option<(PathBuf, Option<i64>)> {
@@ -45,7 +45,7 @@ pub async fn cmd_get_enriched_folders(
 pub(crate) fn enriched_folders(conn: &sqlite::Connection) -> Result<Vec<FolderMetadata>, String> {
     {
         let query = "
-        SELECT fm.channel_id, fm.name, fm.username, fm.is_public, fm.display_order, fm.group_id 
+        SELECT fm.channel_id, fm.name, fm.username, fm.is_public, fm.display_order, fm.group_id, fm.parent_id 
         FROM folder_metadata fm
         LEFT JOIN groups g ON fm.group_id = g.id
         ORDER BY 
@@ -75,10 +75,11 @@ pub(crate) fn enriched_folders(conn: &sqlite::Connection) -> Result<Vec<FolderMe
                 .ok()
                 .flatten()
                 .map(|id| id as i32);
+            let parent_id = stmt.read::<Option<i64>, _>("parent_id").ok().flatten();
 
             folders.push(FolderMetadata {
                 id: channel_id,
-                parent_id: None,
+                parent_id,
                 name,
                 username,
                 is_public,
@@ -230,8 +231,7 @@ pub(crate) fn assign_folder_to_group(
     conn: &sqlite::Connection,
     channel_id: i64,
     group_id: Option<i32>,
-) -> Result<(), String> {
-    {
+) -> Result<(), String> {    {
         let mut stmt = conn
             .prepare("UPDATE folder_metadata SET group_id = ? WHERE channel_id = ?")
             .map_err(|e| e.to_string())?;
@@ -245,6 +245,57 @@ pub(crate) fn assign_folder_to_group(
         stmt.next().map_err(|e| e.to_string())?;
         Ok(())
     }
+}
+
+#[tauri::command]
+pub async fn cmd_move_folder(
+    folder_id: i64,
+    new_parent_id: Option<i64>,
+    db_pool: State<'_, DbConnection>,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    if new_parent_id == Some(folder_id) {
+        return Err("A folder cannot be moved inside itself.".to_string());
+    }
+    let database = db_pool.inner().clone();
+    crate::db::with_connection(database, move |conn| {
+        // Walk up from the requested parent; if we meet the folder being moved
+        // the move would create a cycle.
+        let mut cursor = new_parent_id;
+        let mut hops = 0;
+        while let Some(parent) = cursor {
+            if parent == folder_id {
+                return Err("Cannot move a folder inside its own subfolder.".to_string());
+            }
+            if hops >= 64 {
+                break;
+            }
+            let mut lookup = conn
+                .prepare("SELECT parent_id FROM folder_metadata WHERE channel_id = ?")
+                .map_err(|e| e.to_string())?;
+            lookup.bind((1, parent)).map_err(|e| e.to_string())?;
+            if !matches!(
+                lookup.next().map_err(|e| e.to_string())?,
+                sqlite::State::Row
+            ) {
+                break;
+            }
+            cursor = lookup.read::<Option<i64>, _>(0).ok().flatten();
+            hops += 1;
+        }
+
+        let mut stmt = conn
+            .prepare("UPDATE folder_metadata SET parent_id = ? WHERE channel_id = ?")
+            .map_err(|e| e.to_string())?;
+        stmt.bind::<(usize, Option<i64>)>((1, new_parent_id))
+            .map_err(|e| e.to_string())?;
+        stmt.bind((2, folder_id)).map_err(|e| e.to_string())?;
+        stmt.next().map_err(|e| e.to_string())?;
+        Ok(())
+    })
+    .await?;
+    let _ = app.emit("drive-changed", ());
+    Ok(())
 }
 
 #[tauri::command]

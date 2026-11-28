@@ -1,3 +1,859 @@
 {
-  "allowlist": []
+  "allowlist": [
+    {
+      "file": "src\\components\\desktop\\dashboard\\ContextMenu.tsx",
+      "literal": "Copy to Folder",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\ContextMenu.tsx",
+      "literal": "Properties",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\CopyToFolderModal.tsx",
+      "literal": "Close",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\CopyToFolderModal.tsx",
+      "literal": "Copy to Folder",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\CopyToFolderModal.tsx",
+      "literal": "No other folders available. Create one first!",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\CopyToFolderModal.tsx",
+      "literal": "Saved Messages",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\HomeDashboard.tsx",
+      "literal": "· 20-day retention",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\HomeDashboard.tsx",
+      "literal": "Back",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\HomeDashboard.tsx",
+      "literal": "By file type",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\HomeDashboard.tsx",
+      "literal": "Delete Folder",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\HomeDashboard.tsx",
+      "literal": "Drive Overview",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\HomeDashboard.tsx",
+      "literal": "files across",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\HomeDashboard.tsx",
+      "literal": "folders",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\HomeDashboard.tsx",
+      "literal": "In trash",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\HomeDashboard.tsx",
+      "literal": "items",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\HomeDashboard.tsx",
+      "literal": "Items",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\HomeDashboard.tsx",
+      "literal": "items ·",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\HomeDashboard.tsx",
+      "literal": "My folders",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\HomeDashboard.tsx",
+      "literal": "Name",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\HomeDashboard.tsx",
+      "literal": "New Folder",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\HomeDashboard.tsx",
+      "literal": "No custom folders found. Click \"New Folder\" to create one.",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\HomeDashboard.tsx",
+      "literal": "nothing shared yet",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\HomeDashboard.tsx",
+      "literal": "Properties",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\HomeDashboard.tsx",
+      "literal": "Public",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\HomeDashboard.tsx",
+      "literal": "Rename Folder",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\HomeDashboard.tsx",
+      "literal": "Saved Messages",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\HomeDashboard.tsx",
+      "literal": "Share Folder",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\HomeDashboard.tsx",
+      "literal": "shared ·",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\HomeDashboard.tsx",
+      "literal": "Shared folders",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\HomeDashboard.tsx",
+      "literal": "Size",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\HomeDashboard.tsx",
+      "literal": "Storage, folders and activity at a glance",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\HomeDashboard.tsx",
+      "literal": "Total files",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\HomeDashboard.tsx",
+      "literal": "Total used",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\HomeDashboard.tsx",
+      "literal": "Trash",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\PropertiesModal.tsx",
+      "literal": "`${effectiveItems.length} Selected Items`",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\PropertiesModal.tsx",
+      "literal": "Bulk Selection",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\PropertiesModal.tsx",
+      "literal": "Close",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\PropertiesModal.tsx",
+      "literal": "Close",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\PropertiesModal.tsx",
+      "literal": "File",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\PropertiesModal.tsx",
+      "literal": "Telegram Channel",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\Sidebar.tsx",
+      "literal": "Home",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\StorageStatsModal.tsx",
+      "literal": "Close",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\StorageStatsModal.tsx",
+      "literal": "How your drive space is being used",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\StorageStatsModal.tsx",
+      "literal": "Largest folders",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\StorageStatsModal.tsx",
+      "literal": "No storage data yet.",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\StorageStatsModal.tsx",
+      "literal": "Storage Analytics",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\StorageStatsModal.tsx",
+      "literal": "Used",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\TrashView.tsx",
+      "literal": "Back",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\TrashView.tsx",
+      "literal": "day",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\TrashView.tsx",
+      "literal": "Deleted files stay here for 20 days before they are removed for good.",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\TrashView.tsx",
+      "literal": "item",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\TrashView.tsx",
+      "literal": "left ·",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\TrashView.tsx",
+      "literal": "Purge expired",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\TrashView.tsx",
+      "literal": "Restore",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\TrashView.tsx",
+      "literal": "s",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\TrashView.tsx",
+      "literal": "s",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\TrashView.tsx",
+      "literal": "Trash",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\TrashView.tsx",
+      "literal": "Trash is empty.",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\DesktopDashboard.tsx",
+      "literal": "Background",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\DesktopDashboard.tsx",
+      "literal": "Home",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\DesktopDashboard.tsx",
+      "literal": "Storage",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\DesktopDashboard.tsx",
+      "literal": "Trash",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\hooks\\useFileOperations.ts",
+      "literal": "Copied to folder",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\HomeDashboard.tsx",
+      "literal": "Change Color",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\HomeDashboard.tsx",
+      "literal": "Reset color",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\DesktopDashboard.tsx",
+      "literal": "We recovered your session — transfers are still queued.",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\DesktopDashboard.tsx",
+      "literal": "Open a folder to select multiple files safely.",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\DesktopDashboard.tsx",
+      "literal": "Drive Overview",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\DesktopDashboard.tsx",
+      "literal": "· Storage, folders and activity at a glance",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\DesktopDashboard.tsx",
+      "literal": "New Folder",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\DesktopDashboard.tsx",
+      "literal": "result",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\DesktopDashboard.tsx",
+      "literal": "s",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\DesktopDashboard.tsx",
+      "literal": "for",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\DesktopDashboard.tsx",
+      "literal": "Settings",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\Sidebar.tsx",
+      "literal": "Groups",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\Sidebar.tsx",
+      "literal": "Settings",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\DesktopDashboard.tsx",
+      "literal": "Search files…",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\DesktopDashboard.tsx",
+      "literal": "Search files",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\DesktopDashboard.tsx",
+      "literal": "New folder",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\DesktopDashboard.tsx",
+      "literal": "Upload folder",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\DesktopDashboard.tsx",
+      "literal": "Share",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\DesktopDashboard.tsx",
+      "literal": "Share selected files",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\DesktopDashboard.tsx",
+      "literal": "Manage share links",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\DesktopDashboard.tsx",
+      "literal": "Vault",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\DesktopDashboard.tsx",
+      "literal": "More",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\DesktopDashboard.tsx",
+      "literal": "Select all",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\DesktopDashboard.tsx",
+      "literal": "Download",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\DesktopDashboard.tsx",
+      "literal": "Move",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\DesktopDashboard.tsx",
+      "literal": "Delete",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\DesktopDashboard.tsx",
+      "literal": "Clear selection",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\DesktopDashboard.tsx",
+      "literal": "Keyboard shortcuts",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\DesktopDashboard.tsx",
+      "literal": "Help & FAQ",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\HomeDashboard.tsx",
+      "literal": "Deselect folder",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\HomeDashboard.tsx",
+      "literal": "Select folder",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\DesktopDashboard.tsx",
+      "literal": "Select a single folder to share",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\DesktopDashboard.tsx",
+      "literal": "Invite link copied",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\DesktopDashboard.tsx",
+      "literal": "folder",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\DesktopDashboard.tsx",
+      "literal": "selected",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\DesktopDashboard.tsx",
+      "literal": "Clear",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\DesktopDashboard.tsx",
+      "literal": "Select a single folder to move",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\DesktopDashboard.tsx",
+      "literal": "Folder is empty",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\DesktopDashboard.tsx",
+      "literal": "Folder moved.",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\DesktopDashboard.tsx",
+      "literal": "Failed to move folder.",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\Sidebar.tsx",
+      "literal": "Vault",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\TopBar.tsx",
+      "literal": "Proxy status: checking…",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\TopBar.tsx",
+      "literal": "`Proxy active: ${proxyStatus.latency_ms}ms latency`",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\TopBar.tsx",
+      "literal": "Proxy status: unreachable",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\TopBar.tsx",
+      "literal": "`${proxyStatus.latency_ms}ms`",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\TopBar.tsx",
+      "literal": "Breadcrumb",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\VaultModal.tsx",
+      "literal": "Vault",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\VaultModal.tsx",
+      "literal": "Not created yet",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\VaultModal.tsx",
+      "literal": "Unlocked — protected files can open",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\VaultModal.tsx",
+      "literal": "Locked",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\VaultModal.tsx",
+      "literal": "Close",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\VaultModal.tsx",
+      "literal": "Create a vault passphrase. It encrypts files you mark as protected and is never stored —\n                                keep a recovery key. Minimum 8 characters.",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\VaultModal.tsx",
+      "literal": "New vault passphrase",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\VaultModal.tsx",
+      "literal": "Confirm passphrase",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\VaultModal.tsx",
+      "literal": "Create vault",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\VaultModal.tsx",
+      "literal": "Unlock to open protected files.",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\VaultModal.tsx",
+      "literal": "Vault passphrase",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\VaultModal.tsx",
+      "literal": "Unlock vault",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\VaultModal.tsx",
+      "literal": "Vault unlocked",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\VaultModal.tsx",
+      "literal": "Lock now",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\VaultModal.tsx",
+      "literal": "Protected files",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\VaultModal.tsx",
+      "literal": "file",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\VaultModal.tsx",
+      "literal": "s",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\VaultModal.tsx",
+      "literal": "Loading…",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\VaultModal.tsx",
+      "literal": "Nothing is protected yet. Set",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\VaultModal.tsx",
+      "literal": "Default mode → Vault",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\VaultModal.tsx",
+      "literal": "in Settings → Encryption,\n                                or tick “Protect this upload” in the upload dialog, then upload files. They stay in their folder\n                                and show a lock badge.",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\VaultModal.tsx",
+      "literal": "Saved Messages",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\VaultModal.tsx",
+      "literal": "How files get in",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\VaultModal.tsx",
+      "literal": "Open Settings → Encryption and set",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\VaultModal.tsx",
+      "literal": "Default mode: Vault",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\VaultModal.tsx",
+      "literal": "Upload (or re-upload) files — each one is encrypted before it leaves the device.",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\VaultModal.tsx",
+      "literal": "They stay in their normal folder with a lock badge; this list collects them.",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\VaultModal.tsx",
+      "literal": "Encryption & recovery settings",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\VaultModal.tsx",
+      "literal": "Local vault · never leaves device",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\TopBar.tsx",
+      "literal": "Encrypt",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\VaultModal.tsx",
+      "literal": ", then upload — new uploads are encrypted.",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\VaultModal.tsx",
+      "literal": "Already uploaded:",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\VaultModal.tsx",
+      "literal": "select the file(s) in their folder and press",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\VaultModal.tsx",
+      "literal": "Encrypt",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\VaultModal.tsx",
+      "literal": "in the selection bar (it re-uploads them through the vault and removes the plaintext copy).",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\DesktopDashboard.tsx",
+      "literal": "Selected files are already protected",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\DesktopDashboard.tsx",
+      "literal": "Temporary folder is unavailable",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\DesktopDashboard.tsx",
+      "literal": "`Could not encrypt ${file.name}: ${String(error)}`",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\DesktopDashboard.tsx",
+      "literal": "`${done} file${done === 1 ? '' : 's'} encrypted into the vault`",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\FolderTreePicker.tsx",
+      "literal": "Close",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\FolderTreePicker.tsx",
+      "literal": "Find a folder…",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\FolderTreePicker.tsx",
+      "literal": "Saved Messages",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\FolderTreePicker.tsx",
+      "literal": "Collapse",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\FolderTreePicker.tsx",
+      "literal": "Expand",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\FolderTreePicker.tsx",
+      "literal": "here",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\FolderTreePicker.tsx",
+      "literal": "No folder matches that name.",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\FolderTreePicker.tsx",
+      "literal": "No other folders yet. Create one first.",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\FolderTreePicker.tsx",
+      "literal": "Destination",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\FolderTreePicker.tsx",
+      "literal": "Cancel",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\TopBar.tsx",
+      "literal": "Copy",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\DesktopDashboard.tsx",
+      "literal": "Select a single folder to copy",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\DesktopDashboard.tsx",
+      "literal": "Copying folder…",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\DesktopDashboard.tsx",
+      "literal": "Folder copied.",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\DesktopDashboard.tsx",
+      "literal": "`Copy failed: ${String(error)}`",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\DesktopDashboard.tsx",
+      "literal": "Select files to copy",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\DesktopDashboard.tsx",
+      "literal": "`Move ${moveRequest.files.length} files`",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\DesktopDashboard.tsx",
+      "literal": "Move to folder",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\DesktopDashboard.tsx",
+      "literal": "`Move “${folderMoveTarget.name}”`",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\DesktopDashboard.tsx",
+      "literal": "`Copy “${folderCopySource.name}”`",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\DesktopDashboard.tsx",
+      "literal": "`Copy ${copyRequest.files.length} files`",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\DesktopDashboard.tsx",
+      "literal": "Copy to folder",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\DesktopDashboard.tsx",
+      "literal": "Copy",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    }
+  ]
 }

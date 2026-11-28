@@ -11,6 +11,8 @@ import {
     HelpCircle,
     LayoutGrid,
     List,
+    Lock,
+    Copy as CopyIcon,
     Moon,
     MoreHorizontal,
     Settings,
@@ -39,11 +41,16 @@ const filterPill = (active: boolean) => `quiet-control min-h-8 border px-3 text-
 interface TopBarProps {
     currentFolderName: string;
     fileCount?: number;
+    folderCount?: number;
+    path?: { id: number | null; name: string }[];
+    onNavigatePath?: (id: number | null) => void;
     selectedIds: number[];
     onShowMoveModal: () => void;
     onBulkDownload: () => void;
     onBulkDelete: () => void;
     onBulkShare: () => void;
+    onEncryptSelected?: () => void;
+    onCopySelected?: () => void;
     onDownloadFolder: () => void;
     onClearSelection: () => void;
     onUploadClick: () => void;
@@ -68,11 +75,16 @@ interface TopBarProps {
 export function TopBar({
     currentFolderName,
     fileCount,
+    folderCount,
+    path,
+    onNavigatePath,
     selectedIds,
     onShowMoveModal,
     onBulkDownload,
     onBulkDelete,
     onBulkShare,
+    onEncryptSelected,
+    onCopySelected,
     onDownloadFolder,
     onClearSelection,
     onUploadClick,
@@ -189,9 +201,31 @@ export function TopBar({
             <section className="space-y-3 border-b border-app-border-subtle px-4 pb-3 pt-4 md:px-6" aria-label={t('common.files')} onKeyDown={stopControlShortcuts}>
                 <div className="flex flex-wrap items-end justify-between gap-3">
                     <div className="min-w-0">
-                        <h1 className="truncate text-xl font-semibold tracking-[-0.01em] text-app-text" title={currentFolderName}>{currentFolderName}</h1>
+                        <nav aria-label="Breadcrumb" className="flex min-w-0 flex-wrap items-center gap-1 text-xl font-semibold tracking-[-0.01em]">
+                            {(path && path.length > 0
+                                ? path
+                                : [{ id: null, name: currentFolderName }]
+                            ).map((crumb, index, list) => {
+                                const isLast = index === list.length - 1;
+                                return (
+                                    <span key={`${crumb.id ?? 'home'}-${index}`} className="flex min-w-0 items-center gap-1">
+                                        {index > 0 && <span className="shrink-0 text-app-text-tertiary" aria-hidden="true">/</span>}
+                                        <button
+                                            type="button"
+                                            onClick={() => { if (!isLast) onNavigatePath?.(crumb.id); }}
+                                            disabled={isLast}
+                                            aria-current={isLast ? 'page' : undefined}
+                                            title={crumb.name}
+                                            className={`max-w-[180px] truncate rounded px-0.5 text-start transition-colors ${isLast ? 'cursor-default text-app-text' : 'text-app-text-secondary hover:text-app-accent'}`}
+                                        >
+                                            {crumb.name}
+                                        </button>
+                                    </span>
+                                );
+                            })}
+                        </nav>
                         <p className="mt-1 text-metadata text-app-text-secondary">
-                            {fileCount === undefined ? t(`common.${sortField}`) : `${t('workspace.result_count', { count: fileCount })} · ${sortLabel}`}
+                            {fileCount === undefined ? t(`common.${sortField}`) : `${t('workspace.result_count', { count: fileCount })} · ${folderCount ?? 0} ${t('common.folders')} · ${sortLabel}`}
                             <span className="ms-1" aria-hidden="true">{sortDirection === 'asc' ? '↑' : '↓'}</span>
                         </p>
                     </div>
@@ -208,6 +242,11 @@ export function TopBar({
                         <div className="ms-1 flex items-center rounded-control border border-app-border bg-app-surface-sunken/45 p-0.5" role="group" aria-label={`${t('files.switch_list')} / ${t('files.switch_grid')}`}>
                             <IconButton label={t('files.switch_list')} aria-pressed={viewMode === 'list'} className={viewMode === 'list' ? 'bg-app-surface-raised text-app-text shadow-sm' : ''} onClick={() => setViewMode('list')}><List className={toolbarIcon} /></IconButton>
                             <IconButton label={t('files.switch_grid')} aria-pressed={viewMode === 'grid'} className={viewMode === 'grid' ? 'bg-app-surface-raised text-app-text shadow-sm' : ''} onClick={() => setViewMode('grid')}><LayoutGrid className={toolbarIcon} /></IconButton>
+                        </div>
+                        <div className="ms-1 flex items-center gap-1 rounded-control border border-app-border bg-app-surface-sunken/45 px-1.5 py-1">
+                            <IconButton size="xs" label="Smaller" onClick={() => onCardScaleChange(Math.max(0.5, cardScale - 0.25))} disabled={cardScale <= 0.5}><ZoomOut className={toolbarIcon} /></IconButton>
+                            <input type="range" min="0.5" max="2" step="0.25" value={cardScale} onChange={event => onCardScaleChange(parseFloat(event.target.value))} className="h-1 w-16 min-w-0 cursor-pointer appearance-none rounded-full bg-app-border [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-app-accent" aria-label={t('ui_copy.thumbnail_size')} />
+                            <IconButton size="xs" label="Larger" onClick={() => onCardScaleChange(Math.min(2, cardScale + 0.25))} disabled={cardScale >= 2}><ZoomIn className={toolbarIcon} /></IconButton>
                         </div>
                         <div className="relative" ref={viewRef}>
                             <IconButton label={t('ui_copy.sort_files')} onClick={toggleViewOptions} aria-expanded={showViewOptions} className={showViewOptions ? 'bg-app-selected text-app-accent' : ''}><ArrowUpDown className={toolbarIcon} /></IconButton>
@@ -280,6 +319,8 @@ export function TopBar({
                         <Button size="sm" onClick={onBulkDownload} leadingIcon={<Download className={toolbarIcon} />}>{t('files.download')}</Button>
                         <Button size="sm" onClick={onShowMoveModal} leadingIcon={<FolderInput className={toolbarIcon} />}>{t('files.move_to')}</Button>
                         <Button size="sm" onClick={onBulkShare} leadingIcon={<Share2 className={toolbarIcon} />}>{t('files.share')}</Button>
+                        {onCopySelected && <Button size="sm" onClick={onCopySelected} leadingIcon={<CopyIcon className={toolbarIcon} />}>Copy</Button>}
+                        {onEncryptSelected && <Button size="sm" onClick={onEncryptSelected} leadingIcon={<Lock className={toolbarIcon} />}>Encrypt</Button>}
                         <Button size="sm" variant="ghost" onClick={onClearSelection}>{t('files.clear_selection')}</Button>
                         <Button size="sm" variant="danger" onClick={onBulkDelete} leadingIcon={<Trash2 className={toolbarIcon} />}>{t('files.delete')}</Button>
                 </div>}

@@ -50,6 +50,7 @@
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-i18next": "^17.0.8",
+    "recharts": "^3.11.1",
     "sonner": "^2.0.7"
   },
   "devDependencies": {

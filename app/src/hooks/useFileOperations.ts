@@ -46,7 +46,7 @@ export function useFileOperations(
         const sourceFolderId = sourceFolder(file, activeFolderId);
         if (!await confirm({ title: t('operations.delete_file'), message: t('operations.delete_file_question'), confirmText: i18n.t("files.delete"), variant: 'danger' }) || !isCurrent()) return;
         try {
-            await invoke('cmd_delete_file', { messageId: id, folderId: sourceFolderId, ownerId });
+            await invoke('cmd_move_file_to_trash', { messageId: id, folderId: sourceFolderId });
             if (!isCurrent()) return;
             updateFileQueryData(queryClient, sourceFolderId, new Set([id]), () => null, ownerId);
             void invalidateOwnedFileQueries(queryClient, ownerId);
@@ -72,7 +72,7 @@ export function useFileOperations(
         for (const target of targets) {
             if (!isCurrent()) return;
             try {
-                await invoke('cmd_delete_file', { messageId: target.id, folderId: target.folderId, ownerId });
+                await invoke('cmd_move_file_to_trash', { messageId: target.id, folderId: target.folderId });
                 if (!isCurrent()) return;
                 success++;
                 deletedByFolder.set(target.folderId, [...(deletedByFolder.get(target.folderId) ?? []), target.id]);
@@ -134,6 +134,23 @@ export function useFileOperations(
             return false;
         }
     }, [activeFolderId, capture, confirm, ownerId, queryClient, t]);
+
+    const handleCopyFile = useCallback(async (file: TelegramFile, targetFolderId: number | null, onSuccess?: () => void) => {
+        const isCurrent = capture();
+        if (!ownerId || !isCurrent()) return false;
+        const sourceFolderId = sourceFolder(file, activeFolderId);
+        if (sourceFolderId === targetFolderId) { toast.info(t('operations.already_in_folder')); return false; }
+        try {
+            await invoke('cmd_copy_files', { ownerId, messageIds: [file.id], sourceFolderId, targetFolderId });
+            if (!isCurrent()) return false;
+            toast.success('Copied to folder');
+            onSuccess?.();
+            return true;
+        } catch (error) {
+            if (isCurrent()) toast.error(userFacingError(error, t));
+            return false;
+        }
+    }, [activeFolderId, capture, ownerId, t]);
 
     const handleBulkDownload = useCallback(async () => {
         const ids = selectedIdsRef.current;
@@ -252,6 +269,7 @@ export function useFileOperations(
         handleBulkDownload,
         handleBulkMove,
         handleMoveFiles,
+        handleCopyFile,
         handleRenameFile,
         handleDownloadFolder,
         handleGlobalSearch,

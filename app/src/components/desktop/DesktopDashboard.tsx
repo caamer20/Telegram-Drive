@@ -20,15 +20,15 @@ import {
 } from '@dnd-kit/core';
 import { arrayMove, sortableKeyboardCoordinates } from '@dnd-kit/sortable';
 
-import { TelegramFile, BandwidthStats, type SmartView, type StorageInsightResult } from '../../types';
-import { formatBytes, isMediaFile, isPdfFile, isArchiveFile, isImageFile, copyToClipboard } from '../../utils';
+import { TelegramFile, BandwidthStats, type SmartView, type StorageInsightResult, type DriveStats } from '../../types';
+import { tempDir } from '@tauri-apps/api/path';
+import { formatBytes, isMediaFile, isPdfFile, isArchiveFile, isImageFile, copyToClipboard, sanitizeFilename } from '../../utils';
 
 // Components
 import { Sidebar } from './dashboard/Sidebar';
 import { TopBar } from './dashboard/TopBar';
 import { FileExplorer, type SortDirection, type SortField } from './dashboard/FileExplorer';
 import { TransferCenter } from './dashboard/TransferCenter';
-import { MoveToFolderModal } from './dashboard/MoveToFolderModal';
 import { ExternalDropBlocker } from './dashboard/ExternalDropBlocker';
 import type { SettingsTab } from './dashboard/SettingsModal';
 import { RenameFileModal } from './dashboard/RenameFileModal';
@@ -37,7 +37,7 @@ import { KeyboardShortcutsDialog } from './dashboard/KeyboardShortcutsDialog';
 import { DriveConceptTour } from './dashboard/DriveConceptTour';
 import { LazyFeatureBoundary } from '../shared/LazyFeatureBoundary';
 import { SyncDashboard } from './sync/SyncDashboard';
-import { Files, Link, Copy, Check, X, Loader2, Share2 } from 'lucide-react';
+import { Files, Library, Link, Copy, Check, X, Loader2, Share2, PieChart, Trash2, Sparkles, Search, FolderPlus, FolderUp, Download, ArrowRightLeft, CheckSquare } from 'lucide-react';
 
 // Hooks
 import { useTelegramConnection } from '../../hooks/useTelegramConnection';
@@ -69,6 +69,13 @@ const LazySettingsModal = lazy(() => import('./dashboard/SettingsModal').then((m
 const SupporterOfferDialog = lazy(() => import('../shared/SupporterOfferDialog').then(module => ({ default: module.SupporterOfferDialog })));
 const LazyHelpCenterDialog = lazy(() => import('./dashboard/HelpCenterDialog').then((module) => ({ default: module.HelpCenterDialog })));
 const LazyWorkspaceHub = lazy(() => import('../workspace/WorkspaceHub').then(module => ({ default: module.WorkspaceHub })));
+const LazyHomeDashboard = lazy(() => import('./dashboard/HomeDashboard').then(module => ({ default: module.HomeDashboard })));
+const LazyTrashView = lazy(() => import('./dashboard/TrashView').then(module => ({ default: module.TrashView })));
+const LazyStorageStatsModal = lazy(() => import('./dashboard/StorageStatsModal').then(module => ({ default: module.StorageStatsModal })));
+const LazyPropertiesModal = lazy(() => import('./dashboard/PropertiesModal').then(module => ({ default: module.PropertiesModal })));
+const LazyVaultModal = lazy(() => import('./dashboard/VaultModal').then(module => ({ default: module.VaultModal })));
+const LazyFolderTreePicker = lazy(() => import('./dashboard/FolderTreePicker').then(module => ({ default: module.FolderTreePicker })));
+
 
 export function Dashboard({ onLogout }: { onLogout: () => void }) {
     const queryClient = useQueryClient();
@@ -87,6 +94,7 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
         handleFolderRename, handleFolderToggleVisibility, handleExportFolderInvite,
         handleCreateGroup, handleDeleteGroup, handleUpdateGroup, handleAssignFolderToGroup,
         handleReorderFolders, handleUpdateGroupOrder,
+        refreshFolders,
         accountId,
     } = useTelegramConnection(onLogout);
 
@@ -99,8 +107,19 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
             clearImageMemoryCaches();
             void queryClient.invalidateQueries({ queryKey: fileQueryKey(payload.ownerId, payload.folderId), exact: true });
         }).then(unlisten => { if (closed) unlisten(); else stop = unlisten; });
-        return () => { closed = true; stop?.(); };
-    }, [accountId, queryClient]);
+        let stopDriveChanged: (() => void) | undefined;
+        void listen('drive-changed', () => {
+            if (closed) return;
+            clearImageMemoryCaches();
+            void queryClient.invalidateQueries({ queryKey: ['files'] });
+            void queryClient.invalidateQueries({ queryKey: ['driveStats'] });
+            void queryClient.invalidateQueries({ queryKey: ['trashStats'] });
+            void queryClient.invalidateQueries({ queryKey: ['trashList'] });
+            void queryClient.invalidateQueries({ queryKey: ['folderColors'] });
+            void refreshFolders();
+        }).then(unlisten => { if (closed) unlisten(); else stopDriveChanged = unlisten; });
+        return () => { closed = true; stop?.(); stopDriveChanged?.(); };
+    }, [accountId, queryClient, refreshFolders]);
 
     const { settings, updateSetting, updateSettings, isLoaded: settingsLoaded } = useSettings();
     const captureMutationScope = useActionScope(accountId);
@@ -203,6 +222,53 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
     const [localPreview, setLocalPreview] = useState<{ key: string; path: string } | null>(null);
     const [pdfFile, setPdfFile] = useState<TelegramFile | null>(null);
     const [archiveViewFile, setArchiveViewFile] = useState<TelegramFile | null>(null);
+    // Feature overlays ported from the earlier UI: home dashboard, trash,
+    // storage statistics, custom background, copy-to-folder and properties.
+    const [showHome, setShowHome] = useState(true);
+    const [homeSelectedIds, setHomeSelectedIds] = useState<number[]>([]);
+    const [folderMoveTarget, setFolderMoveTarget] = useState<{ id: number; name: string } | null>(null);
+    const [folderCopySource, setFolderCopySource] = useState<{ id: number; name: string } | null>(null);
+    const [copyRequest, setCopyRequest] = useState<{ files: TelegramFile[] } | null>(null);
+    const toggleHomeSelect = useCallback((id: number) => {
+        setHomeSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+    }, []);
+    const clearHomeSelection = useCallback(() => setHomeSelectedIds([]), []);
+    const selectAllFolders = useCallback(() => {
+        setHomeSelectedIds(folders.filter(f => !f.parent_id).map(f => f.id));
+    }, [folders]);
+    const bulkDeleteFolders = useCallback(async () => {
+        const ids = [...homeSelectedIds];
+        for (const id of ids) {
+            const f = folders.find(x => x.id === id);
+            await handleFolderDelete(id, f?.name ?? '');
+        }
+        setHomeSelectedIds([]);
+        await refreshFolders();
+        void queryClient.invalidateQueries({ queryKey: ['files'] });
+        void queryClient.invalidateQueries({ queryKey: ['driveStats'] });
+    }, [homeSelectedIds, folders, handleFolderDelete, refreshFolders, queryClient]);
+    const bulkShareFolders = useCallback(async () => {
+        if (homeSelectedIds.length !== 1) { toast.info('Select a single folder to share'); return; }
+        try {
+            const info = await handleExportFolderInvite(homeSelectedIds[0]);
+            await copyToClipboard(info.link);
+            toast.success('Invite link copied');
+        } catch { /* errors surfaced elsewhere */ }
+        setHomeSelectedIds([]);
+    }, [homeSelectedIds, handleExportFolderInvite]);
+
+
+    const [showTrash, setShowTrash] = useState(false);
+    const [showStorageStats, setShowStorageStats] = useState(false);
+    const [showVault, setShowVault] = useState(false);
+    const [copyTarget, setCopyTarget] = useState<TelegramFile | null>(null);
+    const [propertiesTarget, setPropertiesTarget] = useState<TelegramFile | null>(null);
+    const { data: driveStatsForStats } = useQuery({
+        queryKey: ['driveStats'],
+        queryFn: () => invoke<DriveStats>('cmd_get_drive_stats'),
+        enabled: !!accountId,
+        refetchInterval: showStorageStats ? 30000 : false,
+    });
     const {
         shareFile, shareOwnerId, setShareFile, bulkShareLinks, bulkShareLoading, bulkShareCopied,
         setBulkShareLinks, createBulkShares, handleCopyBulkLink, handleNativeShareBulkLink,
@@ -212,7 +278,6 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
     const [renameFolder, setRenameFolder] = useState<{ id: number; name: string } | null>(null);
     const [renameRequest, setRenameRequest] = useState<{ ownerId: string; file: TelegramFile } | null>(null);
     const renameFileTarget = renameRequest?.ownerId === accountId ? renameRequest.file : null;
-    const moveFileTarget = showMoveModal && moveRequest?.files.length === 1 ? moveRequest.files[0] : null;
     useEffect(() => { setSelectedIds([]); setMoveRequest(null); setRenameRequest(null); setInternalDrag(null); }, [accountId]);
 
     useEffect(() => {
@@ -320,6 +385,64 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
         || searchFilters.scope === 'all';
     useEffect(() => { if (isCrossFolderView) setSelectedIds([]); }, [isCrossFolderView]);
 
+    const folderAggregates = useMemo(() => {
+        const children = new Map<number, number[]>();
+        for (const f of folders) {
+            const parent = f.parent_id ?? null;
+            if (parent == null) continue;
+            const list = children.get(parent) ?? [];
+            list.push(f.id);
+            children.set(parent, list);
+        }
+        const cache = new Map<number, { files: number; size: number; folders: number }>();
+        const compute = (id: number, seen: Set<number>): { files: number; size: number; folders: number } => {
+            const cached = cache.get(id);
+            if (cached) return cached;
+            if (seen.has(id)) return { files: 0, size: 0, folders: 0 };
+            seen.add(id);
+            const own = driveStatsForStats?.folders?.[String(id)];
+            let files = own?.total_files ?? 0;
+            let size = own?.total_size ?? 0;
+            let nested = 0;
+            for (const childId of children.get(id) ?? []) {
+                const child = compute(childId, seen);
+                files += child.files;
+                size += child.size;
+                nested += 1 + child.folders;
+            }
+            const result = { files, size, folders: nested };
+            cache.set(id, result);
+            return result;
+        };
+        const map = new Map<number, { files: number; size: number; folders: number }>();
+        for (const f of folders) map.set(f.id, compute(f.id, new Set<number>()));
+        return map;
+    }, [folders, driveStatsForStats]);
+
+    const folderRows = useMemo<TelegramFile[]>(() => {
+        if (activeSmartView || searchTerm.trim()) return [];
+        const parentId = activeFolderId ?? null;
+        return folders
+            .filter(f => (parentId === null ? !f.parent_id : f.parent_id === parentId))
+            .map(f => {
+                const agg = folderAggregates.get(f.id);
+                return {
+                    id: f.id,
+                    name: f.name,
+                    size: agg?.size ?? 0,
+                    sizeStr: agg ? `${agg.files} files · ${agg.folders} folders · ${formatBytes(agg.size)}` : '',
+                    type: 'folder' as const,
+                    folder_id: parentId,
+                    created_at: '',
+                } as unknown as TelegramFile;
+            });
+    }, [folders, activeFolderId, activeSmartView, searchTerm, folderAggregates]);
+
+    const filesWithFolders = useMemo(
+        () => (folderRows.length ? [...folderRows, ...displayedFiles] : displayedFiles),
+        [folderRows, displayedFiles],
+    );
+
     const handleManualSync = useCallback(async () => {
         await handleSyncFolders();
         if (activeSmartView === null) {
@@ -353,9 +476,180 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
 
     const {
         handleDelete, handleBulkDelete, handleBulkDownload,
-        handleMoveFiles, handleRenameFile: renameOwnedFile, handleDownloadFolder
+        handleMoveFiles, handleCopyFile, handleRenameFile: renameOwnedFile, handleDownloadFolder
 
     } = useFileOperations(activeFolderId, selectedIds, setSelectedIds, displayedFiles, queueBulkDownload, accountId);
+
+    const loadFolderFiles = useCallback(async (folderId: number): Promise<TelegramFile[]> => {
+        try {
+            const res = await invoke<{ files: TelegramFile[] }>('cmd_get_files', { folderId });
+            return res?.files ?? [];
+        } catch {
+            return [];
+        }
+    }, []);
+
+    const bulkDownloadFolders = useCallback(async () => {
+        if (!homeSelectedIds.length) return;
+        const ids = [...homeSelectedIds];
+        setHomeSelectedIds([]);
+        for (const id of ids) {
+            const files = await loadFolderFiles(id);
+            if (!files.length) continue;
+            await queueBulkDownload(files, id);
+        }
+    }, [homeSelectedIds, loadFolderFiles, queueBulkDownload]);
+
+    const openFolderMove = useCallback(() => {
+        if (homeSelectedIds.length !== 1) { toast.info('Select a single folder to move'); return; }
+        const folder = folders.find(f => f.id === homeSelectedIds[0]);
+        if (!folder) return;
+        setFolderMoveTarget({ id: folder.id, name: folder.name });
+    }, [homeSelectedIds, folders]);
+
+    // Protect already-uploaded files: download the original, re-upload it
+    // through the vault, then remove the plaintext copy.
+    const handleEncryptSelected = useCallback(async () => {
+        if (!accountId || !selectedIds.length) return;
+        const targets = displayedFiles.filter(file => selectedIds.includes(file.id)
+            && file.type !== 'folder'
+            && (file.encryption_state ?? 'plain') === 'plain');
+        if (!targets.length) {
+            toast.info('Selected files are already protected');
+            return;
+        }
+        let tempRoot: string;
+        try {
+            tempRoot = await tempDir();
+        } catch {
+            toast.error('Temporary folder is unavailable');
+            return;
+        }
+        const backslash = String.fromCharCode(92);
+        const separator = tempRoot.includes(backslash) ? backslash : '/';
+        const base = tempRoot.endsWith(separator) ? tempRoot : `${tempRoot}${separator}`;
+        let done = 0;
+        for (const file of targets) {
+            const tempPath = `${base}${crypto.randomUUID()}-${sanitizeFilename(file.name)}`;
+            const folderId = file.folder_id ?? activeFolderId;
+            try {
+                await invoke('cmd_download_file', { req: { message_id: file.id, save_path: tempPath, folder_id: folderId } });
+                await invoke('cmd_upload_file', {
+                    ownerId: accountId,
+                    path: tempPath,
+                    folderId,
+                    transferId: crypto.randomUUID(),
+                    protectionMode: 'vault',
+                    protectMetadata: settings.encryptionProtectMetadata,
+                    videoUploadMode: 'file',
+                });
+                await invoke('cmd_delete_file', { messageId: file.id, folderId, ownerId: accountId });
+                done += 1;
+            } catch (error) {
+                toast.error(`Could not encrypt ${file.name}: ${String(error)}`);
+            } finally {
+                void invoke('cmd_remove_temp_file', { path: tempPath }).catch(() => undefined);
+            }
+        }
+        if (done > 0) {
+            toast.success(`${done} file${done === 1 ? '' : 's'} encrypted into the vault`);
+            setSelectedIds([]);
+            await refreshFolders();
+            void queryClient.invalidateQueries({ queryKey: ['files'] });
+            void queryClient.invalidateQueries({ queryKey: ['driveStats'] });
+        }
+    }, [accountId, selectedIds, displayedFiles, activeFolderId, settings.encryptionProtectMetadata, refreshFolders, queryClient]);
+
+    const commitFolderMove = useCallback(async (targetFolderId: number | null) => {
+        const folder = folderMoveTarget;
+        setFolderMoveTarget(null);
+        if (!folder) return;
+        try {
+            await invoke('cmd_move_folder', { folderId: folder.id, newParentId: targetFolderId });
+            await queryClient.invalidateQueries({ queryKey: ['folders'] });
+            void queryClient.invalidateQueries({ queryKey: ['files'] });
+            void queryClient.invalidateQueries({ queryKey: ['driveStats'] });
+            await refreshFolders();
+            setHomeSelectedIds([]);
+            toast.success('Folder moved.');
+        } catch {
+            toast.error('Failed to move folder.');
+        }
+    }, [folderMoveTarget, queryClient, refreshFolders]);
+
+    const descendantIdsOf = useCallback((folderId: number) => {
+        const output: number[] = [];
+        const walk = (parentId: number) => {
+            for (const folder of folders) {
+                if (folder.parent_id !== parentId) continue;
+                output.push(folder.id);
+                walk(folder.id);
+            }
+        };
+        walk(folderId);
+        return output;
+    }, [folders]);
+
+    const openFolderCopy = useCallback(() => {
+        if (homeSelectedIds.length !== 1) { toast.info('Select a single folder to copy'); return; }
+        const folder = folders.find(f => f.id === homeSelectedIds[0]);
+        if (!folder) return;
+        setFolderCopySource({ id: folder.id, name: folder.name });
+    }, [homeSelectedIds, folders]);
+
+    const commitFolderCopy = useCallback(async (targetFolderId: number | null) => {
+        const source = folderCopySource;
+        setFolderCopySource(null);
+        if (!source || !accountId) return;
+        const copyTree = async (sourceId: number, parentId: number | null) => {
+            const name = folders.find(f => f.id === sourceId)?.name ?? source.name;
+            const created = await invoke<{ id: number }>('cmd_create_folder', { name: `${name} copy` });
+            if (parentId !== null) {
+                await invoke('cmd_move_folder', { folderId: created.id, newParentId: parentId });
+            }
+            const result = await invoke<{ files: TelegramFile[] }>('cmd_get_files', { folderId: sourceId });
+            const ids = (result?.files ?? []).map(file => file.id);
+            if (ids.length) {
+                await invoke('cmd_copy_files', {
+                    messageIds: ids,
+                    sourceFolderId: sourceId,
+                    targetFolderId: created.id,
+                    ownerId: accountId,
+                });
+            }
+            for (const child of folders.filter(f => f.parent_id === sourceId)) {
+                await copyTree(child.id, created.id);
+            }
+        };
+        try {
+            toast.info('Copying folder…');
+            await copyTree(source.id, targetFolderId);
+            await refreshFolders();
+            void queryClient.invalidateQueries({ queryKey: ['files'] });
+            void queryClient.invalidateQueries({ queryKey: ['driveStats'] });
+            setHomeSelectedIds([]);
+            toast.success('Folder copied.');
+        } catch (error) {
+            toast.error(`Copy failed: ${String(error)}`);
+        }
+    }, [folderCopySource, accountId, folders, refreshFolders, queryClient]);
+
+    const openSelectedCopy = useCallback(() => {
+        const files = displayedFiles.filter(file => selectedIds.includes(file.id) && file.type !== 'folder');
+        if (!files.length) { toast.info('Select files to copy'); return; }
+        setCopyRequest({ files });
+    }, [displayedFiles, selectedIds]);
+
+    const commitCopySelected = useCallback(async (targetFolderId: number | null) => {
+        const request = copyRequest;
+        setCopyRequest(null);
+        if (!request) return;
+        for (const file of request.files) {
+            await handleCopyFile(file, targetFolderId);
+        }
+        void queryClient.invalidateQueries({ queryKey: ['files'] });
+        setSelectedIds([]);
+    }, [copyRequest, handleCopyFile, queryClient]);
 
     const handleBulkShare = useCallback(() => createBulkShares(
         displayedFiles.filter(file => selectedIds.includes(file.id) && file.type !== 'folder'),
@@ -440,6 +734,13 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
             } else {
                 handlePreview(file, filesSource);
             }
+            return;
+        }
+
+        if (file.type === 'folder') {
+            clearSelection();
+            setActiveSmartView(null);
+            setActiveFolderId(file.id);
             return;
         }
 
@@ -734,6 +1035,36 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
         } as const)[activeSmartView]
         : currentFolderName;
 
+    // Home / parent / child… breadcrumb, built from the folder hierarchy.
+    const breadcrumbPath = useMemo(() => {
+        const rootCrumb = { id: null as number | null, name: 'Home' };
+        if (activeSmartView || activeFolderId === null) return [rootCrumb];
+        const byId = new Map(folders.map(f => [f.id, f]));
+        const chain: { id: number; name: string }[] = [];
+        let cursor: number | null = activeFolderId;
+        const seen = new Set<number>();
+        while (cursor != null && !seen.has(cursor) && chain.length < 32) {
+            seen.add(cursor);
+            const folder = byId.get(cursor);
+            if (!folder) break;
+            chain.unshift({ id: folder.id, name: folder.name });
+            cursor = folder.parent_id ?? null;
+        }
+        return [rootCrumb, ...chain];
+    }, [folders, activeFolderId, activeSmartView]);
+
+    const navigateToPath = useCallback((id: number | null) => {
+        setShowTrash(false);
+        if (id === null) {
+            setShowHome(true);
+            setActiveSmartView(null);
+            return;
+        }
+        setShowHome(false);
+        setActiveSmartView(null);
+        setActiveFolderId(id);
+    }, [setActiveFolderId]);
+
     const updateActivityFlag = useCallback(async (file: TelegramFile, flag: 'favorite' | 'pinned') => {
         if (!accountId) return;
         const generation = fileLoadScopeRef.current.generation;
@@ -799,20 +1130,76 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
 
             <>
                 {showMoveModal && moveRequest && (
-                    <MoveToFolderModal
-                        folders={folders}
-                        fileName={moveFileTarget?.name}
-                        onClose={() => setMoveRequest(current => current === moveRequest ? null : current)}
-                        onSelect={targetFolderId => {
-                            if (moveRequest.ownerId !== accountId || !captureMutationScope()()) return;
-                            void handleMoveFiles(moveRequest.files, targetFolderId, () => {
-                                setSelectedIds([]);
-                                setMoveRequest(current => current === moveRequest ? null : current);
-                            });
-                        }}
-                        activeFolderId={sourceFolder(moveRequest.files[0], activeFolderId)}
-                        key={`move:${moveRequest.ownerId}`}
-                    />
+                    <LazyFeatureBoundary>
+                        <LazyFolderTreePicker
+                            folders={folders}
+                            title={moveRequest.files.length > 1 ? `Move ${moveRequest.files.length} files` : 'Move to folder'}
+                            actionLabel="Move here"
+                            kind="move"
+                            currentFolderId={sourceFolder(moveRequest.files[0], activeFolderId)}
+                            onClose={() => setMoveRequest(current => current === moveRequest ? null : current)}
+                            onSelect={targetFolderId => {
+                                if (moveRequest.ownerId !== accountId || !captureMutationScope()()) return;
+                                void handleMoveFiles(moveRequest.files, targetFolderId, () => {
+                                    setSelectedIds([]);
+                                    setMoveRequest(current => current === moveRequest ? null : current);
+                                    void queryClient.invalidateQueries({ queryKey: ['files'] });
+                                    void queryClient.invalidateQueries({ queryKey: ['driveStats'] });
+                                });
+                            }}
+                            key={`move:${moveRequest.ownerId}`}
+                        />
+                    </LazyFeatureBoundary>
+                )}
+                {folderMoveTarget && (
+                    <LazyFeatureBoundary>
+                        <LazyFolderTreePicker
+                            folders={folders}
+                            title={`Move “${folderMoveTarget.name}”`}
+                            actionLabel="Move here"
+                            kind="move"
+                            sourceFolderId={folderMoveTarget.id}
+                            blockedIds={descendantIdsOf(folderMoveTarget.id)}
+                            onClose={() => setFolderMoveTarget(null)}
+                            onSelect={targetId => void commitFolderMove(targetId)}
+                            key={`folder-move:${folderMoveTarget.id}`}
+                        />
+                    </LazyFeatureBoundary>
+                )}
+                {folderCopySource && (
+                    <LazyFeatureBoundary>
+                        <LazyFolderTreePicker
+                            folders={folders}
+                            title={`Copy “${folderCopySource.name}”`}
+                            actionLabel="Copy here"
+                            kind="copy"
+                            onClose={() => setFolderCopySource(null)}
+                            onSelect={targetId => void commitFolderCopy(targetId)}
+                            key={`folder-copy:${folderCopySource.id}`}
+                        />
+                    </LazyFeatureBoundary>
+                )}
+                {copyRequest && (
+                    <LazyFeatureBoundary>
+                        <LazyFolderTreePicker
+                            folders={folders}
+                            title={copyRequest.files.length > 1 ? `Copy ${copyRequest.files.length} files` : 'Copy to folder'}
+                            actionLabel="Copy here"
+                            kind="copy"
+                            currentFolderId={sourceFolder(copyRequest.files[0], activeFolderId)}
+                            onClose={() => setCopyRequest(null)}
+                            onSelect={targetId => void commitCopySelected(targetId)}
+                        />
+                    </LazyFeatureBoundary>
+                )}
+                {showVault && (
+                    <LazyFeatureBoundary>
+                        <LazyVaultModal
+                            onClose={() => setShowVault(false)}
+                            onOpenFolder={id => { setShowHome(false); setActiveSmartView(null); setActiveFolderId(id); }}
+                            onOpenEncryptionSettings={() => { setSettingsInitialTab('encryption'); setShowSettings(true); }}
+                        />
+                    </LazyFeatureBoundary>
                 )}
                 {playingFile && (
                     <LazyFeatureBoundary key={`media:${previewFileKey(playingFile)}`}>
@@ -885,6 +1272,7 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
                 isConnected={isConnected}
                 onSync={() => void handleManualSync()}
                 onLogout={handleLogout}
+                onSettings={() => setShowSettings(true)}
                 bandwidth={bandwidth || null}
                 onAssignFolderToGroup={handleAssignFolderToGroup}
                 onCreateGroup={handleCreateGroup}
@@ -893,18 +1281,122 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
                 createFolderRequest={createFolderRequest}
                 activeSmartView={activeSmartView}
                 onSmartViewChange={setActiveSmartView}
+                homeActive={showHome}
+                onHomeClick={() => { setShowTrash(false); setShowHome(v => !v); }}
+                onVaultClick={() => setShowVault(true)}
             />
 
             <section aria-label={currentViewName} className="flex min-w-0 flex-1 flex-col">
-                <div className="desktop-chrome-row justify-end"><button type="button" onClick={() => setWorkspaceKeys([])} className="quiet-control flex h-8 items-center gap-2 px-3 text-ui font-medium text-app-accent hover:bg-app-hover"><Files className="h-4 w-4" />{t('workspace.title')}</button></div>
+                <div className="desktop-chrome-row relative justify-between gap-2">
+                    <div className="flex min-w-0 items-center gap-2">
+                        {showHome && (
+                            <>
+                                <Sparkles className="h-4 w-4 shrink-0 text-app-accent" />
+                                <span className="shrink-0 text-ui font-semibold text-app-text">Drive Overview</span>
+                            </>
+                        )}
+                    </div>
+                    {showHome && (
+                        <div className="pointer-events-none absolute left-1/2 top-1/2 w-[min(420px,42vw)] -translate-x-1/2 -translate-y-1/2">
+                            <div className="pointer-events-auto relative">
+                                <Search className="pointer-events-none absolute start-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-app-accent" />
+                                <input
+                                    value={searchTerm}
+                                    onChange={e => { setSearchTerm(e.target.value); if (e.target.value.trim()) setShowHome(false); }}
+                                    placeholder="Search files…"
+                                    aria-label="Search files"
+                                    className="quiet-control h-8 w-full min-w-0 rounded-lg border border-app-border bg-app-surface-sunken/40 ps-8 pe-3 text-ui text-app-text placeholder:text-app-text-tertiary focus:border-app-accent/50 focus:outline-none"
+                                />
+                            </div>
+                        </div>
+                    )}
+                    <div className="flex items-center gap-1">
+                        {showHome && (
+                            <button type="button" title="New folder" aria-label="New folder" onClick={() => setCreateFolderRequest(value => value + 1)} className="quiet-control flex h-8 w-8 items-center justify-center text-emerald-400 hover:bg-app-hover">
+                                <FolderPlus className="h-4 w-4" />
+                            </button>
+                        )}
+                        {showHome && (
+                            <button type="button" title="Upload folder" aria-label="Upload folder" onClick={handleFolderUpload} className="quiet-control flex h-8 w-8 items-center justify-center text-sky-400 hover:bg-app-hover">
+                                <FolderUp className="h-4 w-4" />
+                            </button>
+                        )}
+                        <button type="button" title="Storage" aria-label="Storage" onClick={() => setShowStorageStats(true)} className="quiet-control flex h-8 w-8 items-center justify-center text-violet-400 hover:bg-app-hover">
+                            <PieChart className="h-4 w-4" />
+                        </button>
+                        <button type="button" title="Trash" aria-label="Trash" onClick={() => { setShowHome(false); setShowTrash(v => !v); }} className="quiet-control flex h-8 w-8 items-center justify-center text-red-400 hover:bg-app-hover">
+                            <Trash2 className="h-4 w-4" />
+                        </button>
+                        <button type="button" title={t('workspace.title')} aria-label={t('workspace.title')} onClick={() => setWorkspaceKeys([])} className="quiet-control flex h-8 w-8 items-center justify-center text-app-accent hover:bg-app-hover">
+                            <Library className="h-4 w-4" />
+                        </button>
+                    </div>
+                </div>
+                {showHome && homeSelectedIds.length > 0 && (
+                    <div className="desktop-chrome-row justify-between gap-2 border-b border-app-border-subtle px-3 py-1.5">
+                        <span className="text-badge font-medium text-app-text">{homeSelectedIds.length} folder{homeSelectedIds.length === 1 ? '' : 's'} selected</span>
+                        <div className="flex items-center gap-1">
+                            <button type="button" onClick={selectAllFolders} className="quiet-control flex h-8 items-center gap-1.5 px-2.5 text-ui font-medium text-app-text-secondary hover:bg-app-hover">
+                                <CheckSquare className="h-4 w-4" />Select all
+                            </button>
+                            <button type="button" onClick={() => void bulkDownloadFolders()} className="quiet-control flex h-8 items-center gap-1.5 px-2.5 text-ui font-medium text-emerald-400 hover:bg-app-hover">
+                                <Download className="h-4 w-4" />Download
+                            </button>
+                            <button type="button" onClick={() => void bulkShareFolders()} className="quiet-control flex h-8 items-center gap-1.5 px-2.5 text-ui font-medium text-amber-400 hover:bg-app-hover">
+                                <Share2 className="h-4 w-4" />Share
+                            </button>
+                            <button type="button" onClick={() => void openFolderMove()} className="quiet-control flex h-8 items-center gap-1.5 px-2.5 text-ui font-medium text-sky-400 hover:bg-app-hover">
+                                <ArrowRightLeft className="h-4 w-4" />Move
+                            </button>
+                            <button type="button" onClick={openFolderCopy} className="quiet-control flex h-8 items-center gap-1.5 px-2.5 text-ui font-medium text-teal-400 hover:bg-app-hover">
+                                <Copy className="h-4 w-4" />Copy
+                            </button>
+                            <button type="button" onClick={() => void bulkDeleteFolders()} className="quiet-control flex h-8 items-center gap-1.5 px-2.5 text-ui font-medium text-red-400 hover:bg-app-hover">
+                                <Trash2 className="h-4 w-4" />Delete
+                            </button>
+                            <button type="button" onClick={clearHomeSelection} className="quiet-control flex h-8 items-center gap-1.5 px-2.5 text-ui font-medium text-app-text-secondary hover:bg-app-hover">
+                                <X className="h-4 w-4" />Clear
+                            </button>
+                        </div>
+                    </div>
+                )}
+
+                {showHome ? (
+                    <LazyFeatureBoundary>
+                        <LazyHomeDashboard
+                            folders={folders}
+                            onFolderClick={(id) => { setShowHome(false); setActiveSmartView(null); setActiveFolderId(id); }}
+                            onTrashClick={() => { setShowHome(false); setShowTrash(true); }}
+                            onStorageStatsClick={() => setShowStorageStats(true)}
+                            onRenameFolder={(id, name) => setRenameFolder({ id, name })}
+                            onDeleteFolder={handleFolderDelete}
+                            onClose={() => setShowHome(false)}
+                            selectedIds={homeSelectedIds}
+                            onToggleSelect={toggleHomeSelect}
+                        />
+                    </LazyFeatureBoundary>
+                ) : showTrash ? (
+                    <LazyFeatureBoundary>
+                        <LazyTrashView
+                            onClose={() => setShowTrash(false)}
+                            onRestored={() => { void queryClient.invalidateQueries({ queryKey: ['folders'] }); }}
+                        />
+                    </LazyFeatureBoundary>
+                ) : (
+                    <>
                 <TopBar
                     currentFolderName={currentViewName}
                     fileCount={displayedFiles.length}
+                    folderCount={folderRows.length}
+                    path={breadcrumbPath}
+                    onNavigatePath={navigateToPath}
                     selectedIds={selectedIds}
                     onShowMoveModal={handleOpenBulkMove}
                     onBulkDownload={handleBulkDownload}
                     onBulkDelete={handleBulkDelete}
                     onBulkShare={handleBulkShare}
+                    onEncryptSelected={handleEncryptSelected}
+                    onCopySelected={openSelectedCopy}
                     onDownloadFolder={handleDownloadFolder}
                     onClearSelection={clearSelection}
                     onUploadClick={handleManualUpload}
@@ -947,7 +1439,7 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
                 <FileExplorer
                     key={accountId ?? 'signed-out'}
                     folders={folders}
-                    files={displayedFiles}
+                    files={filesWithFolders}
                     loading={search.enabled ? search.busy && !displayedFiles.length : isLoading && allFiles.length === 0}
                     error={search.enabled ? null : error}
                     showEmptyFolder={!filteringFiles && !search.enabled}
@@ -965,6 +1457,8 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
                     onShare={setShareFile}
                     onRename={handleRename}
                     onFileMove={handleFileMove}
+                    onCopy={(file) => setCopyTarget(file)}
+                    onProperties={(file) => setPropertiesTarget(file)}
                     cardScale={cardScale}
                     sortField={sortField}
                     sortDirection={sortDirection}
@@ -974,9 +1468,41 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
                     syncProgress={search.enabled ? undefined : folderSyncProgress}
                     selectionDisabled={isCrossFolderView}
                 />
+                    </>
+                )}
             </section>
 
             {workspaceKeys !== null && <LazyFeatureBoundary><LazyWorkspaceHub folders={folders} initialKeys={workspaceKeys} onClose={() => setWorkspaceKeys(null)} onOpen={(file, orderedFiles, localPath) => handlePreview(file, orderedFiles, localPath)} onFolder={id => { setWorkspaceKeys(null); setActiveSmartView(null); setActiveFolderId(id); }} /></LazyFeatureBoundary>}
+
+            {showStorageStats && (
+                <LazyFeatureBoundary>
+                    <LazyStorageStatsModal
+                        driveStats={driveStatsForStats}
+                        folders={folders}
+                        onClose={() => setShowStorageStats(false)}
+                    />
+                </LazyFeatureBoundary>
+            )}
+
+            {copyTarget && (
+                <LazyFeatureBoundary>
+                    <LazyFolderTreePicker
+                        folders={folders}
+                        title="Copy to folder"
+                        actionLabel="Copy here"
+                        kind="copy"
+                        currentFolderId={sourceFolder(copyTarget, activeFolderId)}
+                        onClose={() => setCopyTarget(null)}
+                        onSelect={targetId => { const file = copyTarget; setCopyTarget(null); void handleCopyFile(file, targetId).then(() => { void queryClient.invalidateQueries({ queryKey: ['files'] }); }); }}
+                    />
+                </LazyFeatureBoundary>
+            )}
+
+            {propertiesTarget && (
+                <LazyFeatureBoundary>
+                    <LazyPropertiesModal item={propertiesTarget} onClose={() => setPropertiesTarget(null)} />
+                </LazyFeatureBoundary>
+            )}
 
             {previewFile && (
                 <LazyFeatureBoundary key={`preview:${previewFileKey(previewFile)}`}>

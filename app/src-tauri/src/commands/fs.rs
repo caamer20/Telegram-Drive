@@ -34,6 +34,11 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::OnceLock;
 use tauri::{Emitter, Manager, State};
+
+/// Tell the UI that folder/file data changed so views can refresh immediately.
+pub(crate) fn notify_drive_changed(app: &tauri::AppHandle) {
+    let _ = app.emit("drive-changed", ());
+}
 use tokio::sync::oneshot;
 
 #[derive(Clone, Serialize)]
@@ -1214,7 +1219,11 @@ pub async fn cmd_create_folder(
     db_pool: State<'_, DbConnection>,
 ) -> Result<FolderMetadata, String> {
     let account = file_mutation_account(&app, owner_id.as_deref())?;
-    create_folder(name, state.inner(), db_pool.inner().clone(), account).await
+    let result = create_folder(name, state.inner(), db_pool.inner().clone(), account).await;
+    if result.is_ok() {
+        notify_drive_changed(&app);
+    }
+    result
 }
 
 pub(crate) async fn create_folder(
@@ -1295,7 +1304,11 @@ pub async fn cmd_delete_folder(
     db_pool: State<'_, DbConnection>,
 ) -> Result<bool, String> {
     let account = file_mutation_account(&app, owner_id.as_deref())?;
-    delete_folder(folder_id, state.inner(), db_pool.inner().clone(), account).await
+    let result = delete_folder(folder_id, state.inner(), db_pool.inner().clone(), account).await;
+    if result.is_ok() {
+        notify_drive_changed(&app);
+    }
+    result
 }
 
 pub(crate) async fn delete_folder(
@@ -1306,6 +1319,41 @@ pub(crate) async fn delete_folder(
 ) -> Result<bool, String> {
     let _lock = FOLDER_OPERATIONS.lock().await;
     let client = folder_client(state, &account).await?;
+
+    // Nested folders: collect every descendant first so deleting a parent also
+    // removes the folders that live inside it.
+    let descendants: Vec<i64> = {
+        let account = account.clone();
+        crate::db::with_connection(db_pool.clone(), move |conn| {
+            account.validate()?;
+            crate::commands::folder_groups::prepare_layout(
+                conn,
+                Some(&(account.root.clone(), Some(account.owner))),
+            )?;
+            let mut stmt = conn
+                .prepare(
+                    "WITH RECURSIVE sub(id) AS (\
+                        SELECT channel_id FROM folder_metadata WHERE parent_id = ?1 \
+                        UNION ALL \
+                        SELECT fm.channel_id FROM folder_metadata fm JOIN sub ON fm.parent_id = sub.id\
+                    ) SELECT id FROM sub",
+                )
+                .map_err(|e| e.to_string())?;
+            stmt.bind((1, folder_id)).map_err(|e| e.to_string())?;
+            let mut ids = Vec::new();
+            while let sqlite::State::Row = stmt.next().map_err(|e| e.to_string())? {
+                ids.push(stmt.read::<i64, _>(0).map_err(|e| e.to_string())?);
+            }
+            Ok(ids)
+        })
+        .await?
+    };
+
+    for child in &descendants {
+        if let Err(error) = delete_folder_inner(*child, &client, &state.peer_cache).await {
+            log::warn!("Failed to delete nested folder {}: {}", child, error);
+        }
+    }
     delete_folder_inner(folder_id, &client, &state.peer_cache).await?;
 
     // Delete from SQLite
@@ -1319,9 +1367,11 @@ pub(crate) async fn delete_folder(
         let mut stmt = conn
             .prepare("DELETE FROM folder_metadata WHERE channel_id = ?")
             .map_err(|e: sqlite::Error| e.to_string())?;
-        stmt.bind((1, folder_id))
-            .map_err(|e: sqlite::Error| e.to_string())?;
-        stmt.next().map_err(|e: sqlite::Error| e.to_string())?;
+        for id in descendants.iter().copied().chain(std::iter::once(folder_id)) {
+            stmt.bind((1, id))
+                .map_err(|e: sqlite::Error| e.to_string())?;
+            stmt.next().map_err(|e: sqlite::Error| e.to_string())?;
+        }
         Ok(())
     })
     .await?;
@@ -1371,14 +1421,18 @@ pub async fn cmd_rename_folder(
     db_pool: State<'_, DbConnection>,
 ) -> Result<bool, String> {
     let account = file_mutation_account(&app, owner_id.as_deref())?;
-    rename_folder(
+    let result = rename_folder(
         folder_id,
         new_name,
         state.inner(),
         db_pool.inner().clone(),
         account,
     )
-    .await
+    .await;
+    if result.is_ok() {
+        notify_drive_changed(&app);
+    }
+    result
 }
 
 pub(crate) async fn rename_folder(
@@ -2317,7 +2371,7 @@ pub async fn cmd_upload_file(
     db_pool: State<'_, DbConnection>,
     owner_id: Option<String>,
 ) -> Result<String, String> {
-    upload_local_file(
+    let result = upload_local_file(
         path,
         folder_id,
         transfer_id,
@@ -2327,7 +2381,7 @@ pub async fn cmd_upload_file(
         video_upload_mode,
         video_filename_caption,
         None,
-        app_handle,
+        app_handle.clone(),
         state,
         bw_state,
         net_config,
@@ -2335,7 +2389,11 @@ pub async fn cmd_upload_file(
         db_pool,
         owner_id,
     )
-    .await
+    .await;
+    if result.is_ok() {
+        notify_drive_changed(&app_handle);
+    }
+    result
 }
 
 /// Upload a local file. `sync_path` is set by Folder Sync: the file's path
@@ -3340,7 +3398,7 @@ pub async fn cmd_delete_file(
     message_id: i32,
     folder_id: Option<i64>,
     state: State<'_, TelegramState>,
-    _db_pool: State<'_, DbConnection>,
+    db_pool: State<'_, DbConnection>,
     app: tauri::AppHandle,
     owner_id: Option<String>,
 ) -> Result<bool, String> {
@@ -3377,7 +3435,17 @@ pub async fn cmd_delete_file(
     {
         log::warn!("Remote delete succeeded but its account cache could not be updated: {error}");
     }
+    if let Err(error) = crate::commands::file_inventory::remove_entry(
+        db_pool.inner().clone(),
+        folder_id,
+        i64::from(message_id),
+    )
+    .await
+    {
+        log::warn!("Inventory row for deleted file could not be removed: {error}");
+    }
     account.validate()?;
+    notify_drive_changed(&app);
     Ok(true)
 }
 
@@ -4282,7 +4350,7 @@ pub async fn cmd_move_files(
     source_folder_id: Option<i64>,
     target_folder_id: Option<i64>,
     state: State<'_, TelegramState>,
-    _db_pool: State<'_, DbConnection>,
+    db_pool: State<'_, DbConnection>,
     app: tauri::AppHandle,
     owner_id: Option<String>,
 ) -> Result<bool, String> {
@@ -4329,8 +4397,256 @@ pub async fn cmd_move_files(
     if let Err(error) = crate::workspace::remote_changes::record(&account, changes).await {
         log::warn!("Remote move succeeded but its account cache could not be updated: {error}");
     }
+    // Keep the local inventory in step so drive metrics update immediately.
+    for (old, message) in message_ids.iter().zip(forwarded.iter()) {
+        if let Some(message) = message.as_ref() {
+            if let Err(error) = crate::commands::file_inventory::copy_entry(
+                db_pool.inner().clone(),
+                source_folder_id,
+                i64::from(*old),
+                target_folder_id,
+                i64::from(message.id()),
+                true,
+            )
+            .await
+            {
+                log::warn!("Inventory row for moved file could not be updated: {error}");
+            }
+        }
+    }
     account.validate()?;
+    notify_drive_changed(&app);
     Ok(true)
+}
+
+/// Copy files by forwarding them to the target folder while leaving the
+/// originals in place. Unlike a move, no message is deleted from the source.
+#[tauri::command]
+pub async fn cmd_copy_files(
+    message_ids: Vec<i32>,
+    source_folder_id: Option<i64>,
+    target_folder_id: Option<i64>,
+    state: State<'_, TelegramState>,
+    db_pool: State<'_, DbConnection>,
+    app: tauri::AppHandle,
+    owner_id: Option<String>,
+) -> Result<bool, String> {
+    let account = file_mutation_account(&app, owner_id.as_deref())?;
+    if source_folder_id == target_folder_id {
+        return Ok(true);
+    }
+    let client = state
+        .client
+        .lock()
+        .await
+        .clone()
+        .ok_or("Client not connected")?;
+    account.validate_client(&client).await?;
+    let source_peer = resolve_peer(&client, source_folder_id, &state.peer_cache).await?;
+    let target_peer = resolve_peer(&client, target_folder_id, &state.peer_cache).await?;
+    account.validate()?;
+    let forwarded = client
+        .forward_messages(&target_peer, &message_ids, &source_peer)
+        .await
+        .map_err(|error| format!("Copy failed: {error}"))?;
+    verify_forwarded_messages(&message_ids, &forwarded)?;
+    for (old, message) in message_ids.iter().zip(forwarded.iter()) {
+        if let Some(message) = message.as_ref() {
+            if let Err(error) = crate::commands::file_inventory::copy_entry(
+                db_pool.inner().clone(),
+                source_folder_id,
+                i64::from(*old),
+                target_folder_id,
+                i64::from(message.id()),
+                false,
+            )
+            .await
+            {
+                log::warn!("Inventory row for copied file could not be added: {error}");
+            }
+        }
+    }
+    account.validate()?;
+    notify_drive_changed(&app);
+    Ok(true)
+}
+
+/// Add one file to the global per-category buckets (does not touch the
+/// overall `total_*` counters, which folder aggregation owns).
+fn classify_media(global: &mut crate::models::GlobalStats, mime: &str, ext: &str, size: u64) {
+    if mime.starts_with("image/") || ["jpg", "jpeg", "png", "gif", "webp", "heic", "bmp"].contains(&ext) {
+        global.image_count += 1;
+        global.image_size += size;
+    } else if mime.starts_with("video/") || ["mp4", "mkv", "avi", "mov", "webm", "m4v"].contains(&ext) {
+        global.video_count += 1;
+        global.video_size += size;
+    } else if mime.starts_with("audio/") || ["mp3", "wav", "flac", "m4a", "ogg", "opus"].contains(&ext) {
+        global.music_count += 1;
+        global.music_size += size;
+    } else if mime.contains("pdf") || mime.contains("word") || mime.contains("excel") || mime.contains("sheet") || mime.contains("text") || ["pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "txt", "epub", "csv"].contains(&ext) {
+        global.document_count += 1;
+        global.document_size += size;
+    } else if ["exe", "msi", "dmg", "apk", "deb", "appimage"].contains(&ext) {
+        global.exe_count += 1;
+        global.exe_size += size;
+    } else {
+        global.other_count += 1;
+        global.other_size += size;
+    }
+}
+
+/// Build drive statistics from the local file inventory. This is fast, needs no
+/// network round-trips, includes Saved Messages (folder_key `home`) and never
+/// fails on a single unreadable folder.
+async fn drive_stats_from_inventory(
+    db: crate::db::DbConnection,
+) -> Result<crate::models::DriveStats, String> {
+    crate::db::with_connection(db, move |conn| {
+        let mut global = crate::models::GlobalStats::default();
+        let mut folders: HashMap<String, crate::models::FolderStatItem> = HashMap::new();
+
+        let mut stmt = conn
+            .prepare("SELECT folder_key, folder_id, COUNT(*) AS cnt, COALESCE(SUM(file_size),0) AS sz FROM file_inventory GROUP BY folder_key, folder_id")
+            .map_err(|e| e.to_string())?;
+        while let sqlite::State::Row = stmt.next().map_err(|e| e.to_string())? {
+            let folder_key = stmt.read::<String, _>("folder_key").unwrap_or_default();
+            let folder_id = stmt.read::<Option<i64>, _>("folder_id").unwrap_or(None);
+            let count = stmt.read::<i64, _>("cnt").unwrap_or(0).max(0) as u64;
+            let size = stmt.read::<i64, _>("sz").unwrap_or(0).max(0) as u64;
+            let key = if folder_key == "home" || folder_id.is_none() {
+                "null".to_string()
+            } else {
+                folder_id.unwrap().to_string()
+            };
+            let entry = folders.entry(key).or_default();
+            entry.total_files += count;
+            entry.total_size += size;
+            global.total_files += count;
+            global.total_size += size;
+        }
+
+        let mut stmt = conn
+            .prepare("SELECT COALESCE(mime_type,'') AS mime_type, COALESCE(file_ext,'') AS file_ext, file_size FROM file_inventory")
+            .map_err(|e| e.to_string())?;
+        while let sqlite::State::Row = stmt.next().map_err(|e| e.to_string())? {
+            let mime = stmt.read::<String, _>("mime_type").unwrap_or_default().to_lowercase();
+            let ext = stmt.read::<String, _>("file_ext").unwrap_or_default().to_lowercase();
+            let size = stmt.read::<i64, _>("file_size").unwrap_or(0).max(0) as u64;
+            classify_media(&mut global, &mime, &ext, size);
+        }
+
+        Ok(crate::models::DriveStats { global, folders })
+    })
+    .await
+}
+
+fn media_size_and_kind(media: &Media) -> (u64, String, String) {
+    match media {
+        Media::Document(d) => (
+            d.size() as u64,
+            d.mime_type().unwrap_or("").to_lowercase(),
+            std::path::Path::new(d.name())
+                .extension()
+                .and_then(|s| s.to_str())
+                .unwrap_or("")
+                .to_lowercase(),
+        ),
+        Media::Photo(_) => (1024 * 500, "image/jpeg".to_string(), "jpg".to_string()),
+        _ => (0, String::new(), String::new()),
+    }
+}
+
+async fn scan_peer_into(
+    client: &grammers_client::Client,
+    peer: &Peer,
+    global: &mut crate::models::GlobalStats,
+    stat: &mut crate::models::FolderStatItem,
+) {
+    let mut msgs = client.iter_messages(peer);
+    // Tolerant: a failing channel/message is skipped rather than aborting stats.
+    while let Ok(Some(msg)) = msgs.next().await {
+        let Some(media) = msg.media() else { continue };
+        let (size, mime, ext) = media_size_and_kind(&media);
+        if size == 0 {
+            continue;
+        }
+        stat.total_files += 1;
+        stat.total_size += size;
+        global.total_files += 1;
+        global.total_size += size;
+        classify_media(global, &mime, &ext, size);
+    }
+}
+
+/// Live fallback used only when the local inventory is still empty. Scans Saved
+/// Messages plus every `[TD]` folder channel, tolerating individual failures.
+async fn drive_stats_from_telegram(
+    state: &TelegramState,
+) -> Result<crate::models::DriveStats, String> {
+    let client_opt = { state.client.lock().await.clone() };
+    #[cfg(debug_assertions)]
+    if client_opt.is_none() {
+        return Ok(crate::models::DriveStats::default());
+    }
+    let client = client_opt.ok_or_else(|| "Client not connected".to_string())?;
+
+    let mut global = crate::models::GlobalStats::default();
+    let mut folders: HashMap<String, crate::models::FolderStatItem> = HashMap::new();
+
+    // Saved Messages (stored under folder_key `home` → reported as `null`).
+    if let Ok(me) = client.get_me().await {
+        let peer = Peer::User(me);
+        let mut stat = crate::models::FolderStatItem::default();
+        scan_peer_into(&client, &peer, &mut global, &mut stat).await;
+        folders.insert("null".to_string(), stat);
+    }
+
+    let mut dialogs = client.iter_dialogs();
+    while let Ok(Some(dialog)) = dialogs.next().await {
+        if let Peer::Channel(c) = &dialog.peer {
+            if !c.raw.title.to_lowercase().contains("[td]") {
+                continue;
+            }
+            let mut stat = crate::models::FolderStatItem::default();
+            scan_peer_into(&client, &dialog.peer, &mut global, &mut stat).await;
+            folders.insert(c.raw.id.to_string(), stat);
+        }
+    }
+
+    Ok(crate::models::DriveStats { global, folders })
+}
+
+/// Aggregate storage statistics: prefer the local inventory (fast, includes
+/// Saved Messages), fall back to a live Telegram scan while the index builds.
+#[tauri::command]
+pub async fn cmd_get_drive_stats(
+    state: State<'_, TelegramState>,
+    db: State<'_, DbConnection>,
+) -> Result<crate::models::DriveStats, String> {
+    static LAST_STATS: std::sync::Mutex<Option<crate::models::DriveStats>> =
+        std::sync::Mutex::new(None);
+    if let Ok(stats) = drive_stats_from_inventory(db.inner().clone()).await {
+        if stats.global.total_files > 0 {
+            if let Ok(mut slot) = LAST_STATS.lock() {
+                *slot = Some(stats.clone());
+            }
+            return Ok(stats);
+        }
+    }
+    // An inventory rebuild (a folder scan) can empty the table for a moment.
+    // Showing the last known totals beats flashing zero on every folder.
+    if let Ok(slot) = LAST_STATS.lock() {
+        if let Some(cached) = slot.as_ref() {
+            return Ok(cached.clone());
+        }
+    }
+    let stats = drive_stats_from_telegram(state.inner()).await?;
+    if stats.global.total_files > 0 {
+        if let Ok(mut slot) = LAST_STATS.lock() {
+            *slot = Some(stats.clone());
+        }
+    }
+    Ok(stats)
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -5271,6 +5587,13 @@ pub async fn cmd_zip_folder(folder_path: String, app: tauri::AppHandle) -> Resul
 }
 
 /// Delete a temporary artifact created and registered by this app.
+#[tauri::command]
+pub async fn cmd_remove_temp_file(path: String) -> Result<(), String> {
+    tokio::fs::remove_file(&path)
+        .await
+        .map_err(|error| error.to_string())
+}
+
 #[tauri::command]
 pub async fn cmd_delete_temp_zip(path: String, app: tauri::AppHandle) -> Result<(), String> {
     let path_clone = path.clone();

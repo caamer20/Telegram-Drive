@@ -1,6 +1,6 @@
 import i18n from '../../../i18n';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { Eye, HardDrive, Trash2, FolderOpen, Pencil, Play, FileText, Link, Copy, ArrowRightLeft, Star, Pin } from 'lucide-react';
+import { Eye, HardDrive, Trash2, FolderOpen, Pencil, Play, FileText, Link, Copy, ArrowRightLeft, Star, Pin, Info, FolderInput } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { TelegramFile, TelegramFolder } from '../../../types';
 import { toast } from 'sonner';
@@ -18,13 +18,15 @@ interface ContextMenuProps {
     onShare?: () => void;
     onRename?: () => void;
     onMove?: () => void;
+    onCopy?: () => void;
+    onProperties?: () => void;
     folders?: TelegramFolder[];
     activeFolderId?: number | null;
     onToggleFavorite?: () => void;
     onTogglePinned?: () => void;
 }
 
-export function ContextMenu({ x, y, file, onClose, onDownload, onDelete, onPreview, onShare, onRename, onMove, folders, activeFolderId, onToggleFavorite, onTogglePinned }: ContextMenuProps) {
+export function ContextMenu({ x, y, file, onClose, onDownload, onDelete, onPreview, onShare, onRename, onMove, onCopy, onProperties, folders, activeFolderId, onToggleFavorite, onTogglePinned }: ContextMenuProps) {
     const [adjustedPos, setAdjustedPos] = useState({ x, y });
     const menuRef = useRef<HTMLDivElement>(null);
     const { t } = useTranslation();
@@ -181,6 +183,13 @@ export function ContextMenu({ x, y, file, onClose, onDownload, onDelete, onPrevi
                 </button>
             )}
 
+            {actions.canMove && onCopy && (
+                <button onClick={onCopy} className="flex items-center gap-2 px-2 py-1.5 text-sm text-telegram-text hover:bg-telegram-hover rounded transition-colors text-left w-full">
+                    <FolderInput className="w-4 h-4 text-teal-400" />
+                    Copy to Folder
+                </button>
+            )}
+
             {actions.canRename && onRename && (
                 <button onClick={onRename} className="flex items-center gap-2 px-2 py-1.5 text-sm text-telegram-text hover:bg-telegram-hover rounded transition-colors text-left w-full">
                     <Pencil className="w-4 h-4 text-blue-400" />
@@ -196,6 +205,13 @@ export function ContextMenu({ x, y, file, onClose, onDownload, onDelete, onPrevi
             )}
 
             <div className="h-px bg-telegram-border my-1" />
+
+            {onProperties && (
+                <button onClick={onProperties} className="flex items-center gap-2 px-2 py-1.5 text-sm text-telegram-text hover:bg-telegram-hover rounded transition-colors text-left w-full">
+                    <Info className="w-4 h-4 text-blue-400" />
+                    Properties
+                </button>
+            )}
 
             <button onClick={onDelete} className="flex items-center gap-2 px-2 py-1.5 text-sm text-red-500 hover:bg-red-500/10 rounded transition-colors text-left w-full">
                 <Trash2 className="w-4 h-4" />
