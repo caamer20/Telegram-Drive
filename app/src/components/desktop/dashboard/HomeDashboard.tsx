@@ -78,6 +78,11 @@ export function HomeDashboard({
     queryFn: () => invoke<DriveStats>('cmd_get_drive_stats'),
     refetchInterval: 30000,
   });
+  const { data: trashedFolders = [] } = useQuery({
+    queryKey: ['trashedFolders'],
+    queryFn: () => invoke<{ folder_id: number; name: string }[]>('cmd_list_trashed_folders'),
+    refetchInterval: 30000,
+  });
   const { data: trashStats } = useQuery({
     queryKey: ['trashStats'],
     queryFn: () => invoke<TrashStats>('cmd_get_trash_stats'),
@@ -201,8 +206,12 @@ export function HomeDashboard({
                   className="rounded-xl border border-red-500/20 bg-red-500/5 px-4 py-3 text-left transition hover:border-red-500/40 hover:bg-red-500/10"
                 >
                   <Trash2 className="mb-1 h-4 w-4 text-red-400" />
-                  <p className="text-lg font-bold tabular-nums text-telegram-text">{trashStats?.count ?? 0}</p>
-                  <p className="text-[10px] uppercase tracking-wide text-telegram-subtext">In trash</p>
+                  <p className="text-lg font-bold tabular-nums text-telegram-text">
+                    {(trashStats?.count ?? 0) + trashedFolders.length}
+                  </p>
+                  <p className="text-[10px] uppercase tracking-wide text-telegram-subtext">
+                    In trash · {formatBytes(trashStats?.total_size ?? 0)}
+                  </p>
                 </button>
               </div>
             </div>
@@ -278,7 +287,7 @@ export function HomeDashboard({
               </div>
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-semibold text-telegram-text">Trash</p>
-                <p className="text-xs text-telegram-subtext">{trashStats?.count ?? 0} items · {trashStats ? formatBytes(trashStats.total_size) : '…'} · 20-day retention</p>
+                <p className="text-xs text-telegram-subtext">{(trashStats?.count ?? 0) + trashedFolders.length} items · {formatBytes(trashStats?.total_size ?? 0)} · {(trashStats?.count ?? 0)} files, {trashedFolders.length} folders · 20-day retention</p>
               </div>
               <Trash2 className="h-4 w-4 text-telegram-subtext transition group-hover:translate-x-0.5 group-hover:text-red-400" />
             </button>

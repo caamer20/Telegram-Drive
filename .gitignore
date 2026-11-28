@@ -60,3 +60,6 @@ local.properties
 !Docs/LINUX_ARCH_IMPLEMENTATION_PLAN.md
 *_EXECUTION_REPORT.md
 *_DEV_NOTES.md
+
+# Local test artifacts (screenshots, filler files)
+screenshots/live/

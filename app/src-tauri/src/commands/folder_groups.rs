@@ -48,6 +48,7 @@ pub(crate) fn enriched_folders(conn: &sqlite::Connection) -> Result<Vec<FolderMe
         SELECT fm.channel_id, fm.name, fm.username, fm.is_public, fm.display_order, fm.group_id, fm.parent_id 
         FROM folder_metadata fm
         LEFT JOIN groups g ON fm.group_id = g.id
+        WHERE fm.channel_id NOT IN (SELECT folder_id FROM folder_trash)
         ORDER BY 
             CASE WHEN fm.group_id IS NULL THEN 1 ELSE 0 END, 
             g.display_order ASC, 
@@ -247,6 +248,153 @@ pub(crate) fn assign_folder_to_group(
     }
 }
 
+
+/// A folder that was deleted into the recycle bin. The Telegram channel is left
+/// untouched, so restoring it costs nothing and never hits Telegram's limits.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct TrashedFolder {
+    pub folder_id: i64,
+    pub name: String,
+    pub parent_id: Option<i64>,
+    pub deleted_at: i64,
+}
+
+fn collect_descendants(conn: &sqlite::Connection, folder_id: i64) -> Result<Vec<i64>, String> {
+    let mut stmt = conn
+        .prepare(
+            "WITH RECURSIVE sub(id) AS (                SELECT channel_id FROM folder_metadata WHERE parent_id = ?1                 UNION ALL                 SELECT fm.channel_id FROM folder_metadata fm JOIN sub ON fm.parent_id = sub.id            ) SELECT id FROM sub",
+        )
+        .map_err(|e| e.to_string())?;
+    stmt.bind((1, folder_id)).map_err(|e| e.to_string())?;
+    let mut ids = Vec::new();
+    while let sqlite::State::Row = stmt.next().map_err(|e| e.to_string())? {
+        ids.push(stmt.read::<i64, _>(0).map_err(|e| e.to_string())?);
+    }
+    Ok(ids)
+}
+
+/// Move a folder (and its nested folders) into the recycle bin without touching
+/// Telegram. Nothing is lost and no rate limit applies.
+#[tauri::command]
+pub async fn cmd_trash_folder(
+    folder_id: i64,
+    db_pool: State<'_, DbConnection>,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    let database = db_pool.inner().clone();
+    crate::db::with_connection(database, move |conn| {
+        let mut ids = collect_descendants(conn, folder_id)?;
+        ids.push(folder_id);
+        let deleted_at = crate::app_time::unix_seconds();
+        conn.execute("BEGIN IMMEDIATE").map_err(|e| e.to_string())?;
+        let result = (|| {
+            for id in &ids {
+                let mut info = conn
+                    .prepare("SELECT name, parent_id FROM folder_metadata WHERE channel_id = ?")
+                    .map_err(|e| e.to_string())?;
+                info.bind((1, *id)).map_err(|e| e.to_string())?;
+                let mut name = String::new();
+                let mut parent_id: Option<i64> = None;
+                if sqlite::State::Row == info.next().map_err(|e| e.to_string())? {
+                    name = info.read::<String, _>(0).unwrap_or_default();
+                    parent_id = info.read::<Option<i64>, _>(1).ok().flatten();
+                }
+                drop(info);
+                let mut insert = conn
+                    .prepare("INSERT INTO folder_trash(folder_id, name, parent_id, deleted_at) VALUES(?, ?, ?, ?) ON CONFLICT(folder_id) DO UPDATE SET deleted_at = excluded.deleted_at")
+                    .map_err(|e| e.to_string())?;
+                insert.bind((1, *id)).map_err(|e| e.to_string())?;
+                insert.bind((2, name.as_str())).map_err(|e| e.to_string())?;
+                insert
+                    .bind::<(usize, Option<i64>)>((3, parent_id))
+                    .map_err(|e| e.to_string())?;
+                insert.bind((4, deleted_at)).map_err(|e| e.to_string())?;
+                insert.next().map_err(|e| e.to_string())?;
+            }
+            Ok::<(), String>(())
+        })();
+        match result {
+            Ok(()) => conn.execute("COMMIT").map_err(|e| e.to_string()).map(|_| ()),
+            Err(error) => {
+                let _ = conn.execute("ROLLBACK");
+                Err(error)
+            }
+        }
+    })
+    .await?;
+    let _ = app.emit("drive-changed", ());
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn cmd_list_trashed_folders(
+    db_pool: State<'_, DbConnection>,
+) -> Result<Vec<TrashedFolder>, String> {
+    let database = db_pool.inner().clone();
+    crate::db::with_connection(database, move |conn| {
+        let mut stmt = conn
+            .prepare("SELECT folder_id, name, parent_id, deleted_at FROM folder_trash ORDER BY deleted_at DESC")
+            .map_err(|e| e.to_string())?;
+        let mut out = Vec::new();
+        while let sqlite::State::Row = stmt.next().map_err(|e| e.to_string())? {
+            out.push(TrashedFolder {
+                folder_id: stmt.read::<i64, _>(0).map_err(|e| e.to_string())?,
+                name: stmt.read::<String, _>(1).map_err(|e| e.to_string())?,
+                parent_id: stmt.read::<Option<i64>, _>(2).ok().flatten(),
+                deleted_at: stmt.read::<i64, _>(3).unwrap_or(0),
+            });
+        }
+        Ok(out)
+    })
+    .await
+}
+
+/// Put a folder (and the folders deleted with it) back in the list.
+#[tauri::command]
+pub async fn cmd_restore_trashed_folder(
+    folder_id: i64,
+    db_pool: State<'_, DbConnection>,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    let database = db_pool.inner().clone();
+    crate::db::with_connection(database, move |conn| {
+        let mut ids = collect_descendants(conn, folder_id)?;
+        ids.push(folder_id);
+        for id in ids {
+            let mut stmt = conn
+                .prepare("DELETE FROM folder_trash WHERE folder_id = ?")
+                .map_err(|e| e.to_string())?;
+            stmt.bind((1, id)).map_err(|e| e.to_string())?;
+            stmt.next().map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    })
+    .await?;
+    let _ = app.emit("drive-changed", ());
+    Ok(())
+}
+
+/// Drop the recycle-bin rows only; the channel stays on Telegram.
+#[tauri::command]
+pub async fn cmd_forget_trashed_folder(
+    folder_id: i64,
+    db_pool: State<'_, DbConnection>,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    let database = db_pool.inner().clone();
+    crate::db::with_connection(database, move |conn| {
+        let mut stmt = conn
+            .prepare("DELETE FROM folder_trash WHERE folder_id = ?")
+            .map_err(|e| e.to_string())?;
+        stmt.bind((1, folder_id)).map_err(|e| e.to_string())?;
+        stmt.next().map_err(|e| e.to_string())?;
+        Ok(())
+    })
+    .await?;
+    let _ = app.emit("drive-changed", ());
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn cmd_move_folder(
     folder_id: i64,
@@ -371,7 +519,7 @@ pub fn get_enriched_folders_internal(
 ) -> Result<Vec<FolderMetadata>, String> {
     // 1. Fetch local folder metadata (group_id, display_order)
     let mut stmt = conn
-        .prepare("SELECT channel_id, display_order, group_id FROM folder_metadata")
+        .prepare("SELECT channel_id, display_order, group_id, parent_id FROM folder_metadata")
         .map_err(|e| e.to_string())?;
 
     let mut local_map = std::collections::HashMap::new();
@@ -387,17 +535,21 @@ pub fn get_enriched_folders_internal(
             .ok()
             .flatten()
             .map(|id| id as i32);
-        local_map.insert(channel_id, (display_order, group_id));
+        // The scanned list knows nothing about nesting, so the stored parent is
+        // reused. Without it every nested folder would jump back to Home.
+        let parent_id = stmt.read::<Option<i64>, _>("parent_id").ok().flatten();
+        local_map.insert(channel_id, (display_order, group_id, parent_id));
     }
 
     // 2. Perform merge & upsert
     let mut enriched = Vec::new();
-    let mut max_order = local_map.values().map(|(o, _)| *o).max().unwrap_or(0);
+    let mut max_order = local_map.values().map(|(o, _, _)| *o).max().unwrap_or(0);
 
     for mut folder in raw_folders {
-        if let Some(&(order, group_id)) = local_map.get(&folder.id) {
+        if let Some(&(order, group_id, parent_id)) = local_map.get(&folder.id) {
             folder.display_order = order;
             folder.group_id = group_id;
+            folder.parent_id = parent_id;
 
             // Update other properties (name, username, is_public) in DB to keep cached info updated
             let mut update_stmt = conn

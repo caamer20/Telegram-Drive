@@ -206,6 +206,12 @@ pub(crate) fn init_db_at(dir: &std::path::Path) -> Result<DbConnection, String> 
                     restored INTEGER NOT NULL DEFAULT 0
                 );
                 CREATE INDEX IF NOT EXISTS idx_trash_items_expiry ON trash_items(restored, expires_at);
+                CREATE TABLE IF NOT EXISTS folder_trash (
+                    folder_id INTEGER PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    parent_id INTEGER,
+                    deleted_at INTEGER NOT NULL
+                );
                 CREATE TABLE IF NOT EXISTS trash_state (
                     key TEXT PRIMARY KEY,
                     value TEXT NOT NULL

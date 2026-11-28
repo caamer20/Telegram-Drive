@@ -36,6 +36,31 @@ use std::sync::OnceLock;
 use tauri::{Emitter, Manager, State};
 
 /// Tell the UI that folder/file data changed so views can refresh immediately.
+
+/// Translate grammers' flood errors into the `FLOOD_WAIT_<seconds>` marker the
+/// UI already localizes, so the user is told how long Telegram wants them to
+/// wait instead of a generic failure.
+pub(crate) fn normalize_telegram_error(message: String) -> String {
+    if let Some(position) = message.find("FLOOD_WAIT") {
+        let rest = &message[position..];
+        let digits: String = rest
+            .split("value:")
+            .nth(1)
+            .map(|value| {
+                value
+                    .trim_start()
+                    .chars()
+                    .take_while(|character| character.is_ascii_digit())
+                    .collect()
+            })
+            .unwrap_or_default();
+        if !digits.is_empty() {
+            return format!("FLOOD_WAIT_{digits}");
+        }
+    }
+    message
+}
+
 pub(crate) fn notify_drive_changed(app: &tauri::AppHandle) {
     let _ = app.emit("drive-changed", ());
 }
@@ -1295,6 +1320,115 @@ pub async fn delete_folder_inner(
     Ok(true)
 }
 
+
+/// Temporary UI tracing helper: writes a line into the backend log so the
+/// desktop flow can be followed from /tmp/tauri-dev*.log.
+#[tauri::command]
+pub async fn cmd_log_debug(message: String) {
+    log::info!("[ui] {message}");
+}
+
+/// One directory on disk, as uploaded by "Upload folder".
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct DirectoryNode {
+    pub name: String,
+    pub path: String,
+    pub files: Vec<String>,
+    pub dirs: Vec<DirectoryNode>,
+}
+
+/// Read a folder tree so the UI can recreate every nested folder in the drive
+/// and upload its files into the matching folder.
+#[tauri::command]
+pub async fn cmd_scan_directory_tree(path: String) -> Result<DirectoryNode, String> {
+    fn walk(
+        path: &std::path::Path,
+        depth: usize,
+        budget: &mut usize,
+    ) -> Result<DirectoryNode, String> {
+        if depth > 32 {
+            return Err("This folder is nested too deeply.".to_string());
+        }
+        let name = path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("folder")
+            .to_string();
+        let mut files = Vec::new();
+        let mut dirs = Vec::new();
+        let entries = std::fs::read_dir(path)
+            .map_err(|error| format!("Cannot read {}: {error}", path.display()))?;
+        for entry in entries.flatten() {
+            let entry_path = entry.path();
+            let metadata = match entry.metadata() {
+                Ok(value) => value,
+                Err(_) => continue,
+            };
+            if metadata.is_dir() {
+                dirs.push(walk(&entry_path, depth + 1, budget)?);
+            } else if metadata.is_file() {
+                if *budget == 0 {
+                    return Err("This folder holds too many files to upload at once.".to_string());
+                }
+                *budget -= 1;
+                files.push(entry_path.to_string_lossy().to_string());
+            }
+        }
+        dirs.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+        files.sort();
+        Ok(DirectoryNode {
+            name,
+            path: path.to_string_lossy().to_string(),
+            files,
+            dirs,
+        })
+    }
+
+    let mut budget = 5000usize;
+    walk(std::path::Path::new(&path), 0, &mut budget)
+}
+
+/// Permanently delete folders that sit in the recycle bin: this removes the
+/// Telegram channel (and its nested folders) for real. Stops at the first
+/// Telegram rate limit so a burst cannot make things worse.
+#[tauri::command]
+pub async fn cmd_purge_trashed_folders(
+    folder_ids: Vec<i64>,
+    app: tauri::AppHandle,
+    owner_id: Option<String>,
+    state: State<'_, TelegramState>,
+    db_pool: State<'_, DbConnection>,
+) -> Result<Vec<i64>, String> {
+    let mut purged: Vec<i64> = Vec::new();
+    let mut failure: Option<String> = None;
+    for folder_id in folder_ids {
+        let account = file_mutation_account(&app, owner_id.as_deref())?;
+        match delete_folder(folder_id, state.inner(), db_pool.inner().clone(), account).await {
+            Ok(_) => purged.push(folder_id),
+            Err(error) => {
+                log::error!("Purging trashed folder {} failed: {}", folder_id, error);
+                failure = Some(normalize_telegram_error(error));
+                break;
+            }
+        }
+    }
+    if !purged.is_empty() || failure.is_some() {
+        crate::db::with_connection(db_pool.inner().clone(), move |conn| {
+            conn.execute(
+                "DELETE FROM folder_trash WHERE folder_id NOT IN (SELECT channel_id FROM folder_metadata)",
+            )
+            .map_err(|error| error.to_string())?;
+            Ok(())
+        })
+        .await?;
+    }
+    notify_drive_changed(&app);
+    match failure {
+        Some(error) if purged.is_empty() => Err(error),
+        _ => Ok(purged),
+    }
+}
+
 #[tauri::command]
 pub async fn cmd_delete_folder(
     folder_id: i64,
@@ -1305,9 +1439,10 @@ pub async fn cmd_delete_folder(
 ) -> Result<bool, String> {
     let account = file_mutation_account(&app, owner_id.as_deref())?;
     let result = delete_folder(folder_id, state.inner(), db_pool.inner().clone(), account).await;
-    if result.is_ok() {
-        notify_drive_changed(&app);
+    if let Err(error) = &result {
+        log::error!("cmd_delete_folder({folder_id}) failed: {error}");
     }
+    notify_drive_changed(&app);
     result
 }
 
@@ -1354,7 +1489,18 @@ pub(crate) async fn delete_folder(
             log::warn!("Failed to delete nested folder {}: {}", child, error);
         }
     }
-    delete_folder_inner(folder_id, &client, &state.peer_cache).await?;
+    match delete_folder_inner(folder_id, &client, &state.peer_cache).await {
+        Ok(_) => {}
+        // The channel is already gone remotely: drop the local rows so the
+        // folder still disappears from the app instead of failing the delete.
+        Err(error) if error.contains("not found") || error.contains("CHANNEL_INVALID") => {
+            log::warn!("Folder {} was already gone remotely: {}", folder_id, error);
+        }
+        Err(error) => {
+            log::error!("Deleting folder {} failed: {}", folder_id, error);
+            return Err(normalize_telegram_error(error));
+        }
+    }
 
     // Delete from SQLite
     crate::db::with_connection(db_pool, move |conn| {
@@ -1364,13 +1510,25 @@ pub(crate) async fn delete_folder(
             Some(&(account.root.clone(), Some(account.owner))),
         )?;
 
-        let mut stmt = conn
-            .prepare("DELETE FROM folder_metadata WHERE channel_id = ?")
-            .map_err(|e: sqlite::Error| e.to_string())?;
         for id in descendants.iter().copied().chain(std::iter::once(folder_id)) {
+            // A fresh statement per row: re-binding a finished statement raises
+            // SQLITE_MISUSE (code 21) in the sqlite crate.
+            let mut stmt = conn
+                .prepare("DELETE FROM folder_metadata WHERE channel_id = ?")
+                .map_err(|e: sqlite::Error| e.to_string())?;
             stmt.bind((1, id))
                 .map_err(|e: sqlite::Error| e.to_string())?;
             stmt.next().map_err(|e: sqlite::Error| e.to_string())?;
+            let mut inventory = conn
+                .prepare("DELETE FROM file_inventory WHERE folder_id = ? OR folder_key = ?")
+                .map_err(|e: sqlite::Error| e.to_string())?;
+            inventory
+                .bind((1, id))
+                .map_err(|e: sqlite::Error| e.to_string())?;
+            inventory
+                .bind((2, id.to_string().as_str()))
+                .map_err(|e: sqlite::Error| e.to_string())?;
+            inventory.next().map_err(|e: sqlite::Error| e.to_string())?;
         }
         Ok(())
     })
@@ -2295,11 +2453,10 @@ async fn validate_dropped_paths(paths: Vec<String>) -> DroppedPathValidation {
             }
         };
 
+        // A dropped directory is accepted: the UI recreates its folder tree and
+        // uploads the files inside it, instead of refusing the drop.
         if metadata.is_dir() {
-            rejected.push(DroppedPathRejection {
-                path,
-                reason: "directory",
-            });
+            accepted.push(path);
             continue;
         }
         if !metadata.is_file() {
@@ -4502,11 +4659,20 @@ async fn drive_stats_from_inventory(
     db: crate::db::DbConnection,
 ) -> Result<crate::models::DriveStats, String> {
     crate::db::with_connection(db, move |conn| {
+        // Folders that were deleted (or moved to the recycle bin then purged)
+        // must not keep contributing to the totals.
+        conn.execute(
+            "DELETE FROM file_inventory              WHERE folder_key != 'home' AND folder_id IS NOT NULL                AND folder_id NOT IN (SELECT channel_id FROM folder_metadata)",
+        )
+        .map_err(|error| error.to_string())?;
+
         let mut global = crate::models::GlobalStats::default();
         let mut folders: HashMap<String, crate::models::FolderStatItem> = HashMap::new();
 
         let mut stmt = conn
-            .prepare("SELECT folder_key, folder_id, COUNT(*) AS cnt, COALESCE(SUM(file_size),0) AS sz FROM file_inventory GROUP BY folder_key, folder_id")
+            .prepare(
+                "SELECT folder_key, folder_id, COUNT(*) AS cnt, COALESCE(SUM(file_size),0) AS sz                  FROM file_inventory                  WHERE folder_key = 'home'                     OR folder_id IS NULL                     OR folder_id IN (SELECT channel_id FROM folder_metadata)                  GROUP BY folder_key, folder_id",
+            )
             .map_err(|e| e.to_string())?;
         while let sqlite::State::Row = stmt.next().map_err(|e| e.to_string())? {
             let folder_key = stmt.read::<String, _>("folder_key").unwrap_or_default();
@@ -4526,7 +4692,9 @@ async fn drive_stats_from_inventory(
         }
 
         let mut stmt = conn
-            .prepare("SELECT COALESCE(mime_type,'') AS mime_type, COALESCE(file_ext,'') AS file_ext, file_size FROM file_inventory")
+            .prepare(
+                "SELECT COALESCE(mime_type,'') AS mime_type, COALESCE(file_ext,'') AS file_ext, file_size                  FROM file_inventory                  WHERE folder_key = 'home'                     OR folder_id IS NULL                     OR folder_id IN (SELECT channel_id FROM folder_metadata)",
+            )
             .map_err(|e| e.to_string())?;
         while let sqlite::State::Row = stmt.next().map_err(|e| e.to_string())? {
             let mime = stmt.read::<String, _>("mime_type").unwrap_or_default().to_lowercase();
@@ -4623,27 +4791,31 @@ pub async fn cmd_get_drive_stats(
     state: State<'_, TelegramState>,
     db: State<'_, DbConnection>,
 ) -> Result<crate::models::DriveStats, String> {
-    static LAST_STATS: std::sync::Mutex<Option<crate::models::DriveStats>> =
+    static LAST_STATS: std::sync::Mutex<Option<(i64, crate::models::DriveStats)>> =
         std::sync::Mutex::new(None);
     if let Ok(stats) = drive_stats_from_inventory(db.inner().clone()).await {
         if stats.global.total_files > 0 {
             if let Ok(mut slot) = LAST_STATS.lock() {
-                *slot = Some(stats.clone());
+                *slot = Some((crate::app_time::unix_seconds(), stats.clone()));
             }
             return Ok(stats);
         }
     }
-    // An inventory rebuild (a folder scan) can empty the table for a moment.
-    // Showing the last known totals beats flashing zero on every folder.
+    // An inventory rebuild can empty the table for a moment. Reuse the last
+    // totals only for a few seconds, so emptying the drive still reaches zero.
+    const CACHE_GRACE_SECONDS: i64 = 8;
+    let now = crate::app_time::unix_seconds();
     if let Ok(slot) = LAST_STATS.lock() {
-        if let Some(cached) = slot.as_ref() {
-            return Ok(cached.clone());
+        if let Some((saved_at, cached)) = slot.as_ref() {
+            if now - *saved_at <= CACHE_GRACE_SECONDS {
+                return Ok(cached.clone());
+            }
         }
     }
     let stats = drive_stats_from_telegram(state.inner()).await?;
     if stats.global.total_files > 0 {
         if let Ok(mut slot) = LAST_STATS.lock() {
-            *slot = Some(stats.clone());
+            *slot = Some((crate::app_time::unix_seconds(), stats.clone()));
         }
     }
     Ok(stats)

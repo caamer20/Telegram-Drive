@@ -18,6 +18,14 @@ import { triggerHaptic } from '../services/feedback';
 import { isTransientNetworkError, restoreUploadQueue, serializeUploadQueue } from '../services/transferQueuePolicy';
 import { announceSupporterValueMoment } from '../services/supporterVisibility';
 import { userFacingError } from '../services/userFacingError';
+
+/** Folder tree returned by `cmd_scan_directory_tree`. */
+interface DirectoryNode {
+    name: string;
+    path: string;
+    files: string[];
+    dirs: DirectoryNode[];
+}
 import { invalidateFolderFileQueries } from '../services/fileListRefresh';
 import { effectiveVideoUploadMode } from '../services/videoUploadMode';
 import {
@@ -651,6 +659,7 @@ export function useFileUpload(
 
     /** Queue files dropped from the OS file manager (drag-and-drop upload) */
     const handleDropUpload = async (paths: string[]): Promise<DropUploadResult> => {
+        traceUpload(`handleDropUpload invoked with ${paths?.length ?? 0} path(s): ${(paths ?? []).join(' | ').slice(0, 300)}`);
         requireCurrent();
         const actionOwnerId = ownerId;
         if (!paths || paths.length === 0) return { queued: 0, rejected: [] };
@@ -671,15 +680,80 @@ export function useFileUpload(
             toast.warning(t('notifications.drop_rejected', { count: validation.rejected.length }));
         }
 
-        const queued = await queueFiles(validation.accepted, destinationFolderId, actionOwnerId);
+        // Split the drop: directories keep their structure, files queue normally.
+        const droppedDirs: DirectoryNode[] = [];
+        const plainFiles: string[] = [];
+        if (!isAndroidPlatform) {
+            for (const path of validation.accepted) {
+                try {
+                    const tree = await invoke<DirectoryNode>('cmd_scan_directory_tree', { path });
+                    droppedDirs.push(tree);
+                } catch {
+                    plainFiles.push(path);
+                }
+            }
+        } else {
+            plainFiles.push(...validation.accepted);
+        }
+
+        const queued = plainFiles.length > 0
+            ? await queueFiles(plainFiles, destinationFolderId, actionOwnerId)
+            : 0;
+
+        let directoryFiles = 0;
+        if (actionOwnerId) {
+            for (const tree of droppedDirs) {
+                if (!isCurrent()) break;
+                try {
+                    const result = await uploadDirectoryTree(tree, destinationFolderId, actionOwnerId);
+                    directoryFiles += result.files;
+                    toast.success(`Uploaded folder "${tree.name}" -> ${result.folders} folder(s), ${result.files} file(s).`);
+                } catch (error) {
+                    if (isCurrent()) toast.error(userFacingError(error, t));
+                }
+            }
+        }
+
         return {
-            queued,
+            queued: queued + directoryFiles,
             rejected: validation.rejected,
-            cancelled: validation.accepted.length > 0 && queued === 0,
+            cancelled: validation.accepted.length > 0 && queued + directoryFiles === 0,
         };
     };
 
+    const traceUpload = (message: string) => {
+        void invoke('cmd_log_debug', { message }).catch(() => undefined);
+    };
+
+    /** Recreate an on-disk folder tree inside the drive and upload every file. */
+    const uploadDirectoryTree = async (
+        node: DirectoryNode,
+        parentFolderId: number | null,
+        actionOwnerId: string,
+    ): Promise<{ folders: number; files: number }> => {
+        let folders = 0;
+        let files = 0;
+        traceUpload(`creating folder "${node.name}" (files=${node.files.length}, dirs=${node.dirs.length}, parent=${parentFolderId ?? 'home'})`);
+        const created = await invoke<{ id: number }>('cmd_create_folder', {
+            name: node.name,
+            ownerId: actionOwnerId,
+        });
+        folders += 1;
+        traceUpload(`created folder ${created.id} for "${node.name}"`);
+        await invoke('cmd_move_folder', { folderId: created.id, newParentId: parentFolderId });
+        if (node.files.length > 0) {
+            files += await queueFiles(node.files, created.id, actionOwnerId);
+        }
+        for (const child of node.dirs) {
+            const inner = await uploadDirectoryTree(child, created.id, actionOwnerId);
+            folders += inner.folders;
+            files += inner.files;
+        }
+        return { folders, files };
+    };
+
     const handleFolderUpload = async () => {
+        traceUpload('handleFolderUpload invoked');
         requireCurrent();
         const actionOwnerId = ownerId;
         const destinationFolderId = activeFolderId;
@@ -710,7 +784,20 @@ export function useFileUpload(
 
         const folderName = folderPath.split('/').pop() || folderPath.split('\\').pop() || 'folder';
 
-        if (settings.zipFolders) {
+        // Read the tree first: nested folders are recreated in the drive, and a
+        // flat folder can still be zipped when that preference is on.
+        let directoryTree: DirectoryNode | null = null;
+        if (!isAndroidPlatform) {
+            try {
+                directoryTree = await invoke<DirectoryNode>('cmd_scan_directory_tree', { path: folderPath });
+            } catch {
+                directoryTree = null;
+            }
+        }
+        traceUpload(`folder pick "${folderName}": scan=${directoryTree ? `ok(files=${directoryTree.files.length}, dirs=${directoryTree.dirs.length})` : 'failed'}, zipSetting=${settings.zipFolders}`);
+        const flatFolder = !directoryTree || directoryTree.dirs.length === 0;
+
+        if (settings.zipFolders && flatFolder) {
             toast.info(`Zipping "${folderName}"...`);
             try {
                 const zipPath = await invoke<string>('cmd_zip_folder', { folderPath });
@@ -756,8 +843,24 @@ export function useFileUpload(
                 console.error('[Upload] Zip error:', e);
                 toast.error(userFacingError(e, t));
             }
-        } else {
+        } else if (isAndroidPlatform) {
             toast.info(`Folder upload without zipping is not supported. Enable "Zip folders before upload" in Settings.`);
+        } else {
+            if (!actionOwnerId) return;
+            const uploadOwnerId = actionOwnerId;
+            try {
+                const tree = directoryTree ?? await invoke<DirectoryNode>('cmd_scan_directory_tree', { path: folderPath });
+                requireCurrent();
+                toast.info(`Uploading "${folderName}" with its folders...`);
+                traceUpload(`structure upload start for "${tree.name}" into ${destinationFolderId ?? 'home'}`);
+                const result = await uploadDirectoryTree(tree, destinationFolderId, uploadOwnerId);
+                traceUpload(`structure upload done: folders=${result.folders} files=${result.files}`);
+                if (!isCurrent()) return;
+                toast.success(`Queued ${result.files} file(s) in ${result.folders} folder(s) from "${folderName}".`);
+            } catch (error) {
+                if (!isCurrent()) return;
+                toast.error(userFacingError(error, t));
+            }
         }
     };
 

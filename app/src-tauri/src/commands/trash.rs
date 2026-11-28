@@ -211,6 +211,61 @@ pub async fn cmd_get_trash_stats(
     })
 }
 
+/// Delete trashed files for good: remove the copies from the trash channel and
+/// forget their rows. Used by the permanent-delete action in the Trash view.
+#[tauri::command]
+pub async fn cmd_purge_trash_items(
+    trash_message_ids: Vec<i64>,
+    state: State<'_, TelegramState>,
+    db: State<'_, DbConnection>,
+    app: tauri::AppHandle,
+) -> Result<usize, String> {
+    if trash_message_ids.is_empty() {
+        return Ok(0);
+    }
+
+    let mut trash_folder_id: Option<i64> = None;
+    {
+        let conn = db.lock().map_err(|e| e.to_string())?;
+        for id in &trash_message_ids {
+            let mut stmt = conn
+                .prepare("SELECT trash_folder_id FROM trash_items WHERE trash_message_id = ?")
+                .map_err(|e| e.to_string())?;
+            stmt.bind((1, *id)).map_err(|e| e.to_string())?;
+            if sqlite::State::Row == stmt.next().map_err(|e| e.to_string())? {
+                trash_folder_id = Some(stmt.read::<i64, _>(0).map_err(|e| e.to_string())?);
+                break;
+            }
+        }
+    }
+
+    if let Some(folder_id) = trash_folder_id {
+        let client_opt = { state.client.lock().await.clone() };
+        if let Some(client) = client_opt {
+            if let Ok(peer) = resolve_peer(&client, Some(folder_id), &state.peer_cache).await {
+                let ids: Vec<i32> = trash_message_ids.iter().map(|id| *id as i32).collect();
+                if let Err(error) = client.delete_messages(&peer, &ids).await {
+                    log::warn!("Deleting trashed files failed: {error}");
+                }
+            }
+        }
+    }
+
+    {
+        let conn = db.lock().map_err(|e| e.to_string())?;
+        for id in &trash_message_ids {
+            let mut stmt = conn
+                .prepare("DELETE FROM trash_items WHERE trash_message_id = ?")
+                .map_err(|e| e.to_string())?;
+            stmt.bind((1, *id)).map_err(|e| e.to_string())?;
+            stmt.next().map_err(|e| e.to_string())?;
+        }
+    }
+
+    let _ = app.emit("drive-changed", ());
+    Ok(trash_message_ids.len())
+}
+
 #[tauri::command]
 pub async fn cmd_get_trash_count(db: State<'_, DbConnection>) -> Result<u64, String> {
     let now = now_ts();
@@ -246,7 +301,13 @@ pub async fn cmd_move_file_to_trash(
     }
     let client = client_opt.ok_or_else(|| "Client not connected".to_string())?;
 
-    let trash_folder_id = get_or_create_trash_folder(&client, &state, &db).await?;
+    let trash_folder_id = match get_or_create_trash_folder(&client, &state, &db).await {
+        Ok(id) => id,
+        Err(error) => {
+            log::error!("Trash folder unavailable: {error}");
+            return Err(crate::commands::fs::normalize_telegram_error(error));
+        }
+    };
 
     let source_peer = resolve_peer(&client, folder_id, &state.peer_cache).await?;
     let trash_peer = resolve_peer(&client, Some(trash_folder_id), &state.peer_cache).await?;
@@ -270,7 +331,10 @@ pub async fn cmd_move_file_to_trash(
     let forwarded = client
         .forward_messages(&trash_peer, &[message_id], &source_peer)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| {
+            log::error!("Forwarding to trash failed: {e}");
+            crate::commands::fs::normalize_telegram_error(e.to_string())
+        })?;
 
     let trash_message_id = forwarded
         .first()
@@ -311,6 +375,17 @@ pub async fn cmd_move_file_to_trash(
         stmt.next().map_err(|e| e.to_string())?;
     }
 
+    // Drop the source row so folder sizes and drive metrics change at once.
+    if let Err(error) = crate::commands::file_inventory::remove_entry(
+        db.inner().clone(),
+        folder_id,
+        i64::from(message_id),
+    )
+    .await
+    {
+        log::warn!("Inventory row for trashed file could not be removed: {error}");
+    }
+
     let _ = app.emit("drive-changed", ());
     Ok(true)
 }
@@ -329,11 +404,11 @@ pub async fn cmd_restore_from_trash(
     }
     let client = client_opt.ok_or_else(|| "Client not connected".to_string())?;
 
-    let found: Option<(i64, i64)> = {
+    let found: Option<(i64, i64, i64, String, i64)> = {
         let conn = db.lock().map_err(|e| e.to_string())?;
         let mut stmt = conn
             .prepare(
-                "SELECT trash_folder_id, original_folder_id \
+                "SELECT trash_folder_id, original_folder_id, original_message_id, file_name, file_size \
                  FROM trash_items \
                  WHERE trash_message_id = ?1 AND restored = 0 LIMIT 1",
             )
@@ -342,17 +417,19 @@ pub async fn cmd_restore_from_trash(
 
         let mut res = None;
         while let sqlite::State::Row = stmt.next().map_err(|e| e.to_string())? {
-            let tf: i64 = stmt.read::<i64, _>("trash_folder_id").map_err(|e| e.to_string())?;
-            let of: i64 = stmt
-                .read::<i64, _>("original_folder_id")
-                .map_err(|e| e.to_string())?;
-            res = Some((tf, of));
+            res = Some((
+                stmt.read::<i64, _>("trash_folder_id").map_err(|e| e.to_string())?,
+                stmt.read::<i64, _>("original_folder_id").map_err(|e| e.to_string())?,
+                stmt.read::<i64, _>("original_message_id").map_err(|e| e.to_string())?,
+                stmt.read::<String, _>("file_name").map_err(|e| e.to_string())?,
+                stmt.read::<i64, _>("file_size").map_err(|e| e.to_string())?,
+            ));
             break;
         }
         res
     };
 
-    let (trash_folder_id, original_folder_id) =
+    let (trash_folder_id, original_folder_id, original_message_id, restored_name, restored_size) =
         found.ok_or_else(|| "Trash item not found".to_string())?;
 
     let trash_peer = resolve_peer(&client, Some(trash_folder_id), &state.peer_cache).await?;
@@ -382,6 +459,18 @@ pub async fn cmd_restore_from_trash(
             .bind((1, trash_message_id))
             .map_err(|e| e.to_string())?;
         stmt2.next().map_err(|e| e.to_string())?;
+    }
+
+    if let Err(error) = crate::commands::file_inventory::restore_entry(
+        db.inner().clone(),
+        target_folder_id,
+        original_message_id,
+        restored_name,
+        restored_size,
+    )
+    .await
+    {
+        log::warn!("Inventory row for restored file could not be added: {error}");
     }
 
     let _ = app.emit("drive-changed", ());

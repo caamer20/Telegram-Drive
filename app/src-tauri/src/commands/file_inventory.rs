@@ -147,6 +147,43 @@ pub async fn remove_entry(
     .await
 }
 
+
+/// Re-add a row when a file comes back from the trash, so the folder's size and
+/// the drive totals include it again immediately.
+pub async fn restore_entry(
+    database: DbConnection,
+    folder: Option<i64>,
+    message_id: i64,
+    file_name: String,
+    file_size: i64,
+) -> Result<(), String> {
+    let key = folder_key(folder);
+    let updated_at = crate::app_time::unix_seconds();
+    crate::db::with_connection(database, move |conn| {
+        let mut stmt = conn
+            .prepare(
+                "INSERT INTO file_inventory (
+                    folder_key, folder_id, message_id, file_name, file_size, mime_type,
+                    file_ext, created_at, icon_type, encryption_state, last_seen_scan, updated_at
+                 ) VALUES (?, ?, ?, ?, ?, NULL, NULL, '', 'file', 'plain', '', ?)
+                 ON CONFLICT(folder_key, message_id) DO UPDATE SET
+                    file_name = excluded.file_name,
+                    file_size = excluded.file_size,
+                    updated_at = excluded.updated_at",
+            )
+            .map_err(|e| e.to_string())?;
+        stmt.bind((1, key.as_str())).map_err(|e| e.to_string())?;
+        stmt.bind::<(usize, Option<i64>)>((2, folder)).map_err(|e| e.to_string())?;
+        stmt.bind((3, message_id)).map_err(|e| e.to_string())?;
+        stmt.bind((4, file_name.as_str())).map_err(|e| e.to_string())?;
+        stmt.bind((5, file_size)).map_err(|e| e.to_string())?;
+        stmt.bind((6, updated_at)).map_err(|e| e.to_string())?;
+        stmt.next().map_err(|e| e.to_string())?;
+        Ok(())
+    })
+    .await
+}
+
 /// Copy a row's metadata into another folder under a new message id.
 pub async fn copy_entry(
     database: DbConnection,

@@ -336,11 +336,14 @@ export function useTelegramConnection(onLogoutParent: () => void) {
 
         try {
             if (!isCurrent()) return;
-            await invoke('cmd_delete_folder', { folderId, ownerId: folderSession.owner });
+            // Recycle bin first: the Telegram channel is kept, so this is
+            // instant, reversible and never trips Telegram's delete rate limit.
+            await invoke('cmd_trash_folder', { folderId });
             if (!isCurrent()) return;
-            await rememberFolders(currentFolders.current.filter(f => f.id !== folderId));
+            const removed = new Set<number>([folderId]);
+            await rememberFolders(currentFolders.current.filter(f => !removed.has(f.id)));
             if (isCurrent() && activeFolderId === folderId) await handleSetActiveFolderId(null);
-            if (isCurrent()) toast.success(`Folder "${folderName}" deleted.`);
+            if (isCurrent()) toast.success(`Folder "${folderName}" moved to Trash.`);
         } catch (e: unknown) {
             if (!isCurrent()) return;
             if ((e instanceof Error ? e.message : e) === `Folder/Chat ${folderId} not found`) {

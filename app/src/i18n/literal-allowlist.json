@@ -854,6 +854,236 @@
       "file": "src\\components\\desktop\\DesktopDashboard.tsx",
       "literal": "Copy",
       "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\TrashView.tsx",
+      "literal": "Folders (",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\TrashView.tsx",
+      "literal": "Remove from this list; the Telegram channel is kept",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\TrashView.tsx",
+      "literal": "Remove from list",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\TrashView.tsx",
+      "literal": "Folder deletion is a recycle bin: the Telegram channel is kept, so restoring is instant.",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\hooks\\useTelegramConnection.ts",
+      "literal": "Are you sure you want to sign out? This will disconnect your active session.",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\hooks\\useTelegramConnection.ts",
+      "literal": "Signed out, but some local cleanup could not finish.",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\hooks\\useTelegramConnection.ts",
+      "literal": "Folders and groups synchronized.",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\hooks\\useTelegramConnection.ts",
+      "literal": "`Folder \"${name}\" created.`",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\hooks\\useTelegramConnection.ts",
+      "literal": "Delete Folder",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\hooks\\useTelegramConnection.ts",
+      "literal": "`Are you sure you want to delete \"${folderName}\"?\\nThis will delete the channel on Telegram.`",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\hooks\\useTelegramConnection.ts",
+      "literal": "`Folder \"${folderName}\" moved to Trash.`",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\hooks\\useTelegramConnection.ts",
+      "literal": "Folder Not Found",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\hooks\\useTelegramConnection.ts",
+      "literal": "`Folder \"${folderName}\" not found on Telegram (it may have been deleted externally).\\nRemove from this app?`",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\hooks\\useTelegramConnection.ts",
+      "literal": "Remove",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\hooks\\useTelegramConnection.ts",
+      "literal": "`Folder renamed to \"${newName}\".`",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\hooks\\useTelegramConnection.ts",
+      "literal": "Making this channel private will remove its public username. Any shared t.me links will stop working immediately.",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\hooks\\useTelegramConnection.ts",
+      "literal": "Channel is now public",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\hooks\\useTelegramConnection.ts",
+      "literal": "Channel is now private",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\hooks\\useTelegramConnection.ts",
+      "literal": "`Failed to toggle visibility: ${e}`",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\hooks\\useTelegramConnection.ts",
+      "literal": "`Failed to get invite link: ${e}`",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\hooks\\useTelegramConnection.ts",
+      "literal": "`Group \"${name}\" created.`",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\hooks\\useTelegramConnection.ts",
+      "literal": "Group deleted.",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\hooks\\useTelegramConnection.ts",
+      "literal": "Group updated.",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\HomeDashboard.tsx",
+      "literal": "In trash ·",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\HomeDashboard.tsx",
+      "literal": "files,",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\HomeDashboard.tsx",
+      "literal": "folders · 20-day retention",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\HomeDashboard.tsx",
+      "literal": "`${agg.files} files`",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\HomeDashboard.tsx",
+      "literal": "`${agg.folders} folders`",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\TrashView.tsx",
+      "literal": "Delete folders permanently",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\TrashView.tsx",
+      "literal": "`${ids.length} folder(s) and their Telegram channels will be deleted for good. This cannot be undone.`",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\TrashView.tsx",
+      "literal": "Delete permanently",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\TrashView.tsx",
+      "literal": "Clear",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\TrashView.tsx",
+      "literal": "Select all",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\TrashView.tsx",
+      "literal": "(all)",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\TrashView.tsx",
+      "literal": "`Select ${folder.name}`",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\TrashView.tsx",
+      "literal": "Delete files permanently",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\TrashView.tsx",
+      "literal": "`${ids.length} file(s) will be removed for good. This cannot be undone.`",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\TrashView.tsx",
+      "literal": "Files (",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\components\\desktop\\dashboard\\TrashView.tsx",
+      "literal": "`Select ${item.file_name}`",
+      "note": "Ported v1.8.x feature UI; pending localization"
+    },
+    {
+      "file": "src\\hooks\\useFileUpload.ts",
+      "literal": "`Uploaded folder \"${tree.name}\" -> ${result.folders} folder(s), ${result.files} file(s).`",
+      "note": "Folder upload UI; pending localization"
+    },
+    {
+      "file": "src\\hooks\\useFileUpload.ts",
+      "literal": "Folder zipping unavailable with browser picker — uploading files individually.",
+      "note": "Folder upload UI; pending localization"
+    },
+    {
+      "file": "src\\hooks\\useFileUpload.ts",
+      "literal": "`Zipping \"${folderName}\"...`",
+      "note": "Folder upload UI; pending localization"
+    },
+    {
+      "file": "src\\hooks\\useFileUpload.ts",
+      "literal": "`Queued \"${folderName}.zip\" for upload`",
+      "note": "Folder upload UI; pending localization"
+    },
+    {
+      "file": "src\\hooks\\useFileUpload.ts",
+      "literal": "Folder upload without zipping is not supported. Enable \"Zip folders before upload\" in Settings.",
+      "note": "Folder upload UI; pending localization"
+    },
+    {
+      "file": "src\\hooks\\useFileUpload.ts",
+      "literal": "`Uploading \"${folderName}\" with its folders...`",
+      "note": "Folder upload UI; pending localization"
+    },
+    {
+      "file": "src\\hooks\\useFileUpload.ts",
+      "literal": "`Queued ${result.files} file(s) in ${result.folders} folder(s) from \"${folderName}\".`",
+      "note": "Folder upload UI; pending localization"
     }
   ]
 }

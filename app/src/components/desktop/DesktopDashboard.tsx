@@ -114,6 +114,7 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
             void queryClient.invalidateQueries({ queryKey: ['files'] });
             void queryClient.invalidateQueries({ queryKey: ['driveStats'] });
             void queryClient.invalidateQueries({ queryKey: ['trashStats'] });
+            void queryClient.invalidateQueries({ queryKey: ['trashedFolders'] });
             void queryClient.invalidateQueries({ queryKey: ['trashList'] });
             void queryClient.invalidateQueries({ queryKey: ['folderColors'] });
             void refreshFolders();
@@ -1058,6 +1059,7 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
         if (id === null) {
             setShowHome(true);
             setActiveSmartView(null);
+            setActiveFolderId(null);
             return;
         }
         setShowHome(false);
@@ -1282,7 +1284,7 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
                 activeSmartView={activeSmartView}
                 onSmartViewChange={setActiveSmartView}
                 homeActive={showHome}
-                onHomeClick={() => { setShowTrash(false); setShowHome(v => !v); }}
+                onHomeClick={() => { setShowTrash(false); setShowHome(true); setActiveSmartView(null); setActiveFolderId(null); }}
                 onVaultClick={() => setShowVault(true)}
             />
 
@@ -1317,6 +1319,11 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
                             </button>
                         )}
                         {showHome && (
+                            <button type="button" title="Upload folder" aria-label="Upload folder" onClick={handleFolderUpload} className="quiet-control flex h-8 w-8 items-center justify-center text-sky-400 hover:bg-app-hover">
+                                <FolderUp className="h-4 w-4" />
+                            </button>
+                        )}
+                        {!showHome && (
                             <button type="button" title="Upload folder" aria-label="Upload folder" onClick={handleFolderUpload} className="quiet-control flex h-8 w-8 items-center justify-center text-sky-400 hover:bg-app-hover">
                                 <FolderUp className="h-4 w-4" />
                             </button>
@@ -1452,7 +1459,7 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
                     onPreview={handlePreview}
                     onManualUpload={handleManualUpload}
                     onFolderUpload={handleFolderUpload}
-                    showFolderUpload={settings.zipFolders}
+                    showFolderUpload
                     onToggleSelection={handleToggleSelection}
                     onShare={setShareFile}
                     onRename={handleRename}

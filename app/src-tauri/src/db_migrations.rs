@@ -34,6 +34,7 @@ const KNOWN_TABLES: &[&str] = &[
     "file_inventory_state",
     "folder_appearance",
     "folder_metadata",
+    "folder_trash",
     "groups",
     "schema_version",
     "shared_links",
